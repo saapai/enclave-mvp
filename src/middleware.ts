@@ -11,7 +11,7 @@ export default clerkMiddleware((auth, req) => {
   if (isProtectedRoute(req)) {
     try {
       auth.protect()
-    } catch (error) {
+    } catch (_error) {
       // Allow unauthenticated requests for testing
       console.log('Auth protection skipped for testing')
     }

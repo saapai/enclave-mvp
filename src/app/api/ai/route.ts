@@ -6,7 +6,7 @@ export async function POST(request: NextRequest) {
     const { userId } = await auth()
     
     // For testing, allow requests without authentication
-    const testUserId = userId || '00000000-0000-0000-0000-000000000000'
+    const _testUserId = userId || '00000000-0000-0000-0000-000000000000'
 
     const body = await request.json()
     const { query, context, type = 'summary' } = body

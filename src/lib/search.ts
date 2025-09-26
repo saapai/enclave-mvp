@@ -1,4 +1,4 @@
-import { supabase, supabaseAdmin } from './supabase'
+import { supabase } from './supabase'
 import { ResourceWithTags, SearchResult } from './database.types'
 
 export interface SearchFilters {
@@ -97,7 +97,7 @@ export async function logQuery(
   userId: string,
   query: string,
   resultsCount: number,
-  clickedResourceId?: string
+  _clickedResourceId?: string
 ) {
   // Temporarily disable query logging to avoid foreign key constraint issues
   // TODO: Fix the foreign key constraints and re-enable logging
