@@ -132,4 +132,4 @@ The application uses the following main tables:
 
 ## License
 
-MIT License - see LICENSE file for details
+MIT License - see LICENSE file for details# Trigger Vercel redeploy
