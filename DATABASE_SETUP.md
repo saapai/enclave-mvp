@@ -75,3 +75,4 @@ After running the setup, you should have:
 - ✅ All indexes created for performance
 
 The app should now be fully functional!
+

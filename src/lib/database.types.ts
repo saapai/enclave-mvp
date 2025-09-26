@@ -268,3 +268,4 @@ export type SearchResult = ResourceWithTags & {
   rank: number
   score: number
 }
+
