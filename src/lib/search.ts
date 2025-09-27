@@ -21,7 +21,7 @@ export async function searchResources(
 ): Promise<SearchResult[]> {
   const { limit = 20, offset = 0 } = options
 
-  // Build the base query
+  // Build the base query (used only for non-search listing)
   let supabaseQuery = supabase
     .from('resource')
     .select(`
@@ -50,55 +50,38 @@ export async function searchResources(
   // TODO: Implement proper tag filtering
 
   if (query.trim()) {
-    // Use Postgres full-text search function for ranked results
-    const { data: hits, error: rpcError } = await supabase.rpc('search_resources', {
-      search_query: query,
-      target_space_id: spaceId,
-      limit_count: limit,
-      offset_count: offset
-    })
-
-    if (rpcError) {
-      console.error('FTS RPC error:', rpcError)
-      return []
+    // Prefer server-side hybrid search for reliability (auth + env)
+    try {
+      const params = new URLSearchParams({ q: query, limit: String(limit), offset: String(offset) })
+      if (filters.type) params.set('type', filters.type)
+      const res = await fetch(`/api/search/hybrid?${params.toString()}`, { method: 'GET' })
+      if (!res.ok) throw new Error('Hybrid search failed')
+      const data = await res.json()
+      const results = (data.results || []) as ResourceWithTags[]
+      return results.map((r: any, idx: number) => ({
+        ...r,
+        rank: 1,
+        score: results.length - idx
+      }))
+    } catch (e) {
+      console.error('Hybrid search error, falling back to client RPC:', e)
+      // Fallback: simple ilike query
+      const { data: resources, error } = await supabaseQuery
+        .or(`title.ilike.%${query}%,body.ilike.%${query}%`)
+        .order('updated_at', { ascending: false })
+        .limit(limit)
+        .range(offset, offset + limit - 1)
+      if (error) {
+        console.error('Client fallback search error:', error)
+        return []
+      }
+      return (resources || []).map((resource: Record<string, unknown>) => ({
+        ...resource,
+        tags: (resource.tags as Array<{ tag: Record<string, unknown> }>)?.map((rt) => rt.tag).filter(Boolean) || [],
+        rank: 1,
+        score: 1
+      })) as SearchResult[]
     }
-
-    const ids = (hits || []).map((h: any) => h.id)
-    if (ids.length === 0) return []
-
-    // Fetch relationship-expanded records
-    const { data: resources, error } = await supabase
-      .from('resource')
-      .select(`
-        *,
-        tags:resource_tag(
-          tag:tag(*)
-        ),
-        event_meta(*),
-        created_by_user:app_user(*)
-      `)
-      .in('id', ids)
-
-    if (error) {
-      console.error('Search expand error:', error)
-      return []
-    }
-
-    const idToRank: Record<string, { rank: number; score: number; order: number }> = {}
-    ids.forEach((id: string, idx: number) => {
-      const hit = (hits as any[]).find((h) => h.id === id)
-      idToRank[id] = { rank: (hit?.rank as number) || 0, score: (hit?.score as number) || 0, order: idx }
-    })
-
-    const mapped = (resources || []).map((resource: Record<string, unknown>) => ({
-      ...resource,
-      tags: (resource.tags as Array<{ tag: Record<string, unknown> }>)?.map((rt) => rt.tag).filter(Boolean) || [],
-      rank: idToRank[(resource as any).id]?.rank ?? 0,
-      score: idToRank[(resource as any).id]?.score ?? 0
-    })) as SearchResult[]
-
-    // Sort to preserve FTS order
-    return mapped.sort((a, b) => (idToRank[a.id].order - idToRank[b.id].order))
   } else {
     // No search query, just return filtered results
     const { data: resources, error } = await supabaseQuery

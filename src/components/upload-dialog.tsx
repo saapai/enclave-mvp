@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import { useUser } from '@clerk/nextjs'
-import { X, Plus } from 'lucide-react'
+import { X, Plus, Paperclip } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
@@ -26,6 +26,7 @@ export function UploadDialog({ open, onOpenChange }: UploadDialogProps) {
   const [url, setUrl] = useState('')
   const [tags, setTags] = useState<string[]>([])
   const [newTag, setNewTag] = useState('')
+  const [file, setFile] = useState<File | null>(null)
 
   const predefinedTags = [
     'rush', 'philanthropy', 'social', 'academics', 'athletics', 'housing', 'alumni', 'risk', 'finance', 'tech',
@@ -52,65 +53,71 @@ export function UploadDialog({ open, onOpenChange }: UploadDialogProps) {
 
     setLoading(true)
     try {
-      // Create the resource
-      const { data: resource, error: resourceError } = await supabase
-        .from('resource')
-        .insert({
-          space_id: '00000000-0000-0000-0000-000000000000', // Default space for MVP
-          type: 'doc', // Default to document type
-          title: title.trim(),
-          body: description.trim() || null,
-          url: url.trim() || null,
-          source: 'upload',
-          visibility: 'space',
-          created_by: user.id
-        } as any) // eslint-disable-line @typescript-eslint/no-explicit-any
-        .select()
-        .single()
+      if (file) {
+        // Use backend ingestion pipeline when a file is attached
+        const form = new FormData()
+        form.append('file', file)
+        form.append('title', title)
+        form.append('description', description)
+        form.append('type', 'doc')
+        form.append('url', url)
+        form.append('tags', JSON.stringify(tags))
 
-      if (resourceError) {
-        throw resourceError
-      }
-
-      // Create tags if they don't exist and link them to the resource
-      if (tags.length > 0) {
-        for (const tagName of tags) {
-        // Check if tag exists
-        const { data: existingTag } = await supabase
-          .from('tag')
-          .select('id')
-          .eq('space_id', '00000000-0000-0000-0000-000000000000')
-          .eq('name', tagName)
+        const res = await fetch('/api/upload', { method: 'POST', body: form })
+        if (!res.ok) throw new Error('File upload failed')
+      } else {
+        // Fallback: create a simple resource without file
+        const { data: resource, error: resourceError } = await supabase
+          .from('resource')
+          .insert({
+            space_id: '00000000-0000-0000-0000-000000000000',
+            type: 'doc',
+            title: title.trim(),
+            body: description.trim() || null,
+            url: url.trim() || null,
+            source: 'upload',
+            visibility: 'space',
+            created_by: user.id
+          } as any)
+          .select()
           .single()
 
-        let tagId = (existingTag as any)?.id // eslint-disable-line @typescript-eslint/no-explicit-any
+        if (resourceError) throw resourceError
 
-          // Create tag if it doesn't exist
-          if (!tagId) {
-            const { data: newTag, error: tagError } = await supabase
+        if (tags.length > 0) {
+          for (const tagName of tags) {
+            const { data: existingTag } = await supabase
               .from('tag')
-              .insert({
-                space_id: '00000000-0000-0000-0000-000000000000',
-                name: tagName,
-                kind: 'topic' // Default kind for user-created tags
-              } as any) // eslint-disable-line @typescript-eslint/no-explicit-any
-              .select()
+              .select('id')
+              .eq('space_id', '00000000-0000-0000-0000-000000000000')
+              .eq('name', tagName)
               .single()
 
-            if (tagError) {
-              console.error('Tag creation error:', tagError)
-              continue
+            let tagId = (existingTag as any)?.id
+            if (!tagId) {
+              const { data: newTag, error: tagError } = await supabase
+                .from('tag')
+                .insert({
+                  space_id: '00000000-0000-0000-0000-000000000000',
+                  name: tagName,
+                  kind: 'topic'
+                } as any)
+                .select()
+                .single()
+              if (tagError) {
+                console.error('Tag creation error:', tagError)
+                continue
+              }
+              tagId = (newTag as any)?.id
             }
-            tagId = (newTag as any)?.id // eslint-disable-line @typescript-eslint/no-explicit-any
-          }
 
-          // Link tag to resource
-          await supabase
-            .from('resource_tag')
-            .insert({
-              resource_id: (resource as any)?.id, // eslint-disable-line @typescript-eslint/no-explicit-any
-              tag_id: tagId
-            } as any) // eslint-disable-line @typescript-eslint/no-explicit-any
+            await supabase
+              .from('resource_tag')
+              .insert({
+                resource_id: (resource as any)?.id,
+                tag_id: tagId
+              } as any)
+          }
         }
       }
 
@@ -122,6 +129,7 @@ export function UploadDialog({ open, onOpenChange }: UploadDialogProps) {
       setUrl('')
       setTags([])
       setNewTag('')
+      setFile(null)
       
       onOpenChange(false)
     } catch (error) {
@@ -175,6 +183,22 @@ export function UploadDialog({ open, onOpenChange }: UploadDialogProps) {
               className="bg-panel border-line text-[15px] leading-[1.35] placeholder:text-subtle focus:shadow-glow-blue rounded-xl"
             />
             <p className="meta-text mt-1">Optional: Link to external resources, forms, or documents</p>
+          </div>
+
+          <div>
+            <label className="text-sm font-semibold text-white/70 leading-[1.2] mb-2 block">Attach File</label>
+            <div className="flex items-center gap-2">
+              <Input
+                type="file"
+                onChange={(e) => setFile(e.target.files?.[0] || null)}
+                className="bg-panel border-line text-[15px] leading-[1.35] focus:shadow-glow-blue rounded-xl"
+              />
+              <div className="text-xs text-subtle flex items-center gap-1">
+                <Paperclip className="h-3 w-3" />
+                PDF, DOCX, HTML, CSV, JSON, TXT, images
+              </div>
+            </div>
+            <p className="meta-text mt-1">If attached, content will be parsed and made searchable</p>
           </div>
 
           <div>
