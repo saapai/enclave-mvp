@@ -118,10 +118,21 @@ export default function HomePage() {
             {/* Custom Sign In Button */}
             <button 
               onClick={() => window.location.href = '/sign-in'}
-              className="w-full bg-gradient-to-r from-blue-600 to-red-600 text-white font-medium py-3 px-6 rounded-xl hover:opacity-90 transition-opacity"
+              className="w-full bg-gradient-to-r from-blue-600 to-red-600 text-white font-medium py-3 px-6 rounded-xl hover:opacity-90 transition-opacity mb-4"
             >
               Sign In
             </button>
+            
+            {/* Sign Up Link */}
+            <p className="text-sm text-white/50">
+              Don't have an account?{' '}
+              <button 
+                onClick={() => window.location.href = '/sign-up'}
+                className="text-blue-400 hover:text-blue-300 underline"
+              >
+                Sign up
+              </button>
+            </p>
           </div>
         </div>
       </div>
