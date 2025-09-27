@@ -60,9 +60,6 @@ export default function RootLayout({
       afterSignUpUrl="/"
       signInFallbackRedirectUrl="/"
       signUpFallbackRedirectUrl="/"
-      unsafeMetadata={{
-        allowSignUp: true
-      }}
     >
       <html
         className={`${geist.variable} ${geistMono.variable}`}

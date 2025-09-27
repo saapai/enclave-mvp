@@ -17,9 +17,6 @@ export default function SignUpPage() {
           signInUrl="/sign-in"
           fallbackRedirectUrl="/"
           forceRedirectUrl="/"
-          unsafeMetadata={{
-            allowSignUp: true
-          }}
           appearance={{
             baseTheme: undefined,
             elements: {
