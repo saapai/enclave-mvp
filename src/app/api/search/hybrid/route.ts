@@ -1,0 +1,84 @@
+import { NextRequest, NextResponse } from 'next/server'
+import { auth } from '@clerk/nextjs/server'
+import { supabase } from '@/lib/supabase'
+import { embedText } from '@/lib/embeddings'
+
+const DEFAULT_SPACE_ID = '00000000-0000-0000-0000-000000000000'
+
+export async function GET(request: NextRequest) {
+  try {
+    const { userId } = await auth()
+    if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+    const { searchParams } = new URL(request.url)
+    const query = searchParams.get('q')?.trim() || ''
+    const limit = parseInt(searchParams.get('limit') || '10', 10)
+    if (!query) return NextResponse.json({ results: [] })
+
+    // 1) Full-text hits
+    const { data: ftsHits } = await supabase.rpc('search_resources', {
+      search_query: query,
+      target_space_id: DEFAULT_SPACE_ID,
+      limit_count: limit,
+      offset_count: 0
+    })
+
+    // 2) Vector hits (if resource_embedding exists and embeddings configured)
+    let vectorHits: Array<{ id: string; score: number }> = []
+    try {
+      const qEmbed = await embedText(query)
+      if (qEmbed) {
+        const { data: vec } = await (supabase as any).rpc('search_resources_vector', {
+          query_embedding: qEmbed,
+          target_space_id: DEFAULT_SPACE_ID,
+          limit_count: limit,
+          offset_count: 0
+        })
+        vectorHits = (vec || []).map((v: any) => ({ id: v.id, score: v.score }))
+      }
+    } catch { /* ignore */ }
+
+    // 3) Fuse (reciprocal rank fusion)
+    const rrf: Record<string, number> = {}
+    const kRRF = 60
+    ;(ftsHits || []).forEach((h: any, idx: number) => {
+      rrf[h.id] = (rrf[h.id] || 0) + 1 / (kRRF + idx + 1)
+    })
+    vectorHits.forEach((h, idx) => {
+      rrf[h.id] = (rrf[h.id] || 0) + 1 / (kRRF + idx + 1)
+    })
+    const ids = Object.keys(rrf).sort((a, b) => rrf[b] - rrf[a]).slice(0, limit)
+    if (ids.length === 0) return NextResponse.json({ results: [] })
+
+    const { data: resources, error: expandError } = await supabase
+      .from('resource')
+      .select(`
+        *,
+        tags:resource_tag(
+          tag:tag(*)
+        ),
+        event_meta(*),
+        created_by_user:app_user(*)
+      `)
+      .in('id', ids)
+
+    if (expandError) throw expandError
+
+    // Preserve fused order
+    const order: Record<string, number> = {}
+    ids.forEach((id: string, idx: number) => (order[id] = idx))
+    const results = (resources || []).sort((a, b) => order[a.id] - order[b.id])
+
+    const transformed = results.map((r) => ({
+      ...r,
+      tags: (r as any).tags?.map((rt: any) => rt.tag).filter(Boolean) || []
+    }))
+
+    return NextResponse.json({ results: transformed })
+  } catch (e) {
+    console.error('Hybrid search error:', e)
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+  }
+}
+
+

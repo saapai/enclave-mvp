@@ -64,9 +64,12 @@ export async function PATCH(request: NextRequest) {
       )
     }
 
-    // For now, just return success - we'll implement this later
-    const data = { id: queryId, satisfaction }
-    const error = null
+    const { data, error } = await supabase
+      .from('query_log')
+      .update({ satisfaction })
+      .eq('id', queryId)
+      .select()
+      .single()
 
     if (error) {
       throw error

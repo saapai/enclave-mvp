@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@clerk/nextjs/server'
+import { ENV } from '@/lib/env'
 
 export async function POST(request: NextRequest) {
   try {
@@ -15,7 +16,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Query is required' }, { status: 400 })
     }
 
-    const mistralApiKey = process.env.MISTRAL_API_KEY
+    const mistralApiKey = ENV.MISTRAL_API_KEY
     if (!mistralApiKey) {
       return NextResponse.json({ error: 'Mistral API key not configured' }, { status: 500 })
     }

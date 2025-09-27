@@ -49,27 +49,56 @@ export async function searchResources(
   // Apply tag filters - simplified for now
   // TODO: Implement proper tag filtering
 
-  // For now, use a simple text search approach
   if (query.trim()) {
-    // Use ilike for simple text search
-    const { data: resources, error } = await supabaseQuery
-      .or(`title.ilike.%${query}%,body.ilike.%${query}%`)
-      .order('updated_at', { ascending: false })
-      .limit(limit)
-      .range(offset, offset + limit - 1)
+    // Use Postgres full-text search function for ranked results
+    const { data: hits, error: rpcError } = await supabase.rpc('search_resources', {
+      search_query: query,
+      target_space_id: spaceId,
+      limit_count: limit,
+      offset_count: offset
+    })
 
-    if (error) {
-      console.error('Search error:', error)
+    if (rpcError) {
+      console.error('FTS RPC error:', rpcError)
       return []
     }
 
-    // Transform the data to match SearchResult interface
-    return (resources || []).map((resource: Record<string, unknown>) => ({
+    const ids = (hits || []).map((h: any) => h.id)
+    if (ids.length === 0) return []
+
+    // Fetch relationship-expanded records
+    const { data: resources, error } = await supabase
+      .from('resource')
+      .select(`
+        *,
+        tags:resource_tag(
+          tag:tag(*)
+        ),
+        event_meta(*),
+        created_by_user:app_user(*)
+      `)
+      .in('id', ids)
+
+    if (error) {
+      console.error('Search expand error:', error)
+      return []
+    }
+
+    const idToRank: Record<string, { rank: number; score: number; order: number }> = {}
+    ids.forEach((id: string, idx: number) => {
+      const hit = (hits as any[]).find((h) => h.id === id)
+      idToRank[id] = { rank: (hit?.rank as number) || 0, score: (hit?.score as number) || 0, order: idx }
+    })
+
+    const mapped = (resources || []).map((resource: Record<string, unknown>) => ({
       ...resource,
       tags: (resource.tags as Array<{ tag: Record<string, unknown> }>)?.map((rt) => rt.tag).filter(Boolean) || [],
-      rank: 1,
-      score: 1
+      rank: idToRank[(resource as any).id]?.rank ?? 0,
+      score: idToRank[(resource as any).id]?.score ?? 0
     })) as SearchResult[]
+
+    // Sort to preserve FTS order
+    return mapped.sort((a, b) => (idToRank[a.id].order - idToRank[b.id].order))
   } else {
     // No search query, just return filtered results
     const { data: resources, error } = await supabaseQuery
