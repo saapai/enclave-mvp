@@ -48,9 +48,9 @@ export function AIResponse({ query, context, type = 'summary' }: AIResponseProps
   }
 
   return (
-    <Card className="mt-4 border-orange-600/30 bg-orange-600/5">
+    <Card className="mt-4 border-primary/20 bg-primary/5">
       <CardHeader className="pb-3">
-        <CardTitle className="flex items-center gap-2 text-orange-300">
+        <CardTitle className="flex items-center gap-2 text-primary">
           <Sparkles className="h-4 w-4" />
           AI Assistant
         </CardTitle>
@@ -58,13 +58,13 @@ export function AIResponse({ query, context, type = 'summary' }: AIResponseProps
       <CardContent>
         {!response && !loading && !error && (
           <div className="space-y-3">
-            <p className="text-sm text-amber-200/80">
+            <p className="text-sm text-muted-foreground">
               Get an AI-powered summary or answer based on the search results.
             </p>
             <Button 
               onClick={handleGetAIResponse}
               disabled={loading}
-              className="bg-orange-600 hover:bg-orange-700 text-white border-0"
+              className="bg-primary hover:bg-primary/90 text-primary-foreground"
             >
               {loading ? (
                 <>
@@ -82,14 +82,14 @@ export function AIResponse({ query, context, type = 'summary' }: AIResponseProps
         )}
 
         {loading && (
-          <div className="flex items-center gap-2 text-orange-400">
+          <div className="flex items-center gap-2 text-primary">
             <Loader2 className="h-4 w-4 animate-spin" />
             <span>Generating AI response...</span>
           </div>
         )}
 
         {error && (
-          <div className="text-red-400 text-sm">
+          <div className="text-destructive text-sm">
             {error}
           </div>
         )}
@@ -97,14 +97,13 @@ export function AIResponse({ query, context, type = 'summary' }: AIResponseProps
         {response && (
           <div className="space-y-3">
             <div className="prose prose-sm max-w-none">
-              <p className="text-amber-100 leading-relaxed">{response}</p>
+              <p className="text-foreground leading-relaxed">{response}</p>
             </div>
             <Button 
               variant="outline" 
               size="sm"
               onClick={handleGetAIResponse}
               disabled={loading}
-              className="border-orange-600/30 text-amber-200 hover:bg-orange-600/10"
             >
               Regenerate
             </Button>
