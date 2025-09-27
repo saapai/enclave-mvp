@@ -143,3 +143,94 @@ body {
   scrollbar-width: thin;
   scrollbar-color: var(--line) transparent;
 }
+
+/* Clerk component overrides */
+.cl-card {
+  background: var(--panel) !important;
+  border: 1px solid var(--line) !important;
+  box-shadow: 0 0 0 1px rgba(255,255,255,0.02) !important;
+  border-radius: 12px !important;
+}
+
+.cl-formButtonPrimary {
+  background: linear-gradient(to right, #2563EB, #DC2626) !important;
+  color: white !important;
+  border-radius: 12px !important;
+  font-weight: 500 !important;
+  height: 40px !important;
+}
+
+.cl-formButtonPrimary:hover {
+  opacity: 0.9 !important;
+}
+
+.cl-formFieldInput {
+  background: var(--panel) !important;
+  border: 1px solid var(--line) !important;
+  color: var(--text) !important;
+  border-radius: 12px !important;
+  height: 40px !important;
+}
+
+.cl-formFieldInput:focus {
+  box-shadow: 0 0 0 1px rgba(59,130,246,0.25) !important;
+  outline: none !important;
+}
+
+.cl-formFieldInput::placeholder {
+  color: var(--subtle) !important;
+}
+
+.cl-formFieldLabel {
+  color: rgba(255,255,255,0.7) !important;
+  font-weight: 600 !important;
+  font-size: 14px !important;
+}
+
+.cl-headerTitle {
+  color: var(--text) !important;
+  font-weight: 600 !important;
+  font-size: 20px !important;
+}
+
+.cl-headerSubtitle {
+  color: var(--muted) !important;
+  font-size: 14px !important;
+}
+
+.cl-socialButtonsBlockButton {
+  background: var(--panel) !important;
+  border: 1px solid var(--line) !important;
+  color: var(--text) !important;
+  border-radius: 12px !important;
+  height: 40px !important;
+}
+
+.cl-socialButtonsBlockButton:hover {
+  background: var(--panel-2) !important;
+}
+
+.cl-footerActionLink {
+  color: #60A5FA !important;
+}
+
+.cl-footerActionLink:hover {
+  color: #93C5FD !important;
+}
+
+.cl-formFieldErrorText {
+  color: #EF4444 !important;
+}
+
+.cl-formFieldSuccessText {
+  color: #10B981 !important;
+}
+
+.cl-dividerLine {
+  background: var(--line) !important;
+}
+
+.cl-dividerText {
+  color: var(--subtle) !important;
+  font-size: 14px !important;
+}

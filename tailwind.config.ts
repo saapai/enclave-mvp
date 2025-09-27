@@ -10,31 +10,23 @@ const config: Config = {
     extend: {
       colors: {
         // Primary (Blue)
-        blue: {
-          50: '#EEF2FF',
-          400: '#60A5FA',
-          500: '#3B82F6',
-          600: '#2563EB',
-          700: '#1D4ED8',
-        },
+        'blue-50': '#EEF2FF',
+        'blue-400': '#60A5FA',
+        'blue-500': '#3B82F6',
+        'blue-600': '#2563EB',
+        'blue-700': '#1D4ED8',
         // Highlight (Red)
-        red: {
-          500: '#EF4444',
-          600: '#DC2626',
-        },
+        'red-500': '#EF4444',
+        'red-600': '#DC2626',
         // Surfaces
-        surface: {
-          bg: '#0B0C0E',
-          panel: 'rgba(255,255,255,0.05)',
-          'panel-2': 'rgba(255,255,255,0.08)',
-          line: 'rgba(255,255,255,0.10)',
-        },
+        'surface': '#0B0C0E',
+        'panel': 'rgba(255,255,255,0.05)',
+        'panel-2': 'rgba(255,255,255,0.08)',
+        'line': 'rgba(255,255,255,0.10)',
         // Text
-        text: {
-          primary: '#FFFFFF',
-          muted: 'rgba(255,255,255,0.65)',
-          subtle: 'rgba(255,255,255,0.45)',
-        },
+        'text-primary': '#FFFFFF',
+        'text-muted': 'rgba(255,255,255,0.65)',
+        'text-subtle': 'rgba(255,255,255,0.45)',
       },
       boxShadow: {
         'glow-blue': '0 0 0 1px rgba(59,130,246,0.25)',
