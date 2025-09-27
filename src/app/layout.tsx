@@ -58,6 +58,8 @@ export default function RootLayout({
       signUpUrl="/sign-up"
       afterSignInUrl="/"
       afterSignUpUrl="/"
+      signInFallbackRedirectUrl="/"
+      signUpFallbackRedirectUrl="/"
     >
       <html
         className={`${geist.variable} ${geistMono.variable}`}
