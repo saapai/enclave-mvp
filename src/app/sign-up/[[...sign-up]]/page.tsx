@@ -15,6 +15,8 @@ export default function SignUpPage() {
         </div>
         <SignUp 
           signInUrl="/sign-in"
+          fallbackRedirectUrl="/"
+          forceRedirectUrl="/"
           appearance={{
             baseTheme: undefined,
             elements: {

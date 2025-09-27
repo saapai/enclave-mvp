@@ -16,6 +16,8 @@ export default function ClerkSignInPage() {
         
         <SignIn 
           signUpUrl="/sign-up"
+          fallbackRedirectUrl="/"
+          forceRedirectUrl="/"
           appearance={{
             baseTheme: undefined,
             elements: {
