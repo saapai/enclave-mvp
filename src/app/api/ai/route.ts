@@ -5,9 +5,10 @@ import { ENV } from '@/lib/env'
 export async function POST(request: NextRequest) {
   try {
     const { userId } = await auth()
-    
-    // For testing, allow requests without authentication
-    const _testUserId = userId || '00000000-0000-0000-0000-000000000000'
+    const isDev = process.env.NODE_ENV !== 'production'
+    if (!userId && !isDev) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
 
     const body = await request.json()
     const { query, context, type = 'summary' } = body
