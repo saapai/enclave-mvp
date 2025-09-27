@@ -1,6 +1,6 @@
 'use client'
 
-import { SignIn } from '@clerk/nextjs'
+import { SignIn, SignUp } from '@clerk/nextjs'
 
 export default function ClerkSignInPage() {
   return (
@@ -14,13 +14,10 @@ export default function ClerkSignInPage() {
           <p className="text-lg text-white/65 leading-relaxed max-w-sm mx-auto mb-8">Enter your credentials to continue</p>
         </div>
         
-        <SignIn 
-          signUpUrl="/sign-up"
+        <SignUp 
+          signInUrl="/sign-in"
           fallbackRedirectUrl="/"
           forceRedirectUrl="/"
-          unsafeMetadata={{
-            allowSignUp: true
-          }}
           appearance={{
             baseTheme: undefined,
             elements: {
