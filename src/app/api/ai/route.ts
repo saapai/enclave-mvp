@@ -11,9 +11,10 @@ export async function POST(request: NextRequest) {
 
     const body = await request.json()
     const { query, context, type = 'summary' } = body
-
-    if (!query) {
-      return NextResponse.json({ error: 'Query is required' }, { status: 400 })
+    const safeQuery = (query || '').toString().trim()
+    const safeContext = (context || '').toString().trim()
+    if (!safeQuery && !safeContext) {
+      return NextResponse.json({ error: 'Query or context is required' }, { status: 400 })
     }
 
     const mistralApiKey = ENV.MISTRAL_API_KEY
@@ -27,10 +28,10 @@ export async function POST(request: NextRequest) {
 
     if (type === 'summary') {
       systemPrompt = `You are a helpful assistant for a fraternity/sorority chapter. You provide concise, accurate summaries of information based on the context provided. Keep responses under 200 words and focus on the most important details.`
-      userPrompt = `Context: ${context}\n\nQuery: ${query}\n\nProvide a helpful summary or answer based on the context above.`
+      userPrompt = `Context: ${safeContext}\n\nQuery: ${safeQuery || 'Summarize the context above.'}\n\nProvide a helpful summary or answer based on the context above.`
     } else if (type === 'response') {
       systemPrompt = `You are a helpful assistant for a fraternity/sorority chapter. You provide direct, helpful answers to questions about chapter information, events, and procedures. Be friendly but professional.`
-      userPrompt = `Context: ${context}\n\nQuestion: ${query}\n\nAnswer this question based on the context provided.`
+      userPrompt = `Context: ${safeContext}\n\nQuestion: ${safeQuery || 'Provide key takeaways from the context.'}\n\nAnswer this question based on the context provided.`
     }
 
     // Call Mistral API
