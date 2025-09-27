@@ -46,6 +46,9 @@ export default function ClerkSignInPage() {
               formField: 'space-y-2'
             }
           }}
+          redirectUrl="/"
+          afterSignInUrl="/"
+          afterSignUpUrl="/"
         />
       </div>
     </div>
