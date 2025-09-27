@@ -29,7 +29,7 @@ export function AIResponse({ query, context, type = 'summary', initialResponse }
         },
         body: JSON.stringify({
           query,
-          context,
+          context,   
           type,
         }),
       })
