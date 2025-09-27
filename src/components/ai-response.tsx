@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Loader2, Sparkles } from 'lucide-react'
@@ -15,6 +15,13 @@ export function AIResponse({ query, context, type = 'summary' }: AIResponseProps
   const [response, setResponse] = useState<string>('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string>('')
+
+  // Auto-generate AI response when component mounts
+  useEffect(() => {
+    if (query && context && !response && !loading && !error) {
+      handleGetAIResponse()
+    }
+  }, [query, context])
 
   const handleGetAIResponse = async () => {
     setLoading(true)
@@ -62,25 +69,8 @@ export function AIResponse({ query, context, type = 'summary' }: AIResponseProps
       {!response && !loading && !error && (
         <div className="space-y-4">
           <p className="text-muted leading-relaxed">
-            Get an AI-powered summary based on the search results above.
+            Generating AI-powered summary based on the search results...
           </p>
-          <Button
-            variant="primary"
-            onClick={handleGetAIResponse}
-            disabled={loading}
-          >
-            {loading ? (
-              <>
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                Generating...
-              </>
-            ) : (
-              <>
-                <Sparkles className="mr-2 h-4 w-4" />
-                Generate AI {type === 'summary' ? 'Summary' : 'Answer'}
-              </>
-            )}
-          </Button>
         </div>
       )}
 
