@@ -18,6 +18,9 @@ export default function ClerkSignInPage() {
           signUpUrl="/sign-up"
           fallbackRedirectUrl="/"
           forceRedirectUrl="/"
+          unsafeMetadata={{
+            allowSignUp: true
+          }}
           appearance={{
             baseTheme: undefined,
             elements: {
