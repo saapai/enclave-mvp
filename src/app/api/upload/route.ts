@@ -311,11 +311,17 @@ export async function POST(request: NextRequest) {
         } as any)
     }
 
-    // Compute embedding asynchronously (best-effort)
+    // Compute embedding asynchronously (best-effort). Skip if vector table is missing.
     try {
-      const textForEmbed = [inserted.title, extractedText || description].filter(Boolean).join('\n\n')
-      if (textForEmbed) {
-        await upsertResourceEmbedding(resourceId, textForEmbed)
+      const { error: vecCheckError } = await supabase
+        .from('resource_embedding' as any)
+        .select('resource_id')
+        .limit(0)
+      if (!vecCheckError) {
+        const textForEmbed = [inserted.title, extractedText || description].filter(Boolean).join('\n\n')
+        if (textForEmbed) {
+          await upsertResourceEmbedding(resourceId, textForEmbed)
+        }
       }
     } catch (_e) { /* ignore embedding failures */ }
 
