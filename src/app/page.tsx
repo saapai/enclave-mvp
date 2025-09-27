@@ -1,8 +1,8 @@
 'use client'
 
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { useUser } from '@clerk/nextjs'
-import { Search, Plus, Filter, Clock, MapPin, Calendar, ExternalLink } from 'lucide-react'
+import { Search, Plus, Filter, Clock, MapPin, Calendar, ExternalLink, Paperclip } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -22,6 +22,8 @@ export default function HomePage() {
   const [loading, setLoading] = useState(false)
   const [filters, setFilters] = useState<SearchFilters>({})
   const [showUpload, setShowUpload] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const [attaching, setAttaching] = useState(false)
 
   const handleSearch = async () => {
     if (!query.trim() || !user) return
@@ -56,6 +58,37 @@ export default function HomePage() {
   const handleKeyPress = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter') {
       handleSearch()
+    }
+  }
+
+  const handleAttachClick = () => {
+    fileInputRef.current?.click()
+  }
+
+  const handleFileAttachChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file || !user) return
+    setAttaching(true)
+    try {
+      const form = new FormData()
+      form.append('file', file)
+      form.append('title', file.name)
+      form.append('description', '')
+      form.append('type', 'doc')
+      form.append('url', '')
+      form.append('tags', JSON.stringify([]))
+      const res = await fetch('/api/upload', { method: 'POST', body: form })
+      if (res.ok) {
+        // Re-run search to include newly attached content
+        if (query.trim()) {
+          await handleSearch()
+        }
+      }
+    } catch (err) {
+      console.error('Attach upload error:', err)
+    } finally {
+      setAttaching(false)
+      if (fileInputRef.current) fileInputRef.current.value = ''
     }
   }
 
@@ -152,6 +185,17 @@ export default function HomePage() {
                 onKeyPress={handleKeyPress}
                 className="pl-10 pr-4 py-3 text-lg bg-background border-2 border-border focus:border-ring rounded-xl text-foreground placeholder-muted-foreground"
               />
+              <input ref={fileInputRef} type="file" className="hidden" onChange={handleFileAttachChange} />
+              <Button
+                type="button"
+                variant="outline"
+                onClick={handleAttachClick}
+                disabled={attaching}
+                className="absolute right-36 top-1/2 transform -translate-y-1/2"
+              >
+                <Paperclip className="h-4 w-4 mr-2" />
+                {attaching ? 'Attaching...' : 'Attach'}
+              </Button>
               <Button
                 onClick={handleSearch}
                 disabled={loading || !query.trim()}
