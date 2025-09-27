@@ -48,23 +48,26 @@ export function AIResponse({ query, context, type = 'summary' }: AIResponseProps
   }
 
   return (
-    <div className="bg-gray-900 border border-gray-700 rounded-lg p-6">
-      <div className="flex items-center gap-3 mb-4">
-        <div className="w-8 h-8 bg-white rounded-full flex items-center justify-center">
-          <Sparkles className="h-4 w-4 text-black" />
+    <div className="bg-panel border border-line rounded-xl p-6">
+      <div className="flex items-center gap-3 mb-6">
+        <div className="w-10 h-10 bg-[rgba(59,130,246,0.15)] text-blue-400 rounded-full flex items-center justify-center">
+          <Sparkles className="h-5 w-5" />
         </div>
-        <h3 className="text-lg font-semibold text-white">AI Assistant</h3>
+        <div>
+          <h3 className="text-lg font-semibold text-primary tracking-tight">AI Assistant</h3>
+          <p className="text-xs text-muted">Powered by Mistral AI</p>
+        </div>
       </div>
       
       {!response && !loading && !error && (
         <div className="space-y-4">
-          <p className="text-gray-300">
+          <p className="text-muted leading-relaxed">
             Get an AI-powered summary based on the search results above.
           </p>
           <Button
+            variant="primary"
             onClick={handleGetAIResponse}
             disabled={loading}
-            className="bg-white text-black hover:bg-gray-200"
           >
             {loading ? (
               <>
@@ -82,29 +85,28 @@ export function AIResponse({ query, context, type = 'summary' }: AIResponseProps
       )}
 
       {loading && (
-        <div className="flex items-center gap-3 text-gray-300">
-          <div className="w-6 h-6 border-2 border-gray-300/30 border-t-gray-300 rounded-full animate-spin" />
+        <div className="flex items-center gap-3 text-muted">
+          <div className="w-6 h-6 border-2 border-blue-400/30 border-t-blue-400 rounded-full animate-spin" />
           <span>AI is analyzing the results...</span>
         </div>
       )}
 
       {error && (
-        <div className="text-red-400 text-sm bg-red-900/20 p-3 rounded-lg border border-red-500/20">
+        <div className="text-red-300 text-sm bg-red-900/20 p-4 rounded-lg border border-red-500/30">
           {error}
         </div>
       )}
 
       {response && (
         <div className="space-y-4">
-          <div className="bg-gray-800 p-4 rounded-lg">
-            <p className="text-gray-100 leading-relaxed">{response}</p>
+          <div className="bg-panel-2 p-5 rounded-lg border border-line">
+            <p className="text-primary/90 leading-relaxed">{response}</p>
           </div>
           <Button
             variant="outline"
             size="sm"
             onClick={handleGetAIResponse}
             disabled={loading}
-            className="border-gray-600 text-gray-300 hover:text-white hover:bg-gray-800"
           >
             <Sparkles className="mr-2 h-3 w-3" />
             Regenerate

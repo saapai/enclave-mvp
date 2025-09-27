@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import { useUser } from '@clerk/nextjs'
-import { Search, Plus, Filter, Clock, MapPin, Calendar, ExternalLink, Sparkles, MessageSquare, Hash, Users, Settings, Menu, X, Paperclip, Mic } from 'lucide-react'
+import { Search, Plus, Filter, Clock, MapPin, Calendar, ExternalLink, Sparkles, MessageSquare, Hash, Users, Settings, Menu, X, DollarSign, FileText, Send } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -13,6 +13,7 @@ import { SearchFilters, searchResources, logQuery } from '@/lib/search'
 import { ResourceWithTags } from '@/lib/database.types'
 import { UploadDialog } from '@/components/upload-dialog'
 import { AIResponse } from '@/components/ai-response'
+import { PromptCard } from '@/components/prompt-card'
 
 export default function HomePage() {
   const { user, isLoaded } = useUser()
@@ -90,32 +91,31 @@ export default function HomePage() {
   }
 
   return (
-    <div className="min-h-screen bg-black text-white flex flex-col">
+    <div className="min-h-screen bg-surface text-primary flex flex-col">
       {/* Header */}
-      <header className="border-b border-gray-800 bg-black">
+      <header className="border-b border-line bg-[rgba(11,12,14,0.8)] backdrop-blur">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center h-16">
             <div className="flex items-center space-x-4">
-              <div className="w-8 h-8 bg-white rounded flex items-center justify-center">
-                <span className="text-black font-bold text-sm">E</span>
+              <div className="w-8 h-8 bg-[rgba(59,130,246,0.15)] text-blue-400 rounded-lg flex items-center justify-center">
+                <span className="font-bold text-sm">E</span>
               </div>
-              <h1 className="text-lg font-semibold text-white">Enclave</h1>
+              <h1 className="text-lg font-semibold text-primary tracking-tight">Enclave</h1>
             </div>
             <div className="flex items-center space-x-4">
               <Button
+                variant="secondary"
                 onClick={() => setShowUpload(true)}
-                variant="outline"
-                className="border-gray-600 text-white hover:bg-gray-800"
               >
-                <Plus className="h-4 w-4 mr-2" />
+                <Plus className="h-4 w-4" />
                 Add Resource
               </Button>
               <div className="flex items-center space-x-3">
-                <div className="w-8 h-8 bg-gray-600 rounded-full flex items-center justify-center text-white text-sm font-medium">
+                <div className="w-8 h-8 bg-panel rounded-full flex items-center justify-center text-primary text-sm font-medium">
                   {user?.firstName?.[0]}{user?.lastName?.[0]}
                 </div>
                 <div className="hidden sm:block">
-                  <p className="text-sm font-medium text-white">
+                  <p className="text-sm font-medium text-primary">
                     {user?.firstName} {user?.lastName}
                   </p>
                 </div>
@@ -209,112 +209,82 @@ export default function HomePage() {
           </div>
         ) : (
           <div className="flex-1 flex items-center justify-center px-4">
-            <div className="max-w-2xl mx-auto text-center">
-              <h2 className="text-4xl font-bold text-white mb-4">
+            <div className="max-w-3xl mx-auto text-center">
+              <h2 className="hero-title text-primary mb-4">
                 Hello there!
               </h2>
-              <p className="text-xl text-gray-400 mb-12">
+              <p className="hero-subtitle mb-4">
                 How can I help you today?
               </p>
 
+              {/* Visual separator */}
+              <div className="h-0.5 w-12 mx-auto rounded-full bg-gradient-to-r from-blue-500 to-red-500 opacity-80 mb-16"></div>
+
               {/* Suggested Prompts */}
-              <div className="grid gap-4 md:grid-cols-2 mb-12">
-                <Card 
-                  className="bg-gray-900 border-gray-700 hover:bg-gray-800 cursor-pointer transition-colors"
+              <div className="grid gap-4 md:grid-cols-2 mb-16">
+                <PromptCard
+                  icon={<Calendar className="w-5 h-5" />}
                   onClick={() => setQuery("When is the next formal event?")}
                 >
-                  <CardContent className="p-4">
-                    <p className="text-white text-left">When is the next formal event?</p>
-                  </CardContent>
-                </Card>
-                <Card 
-                  className="bg-gray-900 border-gray-700 hover:bg-gray-800 cursor-pointer transition-colors"
+                  When is the next formal event?
+                </PromptCard>
+                <PromptCard
+                  icon={<DollarSign className="w-5 h-5" />}
                   onClick={() => setQuery("How do I pay my chapter dues?")}
                 >
-                  <CardContent className="p-4">
-                    <p className="text-white text-left">How do I pay my chapter dues?</p>
-                  </CardContent>
-                </Card>
-                <Card 
-                  className="bg-gray-900 border-gray-700 hover:bg-gray-800 cursor-pointer transition-colors"
+                  How do I pay my chapter dues?
+                </PromptCard>
+                <PromptCard
+                  icon={<Users className="w-5 h-5" />}
                   onClick={() => setQuery("What rush events are happening this week?")}
                 >
-                  <CardContent className="p-4">
-                    <p className="text-white text-left">What rush events are happening this week?</p>
-                  </CardContent>
-                </Card>
-                <Card 
-                  className="bg-gray-900 border-gray-700 hover:bg-gray-800 cursor-pointer transition-colors"
+                  What rush events are happening this week?
+                </PromptCard>
+                <PromptCard
+                  icon={<FileText className="w-5 h-5" />}
                   onClick={() => setQuery("Where can I find the chapter bylaws?")}
                 >
-                  <CardContent className="p-4">
-                    <p className="text-white text-left">Where can I find the chapter bylaws?</p>
-                  </CardContent>
-                </Card>
+                  Where can I find the chapter bylaws?
+                </PromptCard>
               </div>
             </div>
           </div>
         )}
 
         {/* Bottom Input Area */}
-        <div className="border-t border-gray-800 bg-black p-4">
+        <div className="border-t border-line bg-surface p-4">
           <div className="max-w-4xl mx-auto">
             <div className="relative">
-              <Input
-                type="text"
-                placeholder="Send a message..."
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                onKeyPress={handleKeyPress}
-                className="w-full pr-20 pl-4 py-3 bg-gray-900 border-gray-700 text-white placeholder-gray-400 rounded-lg focus:border-gray-600 focus:ring-0"
-              />
-              <div className="absolute right-2 top-1/2 transform -translate-y-1/2 flex items-center space-x-2">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="text-gray-400 hover:text-white hover:bg-gray-800 p-2"
-                >
-                  <Paperclip className="h-4 w-4" />
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="text-gray-400 hover:text-white hover:bg-gray-800 p-2"
-                >
-                  <Mic className="h-4 w-4" />
-                </Button>
-                <Button
-                  onClick={handleSearch}
-                  disabled={loading || !query.trim()}
-                  size="sm"
-                  className="bg-white text-black hover:bg-gray-200 p-2 rounded-full"
-                >
-                  {loading ? (
-                    <div className="w-4 h-4 border-2 border-black/30 border-t-black rounded-full animate-spin" />
-                  ) : (
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
-                    </svg>
-                  )}
-                </Button>
+              <div className="rounded-2xl border border-line bg-panel flex items-center gap-2 px-3">
+                <Input
+                  type="text"
+                  placeholder="Ask about dues, events, or upload a resource..."
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  onKeyPress={handleKeyPress}
+                  className="flex-1 border-0 bg-transparent text-primary placeholder:text-subtle focus:ring-0 focus:outline-none"
+                />
+                        <Button
+                          variant="primary"
+                          onClick={handleSearch}
+                          disabled={loading || !query.trim()}
+                        >
+                          {loading ? (
+                            <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                          ) : (
+                            <Send className="h-4 w-4" />
+                          )}
+                        </Button>
               </div>
             </div>
             
             {/* Bottom Bar */}
-            <div className="flex items-center justify-between mt-2 text-xs text-gray-500">
-              <div className="flex items-center space-x-4">
-                <Button variant="ghost" size="sm" className="text-gray-500 hover:text-gray-300 p-1">
-                  <Paperclip className="h-3 w-3 mr-1" />
-                  Attach
-                </Button>
-                <div className="flex items-center space-x-1">
-                  <span>Mistral AI</span>
-                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                  </svg>
-                </div>
+            <div className="flex items-center justify-between mt-3 text-xs text-subtle">
+              <div className="flex items-center space-x-1">
+                <span>Powered by Mistral AI</span>
+                <Sparkles className="h-3 w-3" />
               </div>
-              <div className="text-gray-500">
+              <div className="text-subtle">
                 Press Enter to send
               </div>
             </div>
