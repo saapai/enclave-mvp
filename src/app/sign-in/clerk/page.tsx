@@ -1,17 +1,27 @@
+'use client'
+
 import { SignIn } from '@clerk/nextjs'
 
 export default function ClerkSignInPage() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-surface">
       <div className="w-full max-w-md p-6">
+        <div className="text-center mb-8">
+          <div className="w-16 h-16 bg-[rgba(59,130,246,0.15)] text-blue-400 rounded-xl flex items-center justify-center mx-auto mb-6">
+            <div className="text-2xl font-bold">E</div>
+          </div>
+          <h1 className="text-4xl font-bold text-primary mb-3 tracking-tight">Sign In</h1>
+          <p className="text-lg text-white/65 leading-relaxed max-w-sm mx-auto mb-8">Enter your credentials to continue</p>
+        </div>
+        
         <SignIn 
           appearance={{
             baseTheme: undefined,
             elements: {
               rootBox: 'w-full',
               card: 'bg-panel border border-line shadow-[0_0_0_1px_rgba(255,255,255,0.02)] rounded-xl p-6',
-              headerTitle: 'text-primary font-semibold text-xl',
-              headerSubtitle: 'text-muted text-sm',
+              headerTitle: 'hidden',
+              headerSubtitle: 'hidden',
               socialButtonsBlockButton: 'bg-panel border border-line text-primary hover:bg-panel-2 rounded-xl h-10',
               socialButtonsBlockButtonText: 'text-primary',
               formButtonPrimary: 'bg-gradient-to-r from-blue-600 to-red-600 text-white hover:opacity-90 rounded-xl font-medium h-10',
