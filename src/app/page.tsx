@@ -30,7 +30,10 @@ export default function HomePage() {
 
     setLoading(true)
     try {
-      const searchResults = await searchResources(query, '00000000-0000-0000-0000-000000000000', filters)
+      const res = await fetch(`/api/search/hybrid?q=${encodeURIComponent(query)}&limit=20`)
+      if (!res.ok) throw new Error('Search API failed')
+      const data = await res.json()
+      const searchResults = (data.results || []) as ResourceWithTags[]
       setResults(searchResults)
       
       // Log the query
@@ -44,6 +47,7 @@ export default function HomePage() {
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter') {
+      e.preventDefault()
       handleSearch()
     }
   }
