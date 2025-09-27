@@ -229,7 +229,7 @@ export async function POST(request: NextRequest) {
         url: url || null,
         source: 'upload',
         visibility: 'space',
-        created_by: userId
+        created_by: null as any
       } as any)
       .select()
       .single()

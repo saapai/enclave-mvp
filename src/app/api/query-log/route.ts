@@ -5,10 +5,6 @@ import { supabase } from '@/lib/supabase'
 export async function POST(request: NextRequest) {
   try {
     const { userId } = await auth()
-    
-    if (!userId) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
 
     const body = await request.json()
     const { query, resultsCount, clickedResourceId } = body
@@ -24,7 +20,7 @@ export async function POST(request: NextRequest) {
       .from('query_log')
       .insert({
         space_id: '00000000-0000-0000-0000-000000000000',
-        user_id: userId,
+        user_id: userId || null,
         text: query,
         results_count: resultsCount || 0,
         clicked_resource_id: clickedResourceId || null
