@@ -15,6 +15,7 @@ export default function ClerkSignInPage() {
         </div>
         
         <SignIn 
+          signUpUrl="/sign-up"
           appearance={{
             baseTheme: undefined,
             elements: {
