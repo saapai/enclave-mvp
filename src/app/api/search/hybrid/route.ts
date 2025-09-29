@@ -40,6 +40,28 @@ export async function GET(request: NextRequest) {
       }
     } catch { /* ignore */ }
 
+    // 2c) Chunk vector hits (if resource_chunk embeddings exist and RPC available)
+    let chunkVectorScores: Record<string, number> = {}
+    try {
+      const qEmbedChunks = await embedText(query)
+      if (qEmbedChunks) {
+        const { data: chunkVec } = await (supabase as any).rpc('search_resource_chunks_vector', {
+          query_embedding: qEmbedChunks,
+          target_space_id: DEFAULT_SPACE_ID,
+          limit_count: limit * 3,
+          offset_count: 0
+        })
+        // Reduce chunk results to per-resource best score
+        for (const row of (chunkVec || [])) {
+          const rid = row.resource_id as string
+          const score = Number(row.score) || 0
+          if (score > (chunkVectorScores[rid] ?? -Infinity)) {
+            chunkVectorScores[rid] = score
+          }
+        }
+      }
+    } catch { /* ignore */ }
+
     // 2b) Chunk vector hits (resource_chunk)
     try {
       const { data: chunkCheck } = await (supabase as any)
@@ -66,6 +88,13 @@ export async function GET(request: NextRequest) {
     vectorHits.forEach((h, idx) => {
       rrf[h.id] = (rrf[h.id] || 0) + 1 / (kRRF + idx + 1)
     })
+    // Fold in chunk vector scores (order by descending score)
+    if (Object.keys(chunkVectorScores).length > 0) {
+      const sortedChunkIds = Object.keys(chunkVectorScores).sort((a, b) => (chunkVectorScores[b] - chunkVectorScores[a]))
+      sortedChunkIds.forEach((id, idx) => {
+        rrf[id] = (rrf[id] || 0) + 1 / (kRRF + idx + 1)
+      })
+    }
     let ids = Object.keys(rrf).sort((a, b) => rrf[b] - rrf[a]).slice(0, limit)
 
     // Fallback: if FTS/vector produced nothing (or FTS errored), run ilike query
