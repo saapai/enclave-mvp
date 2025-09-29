@@ -1,135 +1,207 @@
-# Enclave v0.1 - Answer Layer for the Chapter
+# Enclave MVP
 
-A knowledge management system for fraternity/sorority chapters that provides instant answers to common questions.
+**The answer layer for your chapter** - An AI-powered knowledge base and search platform for fraternity/sorority chapters.
 
-## Features
+## 🚀 Features
 
-- **Instant Search**: Find answers to questions like "semi-formal bus time" or "dues form" in seconds
-- **Resource Management**: Upload and organize events, documents, forms, links, and FAQs
-- **Smart Tagging**: Categorize content with topic, logistics, and audience tags
-- **Event Details**: Rich event information with dates, locations, costs, and dress codes
-- **Query Logging**: Track what people are searching for to identify content gaps
+- **🔍 Intelligent Search**: Hybrid search combining keyword and semantic search with AI-powered summaries
+- **📝 Resource Management**: Upload and organize documents, events, and information
+- **🤖 AI Assistant**: Automatic AI summaries of search results powered by Mistral AI
+- **🔐 Secure Authentication**: Google OAuth integration with Clerk
+- **📱 Modern UI**: Clean, responsive design with dark theme
+- **🏷️ Smart Tagging**: Organize resources with custom tags
+- **📊 Event Management**: Track events with dates, locations, and costs
 
-## Tech Stack
+## 🛠️ Tech Stack
 
-- **Frontend**: Next.js 14, TypeScript, Tailwind CSS, shadcn/ui
-- **Backend**: Next.js API routes
+- **Frontend**: Next.js 15, React 19, TypeScript
+- **Styling**: Tailwind CSS with custom design system
+- **Authentication**: Clerk with Google OAuth
 - **Database**: Supabase (PostgreSQL)
-- **Authentication**: Clerk
-- **Search**: PostgreSQL Full-Text Search
+- **AI**: Mistral AI for intelligent summaries
+- **Search**: Hybrid search with vector embeddings
+- **Testing**: Jest, React Testing Library, Playwright
 
-## Setup Instructions
+## 🏃‍♂️ Quick Start
 
-### 1. Clone and Install Dependencies
+### Prerequisites
 
+- Node.js 18+ 
+- npm or yarn
+- Supabase account
+- Clerk account
+- Mistral AI API key
+
+### Installation
+
+1. **Clone the repository**
+   ```bash
+   git clone https://github.com/saapai/enclave-mvp.git
+   cd enclave-mvp
+   ```
+
+2. **Install dependencies**
+   ```bash
+   npm install
+   ```
+
+3. **Set up environment variables**
+   ```bash
+   cp .env.example .env.local
+   ```
+   
+   Fill in your environment variables:
+   ```env
+   # Supabase
+   NEXT_PUBLIC_SUPABASE_URL=your_supabase_url
+   NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
+   SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
+   
+   # Clerk
+   NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=your_clerk_publishable_key
+   CLERK_SECRET_KEY=your_clerk_secret_key
+   
+   # Mistral AI
+   MISTRAL_API_KEY=your_mistral_api_key
+   ```
+
+4. **Set up the database**
+   ```bash
+   # Run the SQL scripts in your Supabase dashboard
+   # See supabase-chunks.sql and supabase-chunk-vector-function.sql
+   ```
+
+5. **Run the development server**
+   ```bash
+   npm run dev
+   ```
+
+6. **Open your browser**
+   Navigate to [http://localhost:3000](http://localhost:3000)
+
+## 🧪 Testing
+
+### Unit Tests
 ```bash
-cd enclave-mvp
-npm install
+npm test
 ```
 
-### 2. Set up Supabase
-
-1. Create a new project at [supabase.com](https://supabase.com)
-2. Go to Settings > API to get your project URL and anon key
-3. Go to Settings > Database to get your service role key
-4. Run the SQL schema from `schema.sql` in the Supabase SQL editor
-5. Run the search function from `search-function.sql` in the Supabase SQL editor
-
-### 3. Set up Clerk Authentication
-
-1. Create a new application at [clerk.com](https://clerk.com)
-2. Get your publishable key and secret key from the API Keys section
-
-### 4. Environment Variables
-
-Create a `.env.local` file in the root directory:
-
-```env
-# Clerk Authentication
-NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=your_clerk_publishable_key
-CLERK_SECRET_KEY=your_clerk_secret_key
-
-# Supabase
-NEXT_PUBLIC_SUPABASE_URL=your_supabase_url
-NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
-SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_role_key
-
-# App Configuration
-NEXT_PUBLIC_APP_URL=http://localhost:3000
-```
-
-### 5. Run the Development Server
-
+### E2E Tests
 ```bash
-npm run dev
+npm run test:e2e
 ```
 
-Open [http://localhost:3000](http://localhost:3000) in your browser.
+### Test Coverage
+```bash
+npm run test:coverage
+```
 
-## Database Schema
+## 📦 Deployment
 
-The application uses the following main tables:
+### Vercel (Recommended)
 
-- **space**: Chapter/house information
-- **app_user**: User accounts with roles (member, curator, admin)
-- **resource**: Content items (events, docs, forms, links, FAQs)
-- **tag**: Categorization system
-- **resource_tag**: Many-to-many relationship between resources and tags
-- **event_meta**: Additional event-specific information
-- **query_log**: Search query tracking
-- **gap_alert**: Content gap detection
+1. **Connect your GitHub repository to Vercel**
+2. **Set environment variables in Vercel dashboard**
+3. **Deploy automatically on push to main**
 
-## Usage
+### Manual Deployment
 
-### For Curators
+1. **Build the application**
+   ```bash
+   npm run build
+   ```
 
-1. **Upload Resources**: Click the "Upload" button to add new content
-2. **Add Tags**: Use predefined tags or create new ones to categorize content
-3. **Event Details**: For events, add dates, locations, costs, and dress codes
-4. **Monitor Gaps**: Check the "Requests" tab for content gaps
+2. **Start the production server**
+   ```bash
+   npm start
+   ```
 
-### For Members
+## 🏗️ Project Structure
 
-1. **Search**: Use the search bar to find information quickly
-2. **Filter**: Use type and tag filters to narrow results
-3. **View Details**: Click on resources to see full information
-4. **Access Links**: Click external link buttons to open URLs
+```
+enclave-mvp/
+├── src/
+│   ├── app/                 # Next.js app directory
+│   │   ├── api/            # API routes
+│   │   ├── sign-in/        # Authentication pages
+│   │   └── page.tsx        # Main application page
+│   ├── components/         # React components
+│   │   ├── ui/            # Reusable UI components
+│   │   ├── ai-response.tsx # AI summary component
+│   │   ├── prompt-card.tsx # Search prompt cards
+│   │   └── upload-dialog.tsx # Resource upload modal
+│   └── lib/               # Utility functions
+├── tests/                 # Test files
+│   ├── jest/             # Unit and integration tests
+│   └── e2e/              # End-to-end tests
+├── public/               # Static assets
+└── supabase-*.sql        # Database setup scripts
+```
 
-## Search Features
+## 🔧 Configuration
 
-- **Full-Text Search**: Uses PostgreSQL's built-in search capabilities
-- **Smart Ranking**: Boosts results based on relevance, freshness, and type intent
-- **Type Intent**: Automatically boosts events for time-related queries and forms for application queries
-- **Freshness Scoring**: Newer content ranks higher
+### Clerk Authentication
 
-## Roadmap
+1. **Create a Clerk application**
+2. **Enable Google OAuth**
+3. **Set redirect URLs**:
+   - Development: `http://localhost:3000`
+   - Production: `https://your-domain.com`
 
-### v0.1 (Current)
-- [x] Manual upload and tagging
-- [x] Basic search functionality
-- [x] User authentication
-- [x] Resource management
+### Supabase Setup
 
-### v0.2 (Next)
-- [ ] Google Calendar integration
-- [ ] Slack bot integration
-- [ ] Gap alert system
-- [ ] SMS notifications
+1. **Create a new Supabase project**
+2. **Run the SQL scripts**:
+   - `supabase-chunks.sql` - Creates the chunks table
+   - `supabase-chunk-vector-function.sql` - Sets up vector search
 
-### v0.3 (Future)
-- [ ] Google Docs sync
-- [ ] Advanced analytics
+### Mistral AI
+
+1. **Get API key** from [Mistral AI](https://console.mistral.ai/)
+2. **Add to environment variables**
+
+## 🎨 Design System
+
+The application uses a custom design system with:
+
+- **Colors**: Blue/red gradient palette with dark theme
+- **Typography**: Geist font family
+- **Components**: Consistent spacing, shadows, and hover effects
+- **Accessibility**: WCAG compliant with proper contrast ratios
+
+## 📊 API Endpoints
+
+- `GET /api/search/hybrid` - Hybrid search with AI summaries
+- `POST /api/upload` - Upload new resources
+- `POST /api/ai` - Generate AI summaries
+- `GET /api/resources` - List all resources
+- `POST /api/embeddings/reindex-chunks` - Reindex search vectors
+
+## 🤝 Contributing
+
+1. **Fork the repository**
+2. **Create a feature branch**
+3. **Make your changes**
+4. **Add tests for new functionality**
+5. **Submit a pull request**
+
+## 📝 License
+
+This project is licensed under the MIT License - see the LICENSE file for details.
+
+## 🆘 Support
+
+For support, email [your-email@example.com] or create an issue on GitHub.
+
+## 🗺️ Roadmap
+
+- [ ] Advanced search filters
+- [ ] Resource versioning
+- [ ] User permissions and roles
 - [ ] Mobile app
-- [ ] Multi-space support
+- [ ] Analytics dashboard
+- [ ] Integration with chapter management systems
 
-## Contributing
+---
 
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Test thoroughly
-5. Submit a pull request
-
-## License
-
-MIT License - see LICENSE file for details# Trigger Vercel redeploy
+Built with ❤️ for Greek life communities

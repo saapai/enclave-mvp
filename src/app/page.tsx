@@ -36,15 +36,43 @@ export default function HomePage() {
       const data = await res.json()
       const searchResults = (data.results || []) as ResourceWithTags[]
       setResults(searchResults)
-      // Auto generate AI summary when we have results
+      
+      // Always generate AI response - either summary of results or general response
       try {
-        const aiRes = await fetch(`/api/ask?q=${encodeURIComponent(query)}`)
-        if (aiRes.ok) {
-          const ai = await aiRes.json()
-          setAiAnswer(ai.answer || '')
+        let aiResponse = ''
+        if (searchResults.length > 0) {
+          // Generate summary from search results
+          const context = searchResults.map(r => `${r.title}: ${r.body || ''}`).join('\n\n')
+          const aiRes = await fetch('/api/ai', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              query,
+              context,
+              type: 'summary'
+            })
+          })
+          if (aiRes.ok) {
+            const ai = await aiRes.json()
+            aiResponse = ai.response || ''
+          }
         } else {
-          setAiAnswer('')
+          // Generate general response for queries with no results
+          const aiRes = await fetch('/api/ai', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              query,
+              context: '',
+              type: 'general'
+            })
+          })
+          if (aiRes.ok) {
+            const ai = await aiRes.json()
+            aiResponse = ai.response || ''
+          }
         }
+        setAiAnswer(aiResponse)
       } catch {
         setAiAnswer('')
       }
@@ -189,19 +217,30 @@ export default function HomePage() {
 
       {/* Main Content */}
       <main className="flex-1 flex flex-col">
-        {results.length > 0 ? (
+        {(results.length > 0 || aiAnswer) ? (
           <div className="flex-1 overflow-y-auto">
             <div className="max-w-4xl mx-auto px-4 py-8">
-              {/* AI Response Component */}
-              <AIResponse 
-                query={query}
-                context={results.map(r => `${r.title}: ${r.body || ''}`).join('\n\n')}
-                type="summary"
-                initialResponse={aiAnswer}
-              />
+              {/* AI Response */}
+              {aiAnswer && (
+                <div className="bg-panel border border-line rounded-xl p-6 mb-6">
+                  <div className="flex items-center gap-3 mb-4">
+                    <div className="w-10 h-10 bg-[rgba(59,130,246,0.15)] text-blue-400 rounded-full flex items-center justify-center">
+                      <Sparkles className="h-5 w-5" />
+                    </div>
+                    <div>
+                      <h3 className="text-lg font-semibold text-primary tracking-tight">AI Assistant</h3>
+                      <p className="text-xs text-muted">Powered by Mistral AI</p>
+                    </div>
+                  </div>
+                  <div className="bg-panel-2 p-4 rounded-lg border border-line">
+                    <p className="text-primary/90 leading-relaxed">{aiAnswer}</p>
+                  </div>
+                </div>
+              )}
               
               {/* Results */}
-              <div className="space-y-4 mt-6">
+              {results.length > 0 && (
+                <div className="space-y-4 mt-6">
                 {results.map((resource) => (
                   <Card key={resource.id} className="bg-panel border border-line rounded-xl shadow-[0_0_0_1px_rgba(255,255,255,0.02)]">
                     <CardContent className="p-6">
@@ -267,7 +306,8 @@ export default function HomePage() {
                     </CardContent>
                   </Card>
                 ))}
-              </div>
+                </div>
+              )}
             </div>
           </div>
         ) : (

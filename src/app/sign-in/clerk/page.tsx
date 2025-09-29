@@ -14,8 +14,8 @@ export default function ClerkSignInPage() {
           <p className="text-lg text-white/65 leading-relaxed max-w-sm mx-auto mb-8">Enter your credentials to continue</p>
         </div>
         
-        <SignUp 
-          signInUrl="/sign-in"
+        <SignIn 
+          signUpUrl="/sign-up"
           fallbackRedirectUrl="/"
           forceRedirectUrl="/"
           appearance={{
