@@ -8,7 +8,6 @@ import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Badge } from '@/components/ui/badge'
-import { supabase } from '@/lib/supabase'
 import { toast } from 'sonner'
 
 interface UploadDialogProps {
@@ -70,59 +69,21 @@ export function UploadDialog({ open, onOpenChange }: UploadDialogProps) {
           throw new Error(`Upload failed: ${res.status} ${errorData}`)
         }
       } else {
-        // Fallback: create a simple resource without file
-        const { data: resource, error: resourceError } = await supabase
-          .from('resource')
-          .insert({
-            space_id: '00000000-0000-0000-0000-000000000000',
-            type: 'doc',
-            title: title.trim(),
-            body: description.trim() || null,
-            url: url.trim() || null,
-            source: 'upload',
-            visibility: 'space',
-            created_by: user.id
-          } as any)
-          .select()
-          .single()
+        // Fallback: create a simple resource without file using API
+        const form = new FormData()
+        form.append('title', title)
+        form.append('description', description)
+        form.append('type', 'doc')
+        form.append('url', url)
+        form.append('tags', JSON.stringify(tags))
 
-        if (resourceError) throw resourceError
-
-        if (tags.length > 0) {
-          for (const tagName of tags) {
-            const { data: existingTag } = await supabase
-              .from('tag')
-              .select('id')
-              .eq('space_id', '00000000-0000-0000-0000-000000000000')
-              .eq('name', tagName)
-              .single()
-
-            let tagId = (existingTag as any)?.id
-            if (!tagId) {
-              const { data: newTag, error: tagError } = await supabase
-                .from('tag')
-                .insert({
-                  space_id: '00000000-0000-0000-0000-000000000000',
-                  name: tagName,
-                  kind: 'topic'
-                } as any)
-                .select()
-                .single()
-              if (tagError) {
-                console.error('Tag creation error:', tagError)
-                continue
-              }
-              tagId = (newTag as any)?.id
-            }
-
-            await supabase
-              .from('resource_tag')
-              .insert({
-                resource_id: (resource as any)?.id,
-                tag_id: tagId
-              } as any)
-          }
+        const res = await fetch('/api/upload', { method: 'POST', body: form })
+        if (!res.ok) {
+          const errorData = await res.text()
+          console.error('Upload API error:', res.status, errorData)
+          throw new Error(`Upload failed: ${res.status} ${errorData}`)
         }
+
       }
 
       toast.success('Resource uploaded successfully!')
