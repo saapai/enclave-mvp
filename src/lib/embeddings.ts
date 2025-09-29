@@ -3,7 +3,7 @@ import { ENV } from './env'
 
 // Use Mistral embeddings
 const MISTRAL_API_KEY = ENV.MISTRAL_API_KEY
-const MISTRAL_EMBED_MODEL = process.env.MISTRAL_EMBED_MODEL || 'mistral-embed-v2'
+const MISTRAL_EMBED_MODEL = process.env.MISTRAL_EMBED_MODEL || 'mistral-embed'
 
 export async function embedText(text: string): Promise<number[] | null> {
   if (!MISTRAL_API_KEY) {
@@ -12,26 +12,37 @@ export async function embedText(text: string): Promise<number[] | null> {
   }
   const cleaned = (text || '').slice(0, 200000)
   console.log('Generating embedding for text:', cleaned.slice(0, 100) + '...')
-  const res = await fetch('https://api.mistral.ai/v1/embeddings', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${MISTRAL_API_KEY}`,
-    },
-    body: JSON.stringify({
-      model: MISTRAL_EMBED_MODEL,
-      input: cleaned,
+  
+  // Try different Mistral embedding models
+  const models = ['mistral-embed', 'mistral-large-latest', 'mistral-small-latest']
+  
+  for (const model of models) {
+    console.log('Trying model:', model)
+    const res = await fetch('https://api.mistral.ai/v1/embeddings', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${MISTRAL_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: model,
+        input: cleaned,
+      })
     })
-  })
-  if (!res.ok) {
-    const errorText = await res.text()
-    console.error('Mistral embed error:', res.status, errorText)
-    return null
+    
+    if (res.ok) {
+      const json = await res.json()
+      const embedding = json?.data?.[0]?.embedding as number[]
+      console.log('Generated embedding with dimensions:', embedding?.length, 'using model:', model)
+      return embedding || null
+    } else {
+      const errorText = await res.text()
+      console.log('Model', model, 'failed:', res.status, errorText)
+    }
   }
-  const json = await res.json()
-  const embedding = json?.data?.[0]?.embedding as number[]
-  console.log('Generated embedding with dimensions:', embedding?.length)
-  return embedding || null
+  
+  console.error('All embedding models failed')
+  return null
 }
 
 export async function upsertResourceEmbedding(resourceId: string, text: string): Promise<boolean> {
