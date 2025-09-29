@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@clerk/nextjs/server'
 import { supabase, supabaseAdmin } from '@/lib/supabase'
 import { upsertResourceEmbedding, upsertResourceChunks } from '@/lib/embeddings'
+import { validateResourceTitle, validateResourceDescription, validateTags, validateUrl, sanitizeInput } from '@/lib/security'
+import { apiCache, CACHE_KEYS } from '@/lib/cache'
 
 // Storage bucket used for uploaded files
 const STORAGE_BUCKET = 'resources'
@@ -195,18 +197,43 @@ export async function POST(request: NextRequest) {
     const tagsRaw = (form.get('tags') as string | null) || '[]'
     const startAt = (form.get('startAt') as string | null) || ''
     const endAt = (form.get('endAt') as string | null) || ''
+
+    // Validate inputs
+    const titleValidation = validateResourceTitle(title)
+    if (!titleValidation.valid) {
+      return NextResponse.json({ error: titleValidation.error }, { status: 400 })
+    }
+
+    const descriptionValidation = validateResourceDescription(description)
+    if (!descriptionValidation.valid) {
+      return NextResponse.json({ error: descriptionValidation.error }, { status: 400 })
+    }
+
+    if (url && !validateUrl(url)) {
+      return NextResponse.json({ error: 'Invalid URL format' }, { status: 400 })
+    }
+
+    let tags: string[] = []
+    try {
+      tags = JSON.parse(tagsRaw)
+    } catch {
+      return NextResponse.json({ error: 'Invalid tags format' }, { status: 400 })
+    }
+
+    const tagsValidation = validateTags(tags)
+    if (!tagsValidation.valid) {
+      return NextResponse.json({ error: tagsValidation.error }, { status: 400 })
+    }
+
+    // Sanitize inputs
+    const sanitizedTitle = sanitizeInput(title)
+    const sanitizedDescription = sanitizeInput(description)
+    const sanitizedUrl = url ? sanitizeInput(url) : ''
+    const sanitizedTags = tags.map(tag => sanitizeInput(tag))
     const location = (form.get('location') as string | null) || ''
     const rsvpLink = (form.get('rsvpLink') as string | null) || ''
     const cost = (form.get('cost') as string | null) || ''
     const dressCode = (form.get('dressCode') as string | null) || ''
-
-    let tags: string[] = []
-    try {
-      const parsed = JSON.parse(tagsRaw)
-      if (Array.isArray(parsed)) tags = parsed.filter((t) => typeof t === 'string')
-    } catch {
-      // ignore invalid tags
-    }
 
     if (!title && !file) {
       return NextResponse.json({ error: 'Title or file is required' }, { status: 400 })
@@ -224,9 +251,9 @@ export async function POST(request: NextRequest) {
       .insert({
         space_id: DEFAULT_SPACE_ID,
         type: (['event', 'doc', 'form', 'link', 'faq'] as const).includes(type as any) ? type : 'doc',
-        title: title || (file ? file.name : 'Untitled'),
-        body: extractedText || description || null,
-        url: url || null,
+        title: sanitizedTitle || (file ? file.name : 'Untitled'),
+        body: extractedText || sanitizedDescription || null,
+        url: sanitizedUrl || null,
         source: 'upload',
         visibility: 'space',
         created_by: null as any
@@ -267,8 +294,8 @@ export async function POST(request: NextRequest) {
     }
 
     // Handle tags
-    if (tags.length > 0) {
-      for (const tagName of tags) {
+    if (sanitizedTags.length > 0) {
+      for (const tagName of sanitizedTags) {
         const { data: existingTag } = await supabase
           .from('tag')
           .select('id')
@@ -358,6 +385,9 @@ export async function POST(request: NextRequest) {
           tags: (resource.tags as Array<{ tag: Record<string, unknown> }> | null)?.map((rt) => rt.tag).filter(Boolean) || []
         }
       : resource
+
+    // Clear cache after successful upload
+    apiCache.delete(CACHE_KEYS.RESOURCES)
 
     return NextResponse.json({ resource: transformed })
   } catch (error) {

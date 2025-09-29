@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@clerk/nextjs/server'
 import { supabase } from '@/lib/supabase'
+import { apiCache, CACHE_KEYS } from '@/lib/cache'
 
 export async function DELETE(
   request: NextRequest,
@@ -40,6 +41,9 @@ export async function DELETE(
       console.error('Delete resource error:', error)
       return NextResponse.json({ error: 'Failed to delete resource' }, { status: 500 })
     }
+
+    // Clear cache after deletion
+    apiCache.delete(CACHE_KEYS.RESOURCES)
 
     return NextResponse.json({ success: true })
   } catch (error) {
