@@ -64,7 +64,11 @@ export function UploadDialog({ open, onOpenChange }: UploadDialogProps) {
         form.append('tags', JSON.stringify(tags))
 
         const res = await fetch('/api/upload', { method: 'POST', body: form })
-        if (!res.ok) throw new Error('File upload failed')
+        if (!res.ok) {
+          const errorData = await res.text()
+          console.error('Upload API error:', res.status, errorData)
+          throw new Error(`Upload failed: ${res.status} ${errorData}`)
+        }
       } else {
         // Fallback: create a simple resource without file
         const { data: resource, error: resourceError } = await supabase
@@ -134,7 +138,8 @@ export function UploadDialog({ open, onOpenChange }: UploadDialogProps) {
       onOpenChange(false)
     } catch (error) {
       console.error('Upload error:', error)
-      toast.error('Failed to upload resource. Please try again.')
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred'
+      toast.error(`Failed to upload resource: ${errorMessage}`)
     } finally {
       setLoading(false)
     }

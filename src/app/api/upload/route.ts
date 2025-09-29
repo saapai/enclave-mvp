@@ -181,9 +181,12 @@ async function ocrBuffers(buffers: Buffer[]): Promise<string> {
 
 export async function POST(request: NextRequest) {
   try {
+    console.log('Upload API called')
     const { userId } = await auth()
+    console.log('User ID:', userId)
     const isDev = process.env.NODE_ENV !== 'production'
     if (!userId && !isDev) {
+      console.log('Unauthorized access attempt')
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
@@ -197,6 +200,8 @@ export async function POST(request: NextRequest) {
     const tagsRaw = (form.get('tags') as string | null) || '[]'
     const startAt = (form.get('startAt') as string | null) || ''
     const endAt = (form.get('endAt') as string | null) || ''
+
+    console.log('Form data received:', { title, description, type, url, tagsRaw, hasFile: !!file })
 
     // Validate inputs
     const titleValidation = validateResourceTitle(title)
@@ -236,6 +241,7 @@ export async function POST(request: NextRequest) {
     const dressCode = (form.get('dressCode') as string | null) || ''
 
     if (!title && !file) {
+      console.log('Validation failed: Title or file is required')
       return NextResponse.json({ error: 'Title or file is required' }, { status: 400 })
     }
 
@@ -246,6 +252,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Insert resource first (body uses extracted text if any, else description)
+    console.log('Inserting resource into database...')
     const { data: inserted, error: insertError } = await supabase
       .from('resource')
       .insert({
@@ -261,7 +268,11 @@ export async function POST(request: NextRequest) {
       .select()
       .single()
 
-    if (insertError) throw insertError
+    if (insertError) {
+      console.error('Database insert error:', insertError)
+      throw insertError
+    }
+    console.log('Resource inserted successfully:', inserted)
 
     const resourceId = (inserted as any).id as string
 
