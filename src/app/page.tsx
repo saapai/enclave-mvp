@@ -195,6 +195,13 @@ export default function HomePage() {
             <div className="flex items-center space-x-4">
               <Button
                 variant="secondary"
+                onClick={() => window.location.href = '/resources'}
+              >
+                <FileText className="h-4 w-4" />
+                View Resources
+              </Button>
+              <Button
+                variant="secondary"
                 onClick={() => setShowUpload(true)}
               >
                 <Plus className="h-4 w-4" />

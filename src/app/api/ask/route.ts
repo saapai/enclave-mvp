@@ -39,13 +39,38 @@ export async function GET(request: NextRequest) {
     }
 
     // Hybrid retrieval: FTS + vector with reciprocal rank fusion
-    const { data: ftsHits, error: ftsErr } = await supabase.rpc('search_resources', {
-      search_query: query,
-      target_space_id: DEFAULT_SPACE_ID,
-      limit_count: k,
-      offset_count: 0
-    })
-    if (ftsErr) throw ftsErr
+    let ftsHits: any[] = []
+    try {
+      const { data, error: ftsErr } = await supabase.rpc('search_resources', {
+        search_query: query,
+        target_space_id: DEFAULT_SPACE_ID,
+        limit_count: k,
+        offset_count: 0
+      })
+      if (ftsErr) {
+        console.warn('FTS search failed, falling back to simple search:', ftsErr)
+        // Fallback to simple search
+        const { data: fallbackData } = await supabase
+          .from('resource')
+          .select('id')
+          .eq('space_id', DEFAULT_SPACE_ID)
+          .or(`title.ilike.%${query}%,body.ilike.%${query}%`)
+          .limit(k)
+        ftsHits = fallbackData || []
+      } else {
+        ftsHits = data || []
+      }
+    } catch (err) {
+      console.warn('FTS search error, using fallback:', err)
+      // Fallback to simple search
+      const { data: fallbackData } = await supabase
+        .from('resource')
+        .select('id')
+        .eq('space_id', DEFAULT_SPACE_ID)
+        .or(`title.ilike.%${query}%,body.ilike.%${query}%`)
+        .limit(k)
+      ftsHits = fallbackData || []
+    }
 
     let vectorHits: Array<{ id: string; score: number }> = []
     try {
