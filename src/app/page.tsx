@@ -24,6 +24,7 @@ export default function HomePage() {
   const [showUpload, setShowUpload] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [attaching, setAttaching] = useState(false)
+  const [aiAnswer, setAiAnswer] = useState('')
 
   const handleSearch = async () => {
     if (!query.trim() || !user) return
@@ -35,6 +36,18 @@ export default function HomePage() {
       const data = await res.json()
       const searchResults = (data.results || []) as ResourceWithTags[]
       setResults(searchResults)
+      // Auto generate AI summary when we have results
+      try {
+        const aiRes = await fetch(`/api/ask?q=${encodeURIComponent(query)}`)
+        if (aiRes.ok) {
+          const ai = await aiRes.json()
+          setAiAnswer(ai.answer || '')
+        } else {
+          setAiAnswer('')
+        }
+      } catch {
+        setAiAnswer('')
+      }
       
       // Log the query
       await logQuery('00000000-0000-0000-0000-000000000000', user.id, query, searchResults.length)
@@ -184,6 +197,7 @@ export default function HomePage() {
                 query={query}
                 context={results.map(r => `${r.title}: ${r.body || ''}`).join('\n\n')}
                 type="summary"
+                initialResponse={aiAnswer}
               />
               
               {/* Results */}

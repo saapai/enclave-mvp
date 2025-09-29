@@ -40,6 +40,23 @@ export async function GET(request: NextRequest) {
       }
     } catch { /* ignore */ }
 
+    // 2b) Chunk vector hits (resource_chunk)
+    try {
+      const { data: chunkCheck } = await (supabase as any)
+        .from('resource_chunk')
+        .select('id')
+        .limit(0)
+      if (chunkCheck) {
+        const qEmbed2 = await embedText(query)
+        if (qEmbed2) {
+          // Cosine search over chunk embeddings using raw SQL via RPC is preferred,
+          // but with PostgREST we can approximate by server-side function. If not present,
+          // skip chunk vectors.
+          // Here we fallback to resource text search only; vector chunk search requires an extra RPC.
+        }
+      }
+    } catch { /* ignore */ }
+
     // 3) Fuse (reciprocal rank fusion)
     const rrf: Record<string, number> = {}
     const kRRF = 60

@@ -44,4 +44,38 @@ export async function upsertResourceEmbedding(resourceId: string, text: string):
   return true
 }
 
+export async function upsertResourceChunks(resourceId: string, text: string): Promise<void> {
+  // Simple greedy chunking ~1.5k chars per chunk, respecting paragraph breaks
+  const MAX_CHARS = 1500
+  const paragraphs = text.split(/\n\n+/)
+  const chunks: string[] = []
+  let current = ''
+  for (const p of paragraphs) {
+    if ((current + '\n\n' + p).length > MAX_CHARS) {
+      if (current.trim()) chunks.push(current.trim())
+      current = p
+    } else {
+      current = current ? current + '\n\n' + p : p
+    }
+  }
+  if (current.trim()) chunks.push(current.trim())
+
+  // Insert chunks and embeddings (best-effort)
+  for (let i = 0; i < chunks.length; i++) {
+    const chunk = chunks[i]
+    let embedding: number[] | null = null
+    try {
+      embedding = await embedText(chunk)
+    } catch { /* ignore */ }
+    await (supabase as any)
+      .from('resource_chunk')
+      .insert({
+        resource_id: resourceId,
+        chunk_index: i,
+        chunk_text: chunk,
+        embedding
+      })
+  }
+}
+
 

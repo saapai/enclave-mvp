@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@clerk/nextjs/server'
 import { supabase } from '@/lib/supabase'
 import { embedText } from '@/lib/embeddings'
+import { ENV } from '@/lib/env'
 
 const DEFAULT_SPACE_ID = '00000000-0000-0000-0000-000000000000'
 
@@ -128,7 +129,12 @@ export async function GET(request: NextRequest) {
     // Minimal source list for display
     const sources = (resources || []).map((r) => ({ id: r.id, title: r.title, url: r.url, type: r.type }))
 
-    return NextResponse.json({ answer, sources, query })
+    // Append sources to the answer for UI that renders the raw content
+    const sourcesText = sources.length
+      ? `\n\nSources:\n${sources.map((s, i) => `${i + 1}. ${s.title}${s.url ? ` - ${s.url}` : ''}`).join('\n')}`
+      : ''
+
+    return NextResponse.json({ answer: `${answer}${sourcesText}`.trim(), sources, query })
   } catch (error) {
     console.error('Ask API error:', error)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })

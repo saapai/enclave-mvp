@@ -9,10 +9,11 @@ interface AIResponseProps {
   query: string
   context: string
   type?: 'summary' | 'response'
+  initialResponse?: string
 }
 
-export function AIResponse({ query, context, type = 'summary' }: AIResponseProps) {
-  const [response, setResponse] = useState<string>('')
+export function AIResponse({ query, context, type = 'summary', initialResponse }: AIResponseProps) {
+  const [response, setResponse] = useState<string>(initialResponse || '')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string>('')
 

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@clerk/nextjs/server'
 import { supabase, supabaseAdmin } from '@/lib/supabase'
-import { upsertResourceEmbedding } from '@/lib/embeddings'
+import { upsertResourceEmbedding, upsertResourceChunks } from '@/lib/embeddings'
 
 // Storage bucket used for uploaded files
 const STORAGE_BUCKET = 'resources'
@@ -311,7 +311,7 @@ export async function POST(request: NextRequest) {
         } as any)
     }
 
-    // Compute embedding asynchronously (best-effort). Skip if vector table is missing.
+    // Compute embedding and chunks asynchronously (best-effort). Skip if tables are missing.
     try {
       const { error: vecCheckError } = await supabase
         .from('resource_embedding' as any)
@@ -321,6 +321,17 @@ export async function POST(request: NextRequest) {
         const textForEmbed = [inserted.title, extractedText || description].filter(Boolean).join('\n\n')
         if (textForEmbed) {
           await upsertResourceEmbedding(resourceId, textForEmbed)
+        }
+      }
+      // Chunks
+      const { error: chunkCheckError } = await supabase
+        .from('resource_chunk' as any)
+        .select('id')
+        .limit(0)
+      if (!chunkCheckError) {
+        const textForChunks = extractedText || description || ''
+        if (textForChunks) {
+          await upsertResourceChunks(resourceId, textForChunks)
         }
       }
     } catch (_e) { /* ignore embedding failures */ }
