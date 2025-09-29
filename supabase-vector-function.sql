@@ -13,11 +13,11 @@ BEGIN
   RETURN QUERY
   SELECT r.id,
     -- Convert cosine distance to similarity (1 - distance)
-    (1 - (re.embedding <=> (query_embedding::vector(1536))))::float4 AS score
+    (1 - (re.embedding <=> (query_embedding::vector(1024))))::float4 AS score
   FROM resource_embedding re
   JOIN resource r ON r.id = re.resource_id
   WHERE r.space_id = target_space_id
-  ORDER BY re.embedding <=> (query_embedding::vector(1536)) ASC
+  ORDER BY re.embedding <=> (query_embedding::vector(1024)) ASC
   LIMIT limit_count
   OFFSET offset_count;
 END;

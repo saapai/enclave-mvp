@@ -8,7 +8,7 @@ CREATE TABLE IF NOT EXISTS resource_chunk (
   resource_id UUID REFERENCES resource(id) ON DELETE CASCADE,
   chunk_index INTEGER NOT NULL,
   chunk_text TEXT NOT NULL,
-  embedding VECTOR(1536),
+  embedding VECTOR(1024),
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 

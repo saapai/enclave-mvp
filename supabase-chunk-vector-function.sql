@@ -14,12 +14,12 @@ BEGIN
   RETURN QUERY
   SELECT rc.resource_id,
          rc.chunk_index,
-         (1 - (rc.embedding <=> (query_embedding::vector(1536))))::float4 AS score
+         (1 - (rc.embedding <=> (query_embedding::vector(1024))))::float4 AS score
   FROM resource_chunk rc
   JOIN resource r ON r.id = rc.resource_id
   WHERE r.space_id = target_space_id
     AND rc.embedding IS NOT NULL
-  ORDER BY rc.embedding <=> (query_embedding::vector(1536)) ASC
+  ORDER BY rc.embedding <=> (query_embedding::vector(1024)) ASC
   LIMIT limit_count
   OFFSET offset_count;
 END;

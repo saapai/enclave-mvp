@@ -4,7 +4,7 @@ CREATE EXTENSION IF NOT EXISTS vector;
 -- Resource embeddings table
 CREATE TABLE IF NOT EXISTS resource_embedding (
   resource_id UUID PRIMARY KEY REFERENCES resource(id) ON DELETE CASCADE,
-  embedding VECTOR(1536),
+  embedding VECTOR(1024),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
