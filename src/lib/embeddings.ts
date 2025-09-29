@@ -3,7 +3,7 @@ import { ENV } from './env'
 
 // Use Mistral embeddings
 const MISTRAL_API_KEY = ENV.MISTRAL_API_KEY
-const MISTRAL_EMBED_MODEL = process.env.MISTRAL_EMBED_MODEL || 'mistral-embed'
+const MISTRAL_EMBED_MODEL = process.env.MISTRAL_EMBED_MODEL || 'mistral-embed-v2'
 
 export async function embedText(text: string): Promise<number[] | null> {
   if (!MISTRAL_API_KEY) {
@@ -11,6 +11,7 @@ export async function embedText(text: string): Promise<number[] | null> {
     return null
   }
   const cleaned = (text || '').slice(0, 200000)
+  console.log('Generating embedding for text:', cleaned.slice(0, 100) + '...')
   const res = await fetch('https://api.mistral.ai/v1/embeddings', {
     method: 'POST',
     headers: {
@@ -23,17 +24,23 @@ export async function embedText(text: string): Promise<number[] | null> {
     })
   })
   if (!res.ok) {
-    console.error('Mistral embed error:', await res.text())
+    const errorText = await res.text()
+    console.error('Mistral embed error:', res.status, errorText)
     return null
   }
   const json = await res.json()
-  // Mistral returns { data: [{ embedding: number[] }] }
-  return (json?.data?.[0]?.embedding as number[]) || null
+  const embedding = json?.data?.[0]?.embedding as number[]
+  console.log('Generated embedding with dimensions:', embedding?.length)
+  return embedding || null
 }
 
 export async function upsertResourceEmbedding(resourceId: string, text: string): Promise<boolean> {
   const embedding = await embedText(text)
-  if (!embedding) return false
+  if (!embedding) {
+    console.log('No embedding generated, skipping upsert')
+    return false
+  }
+  console.log('Upserting embedding for resource:', resourceId, 'with dimensions:', embedding.length)
   const { error } = await (supabase as any)
     .from('resource_embedding')
     .upsert({ resource_id: resourceId, embedding, updated_at: new Date().toISOString() })
@@ -41,6 +48,7 @@ export async function upsertResourceEmbedding(resourceId: string, text: string):
     console.error('Embedding upsert error:', error)
     return false
   }
+  console.log('Successfully upserted embedding for resource:', resourceId)
   return true
 }
 
