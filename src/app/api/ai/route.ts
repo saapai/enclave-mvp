@@ -28,8 +28,8 @@ export async function POST(request: NextRequest) {
     let userPrompt = ''
 
     if (type === 'summary') {
-      systemPrompt = `You are a helpful assistant for a fraternity/sorority chapter. You provide concise, accurate summaries of information based on the context provided. Keep responses under 200 words and focus on the most important details.`
-      userPrompt = `Context: ${safeContext}\n\nQuery: ${safeQuery || 'Summarize the context above.'}\n\nProvide a helpful summary or answer based on the context above.`
+      systemPrompt = `You are a helpful assistant for a fraternity/sorority chapter. You provide concise, accurate summaries of information based on the context provided. When users ask for links, always include the actual URLs from the context. Keep responses under 200 words and focus on the most important details.`
+      userPrompt = `Context: ${safeContext}\n\nQuery: ${safeQuery || 'Summarize the context above.'}\n\nProvide a helpful summary or answer based on the context above. If the user is asking for a link or URL, make sure to include the actual URL from the context.`
     } else if (type === 'response') {
       systemPrompt = `You are a helpful assistant for a fraternity/sorority chapter. You provide direct, helpful answers to questions about chapter information, events, and procedures. Be friendly but professional.`
       userPrompt = `Context: ${safeContext}\n\nQuestion: ${safeQuery || 'Provide key takeaways from the context.'}\n\nAnswer this question based on the context provided.`

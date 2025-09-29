@@ -163,3 +163,4 @@ Set `NODE_ENV=development` to enable debug logging and detailed error messages.
 - CDN for static assets
 - Load balancing for high traffic
 - Database read replicas for search queries
+

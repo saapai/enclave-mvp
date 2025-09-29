@@ -94,30 +94,8 @@ async function extractTextFromFile(file: File): Promise<string | null> {
         const result = await (mammoth as any).extractRawText({ buffer })
         let text = (result?.value as string) || ''
 
-        // Attempt OCR on embedded images in DOCX
-        try {
-          const JSZip = (await import('jszip')).default
-          const zip = await JSZip.loadAsync(buffer)
-          const mediaFolder = zip.folder('word/media')
-          if (mediaFolder) {
-            const ocrTargets: Buffer[] = []
-            await Promise.all(
-              Object.keys((mediaFolder as any).files).map(async (name: string) => {
-                const fileEntry = (mediaFolder as any).files[name]
-                if (!fileEntry?.dir) {
-                  const arrbuf = await fileEntry.async('nodebuffer')
-                  ocrTargets.push(Buffer.from(arrbuf))
-                }
-              })
-            )
-            if (ocrTargets.length > 0) {
-              const ocrText = await ocrBuffers(ocrTargets)
-              if (ocrText.trim()) {
-                text += `\n\n[Image Text]\n${ocrText}`
-              }
-            }
-          }
-        } catch { /* ignore OCR failures */ }
+        // Skip OCR on embedded images for now to avoid Tesseract issues
+        // TODO: Re-enable OCR when Tesseract is properly configured
 
         return text || null
       } catch {
@@ -144,16 +122,10 @@ async function extractTextFromFile(file: File): Promise<string | null> {
       }
     }
 
-    // Standalone image files -> OCR
+    // Standalone image files -> Skip OCR for now to avoid Tesseract issues
     if (contentType.startsWith('image/') || /\.(png|jpg|jpeg|gif|bmp|webp|tif|tiff)$/i.test(lowerName)) {
-      try {
-        const arrayBuffer = await file.arrayBuffer()
-        const buffer = Buffer.from(arrayBuffer)
-        const text = await ocrBuffers([buffer])
-        return text || null
-      } catch {
-        return null
-      }
+      // TODO: Re-enable OCR when Tesseract is properly configured
+      return null
     }
 
     // Unsupported types -> no extraction
@@ -163,21 +135,23 @@ async function extractTextFromFile(file: File): Promise<string | null> {
   }
 }
 
-async function ocrBuffers(buffers: Buffer[]): Promise<string> {
-  try {
-    const { createWorker } = await import('tesseract.js')
-    const worker = await createWorker('eng')
-    const results: string[] = []
-    for (const buf of buffers) {
-      const { data } = await worker.recognize(buf as unknown as ArrayBuffer)
-      if (data?.text) results.push(data.text)
-    }
-    await worker.terminate()
-    return results.join('\n').trim()
-  } catch (_e) {
-    return ''
-  }
-}
+// OCR function disabled to avoid Tesseract module issues
+// async function ocrBuffers(buffers: Buffer[]): Promise<string> {
+//   try {
+//     const { createWorker } = await import('tesseract.js')
+//     const worker = await createWorker('eng')
+//     const results: string[] = []
+//     for (const buf of buffers) {
+//       const { data } = await worker.recognize(buf as unknown as ArrayBuffer)
+//       if (data?.text) results.push(data.text)
+//     }
+//     await worker.terminate()
+//     return results.join('\n').trim()
+//   } catch (_e) {
+//     return ''
+//   }
+// }
+
 
 export async function POST(request: NextRequest) {
   try {
@@ -250,6 +224,7 @@ export async function POST(request: NextRequest) {
     if (file) {
       extractedText = await extractTextFromFile(file)
     }
+
 
     // Insert resource first (body uses extracted text if any, else description)
     console.log('Inserting resource into database...')

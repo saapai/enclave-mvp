@@ -186,3 +186,4 @@ test.describe('Search Flow', () => {
     await expect(page.getByText('Search failed')).toBeVisible()
   })
 })
+

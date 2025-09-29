@@ -80,3 +80,6 @@ jspm_packages/
 # TernJS port file
 .tern-port
 .vercel
+
+# clerk configuration (can include secrets)
+/.clerk/

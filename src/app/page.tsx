@@ -42,7 +42,16 @@ export default function HomePage() {
         let aiResponse = ''
         if (searchResults.length > 0) {
           // Generate summary from search results
-          const context = searchResults.map(r => `${r.title}: ${r.body || ''}`).join('\n\n')
+          const context = searchResults.map(r => {
+            let content = `${r.title}: ${r.body || ''}`
+            if (r.url) {
+              content += `\nURL: ${r.url}`
+            }
+            if (r.tags && r.tags.length > 0) {
+              content += `\nTags: ${r.tags.map(t => t.name).join(', ')}`
+            }
+            return content
+          }).join('\n\n')
           const aiRes = await fetch('/api/ai', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },

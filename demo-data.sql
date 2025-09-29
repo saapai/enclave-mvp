@@ -48,3 +48,4 @@ INSERT INTO query_log (space_id, user_id, text, results_count, clicked_resource_
 ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-000000000000', 'housing information', 1, '55555555-5555-5555-5555-555555555555');
 
 
+
