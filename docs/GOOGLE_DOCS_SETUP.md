@@ -21,7 +21,10 @@ This implementation provides live Google Docs integration with:
 ### 2. OAuth Client Configuration
 1. Go to "Credentials" → "Create Credentials" → "OAuth 2.0 Client IDs"
 2. Application type: "Web application"
-3. Add authorized redirect URIs:
+3. **Authorized JavaScript origins** (no paths):
+   - `http://localhost:3000` (development)
+   - `https://yourdomain.com` (production)
+4. **Authorized redirect URIs** (with paths):
    - `http://localhost:3000/api/oauth/google/callback` (development)
    - `https://yourdomain.com/api/oauth/google/callback` (production)
 

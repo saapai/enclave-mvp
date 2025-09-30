@@ -16,7 +16,7 @@ CREATE TABLE google_accounts (
 -- Google Docs sources
 CREATE TABLE sources_google_docs (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  space_id UUID NOT NULL REFERENCES space(id) ON DELETE CASCADE,
+  space_id UUID NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000',
   google_file_id TEXT NOT NULL,
   google_doc_id TEXT NOT NULL,    -- same as fileId for Docs; kept for clarity
   title TEXT,
@@ -33,7 +33,7 @@ CREATE TABLE sources_google_docs (
 -- Google Docs chunks (structure-aware)
 CREATE TABLE google_doc_chunks (
   id BIGSERIAL PRIMARY KEY,
-  space_id UUID NOT NULL REFERENCES space(id) ON DELETE CASCADE,
+  space_id UUID NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000',
   source_id UUID NOT NULL REFERENCES sources_google_docs(id) ON DELETE CASCADE,
   heading_path TEXT[],
   text TEXT NOT NULL,
@@ -77,16 +77,16 @@ CREATE POLICY "Users can access own google account" ON google_accounts
 -- Google docs sources: users can access docs in their spaces
 CREATE POLICY "Users can access google docs in their spaces" ON sources_google_docs
   FOR ALL USING (
-    space_id IN (
-      SELECT space_id FROM space_member WHERE user_id = auth.uid()
-    )
+    space_id = '00000000-0000-0000-0000-000000000000' OR
+    added_by = auth.uid()
   );
 
 -- Google doc chunks: users can access chunks in their spaces
 CREATE POLICY "Users can access google doc chunks in their spaces" ON google_doc_chunks
   FOR ALL USING (
-    space_id IN (
-      SELECT space_id FROM space_member WHERE user_id = auth.uid()
+    space_id = '00000000-0000-0000-0000-000000000000' OR
+    source_id IN (
+      SELECT id FROM sources_google_docs WHERE added_by = auth.uid()
     )
   );
 
@@ -95,9 +95,8 @@ CREATE POLICY "Users can access drive watches for their docs" ON gdrive_watches
   FOR ALL USING (
     google_file_id IN (
       SELECT google_file_id FROM sources_google_docs 
-      WHERE space_id IN (
-        SELECT space_id FROM space_member WHERE user_id = auth.uid()
-      )
+      WHERE space_id = '00000000-0000-0000-0000-000000000000' OR
+            added_by = auth.uid()
     )
   );
 

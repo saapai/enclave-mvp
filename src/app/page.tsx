@@ -2,7 +2,7 @@
 
 import { useRef, useState } from 'react'
 import { useUser } from '@clerk/nextjs'
-import { Search, Plus, Filter, Clock, MapPin, Calendar, ExternalLink, Sparkles, MessageSquare, Hash, Users, Settings, Menu, X, DollarSign, FileText, Send, Paperclip } from 'lucide-react'
+import { Search, Plus, Filter, Clock, MapPin, Calendar, ExternalLink, Sparkles, MessageSquare, Hash, Users, Settings, Menu, X, DollarSign, FileText, Send, Paperclip, Link, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -22,6 +22,9 @@ export default function HomePage() {
   const [loading, setLoading] = useState(false)
   const [filters, setFilters] = useState<SearchFilters>({})
   const [showUpload, setShowUpload] = useState(false)
+  const [showConnectDoc, setShowConnectDoc] = useState(false)
+  const [connectingDoc, setConnectingDoc] = useState(false)
+  const [docUrl, setDocUrl] = useState('')
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [attaching, setAttaching] = useState(false)
   const [aiAnswer, setAiAnswer] = useState('')
@@ -130,6 +133,47 @@ export default function HomePage() {
     }
   }
 
+  const handleConnectGoogleDoc = async () => {
+    if (!docUrl.trim()) return
+
+    setConnectingDoc(true)
+    try {
+      // Check if user has Google account connected
+      const response = await fetch('/api/google/docs/add', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ urlOrFileId: docUrl.trim() })
+      })
+
+      if (response.status === 400) {
+        // User needs to connect Google account first
+        const oauthResponse = await fetch('/api/oauth/google/start')
+        const { authUrl } = await oauthResponse.json()
+        window.location.href = authUrl
+        return
+      }
+
+      if (!response.ok) {
+        throw new Error('Failed to connect Google Doc')
+      }
+
+      const result = await response.json()
+      console.log('Google Doc connected:', result)
+      
+      // Close modal and show success
+      setShowConnectDoc(false)
+      setDocUrl('')
+      
+      // Refresh the page or show success message
+      window.location.reload()
+    } catch (error) {
+      console.error('Error connecting Google Doc:', error)
+      alert('Failed to connect Google Doc. Please try again.')
+    } finally {
+      setConnectingDoc(false)
+    }
+  }
+
   const formatDate = (dateString: string) => {
     return new Date(dateString).toLocaleDateString('en-US', {
       month: 'short',
@@ -215,6 +259,13 @@ export default function HomePage() {
               >
                 <Plus className="h-4 w-4" />
                 Add Resource
+              </Button>
+              <Button
+                onClick={() => setShowConnectDoc(true)}
+                className="bg-gradient-to-r from-green-600 to-blue-600 hover:from-green-700 hover:to-blue-700 text-white border-0"
+              >
+                <Link className="h-4 w-4" />
+                Connect Live Doc
               </Button>
               <div className="flex items-center space-x-3">
                 <div className="w-8 h-8 bg-panel rounded-full flex items-center justify-center text-primary text-sm font-medium">
@@ -422,6 +473,70 @@ export default function HomePage() {
 
       {/* Upload Dialog */}
       <UploadDialog open={showUpload} onOpenChange={setShowUpload} />
+
+      {/* Connect Google Doc Modal */}
+      {showConnectDoc && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-panel border border-line rounded-xl p-6 w-full max-w-md mx-4">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-semibold text-primary">Connect Google Doc</h2>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setShowConnectDoc(false)}
+                className="text-muted hover:text-primary"
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+            
+            <div className="space-y-4">
+              <div>
+                <label className="text-sm font-medium text-primary mb-2 block">
+                  Google Docs URL
+                </label>
+                <Input
+                  type="url"
+                  placeholder="https://docs.google.com/document/d/..."
+                  value={docUrl}
+                  onChange={(e) => setDocUrl(e.target.value)}
+                  className="bg-panel border border-line"
+                />
+                <p className="text-xs text-muted mt-1">
+                  Paste the URL of your Google Doc to sync it live
+                </p>
+              </div>
+              
+              <div className="flex items-center space-x-3">
+                <Button
+                  onClick={handleConnectGoogleDoc}
+                  disabled={!docUrl.trim() || connectingDoc}
+                  className="bg-gradient-to-r from-green-600 to-blue-600 hover:from-green-700 hover:to-blue-700 text-white border-0 flex-1"
+                >
+                  {connectingDoc ? (
+                    <>
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      Connecting...
+                    </>
+                  ) : (
+                    <>
+                      <Link className="h-4 w-4 mr-2" />
+                      Connect Doc
+                    </>
+                  )}
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => setShowConnectDoc(false)}
+                  disabled={connectingDoc}
+                >
+                  Cancel
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
