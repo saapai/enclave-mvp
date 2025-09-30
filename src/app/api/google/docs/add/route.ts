@@ -26,6 +26,8 @@ export async function POST(request: NextRequest) {
     const body = await request.json()
     const { urlOrFileId, spaceId = DEFAULT_SPACE_ID } = body
 
+    console.log('Google Docs add request:', { userId, urlOrFileId, spaceId })
+
     if (!urlOrFileId) {
       return NextResponse.json({ error: 'URL or file ID is required' }, { status: 400 })
     }

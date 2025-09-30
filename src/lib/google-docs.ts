@@ -5,11 +5,32 @@ import { embedText } from '@/lib/embeddings'
 
 // Google OAuth client configuration
 export function createOAuthClient() {
+  // Try different redirect URIs based on environment
+  const redirectUri = getRedirectUri()
+  
   return new google.auth.OAuth2({
     clientId: process.env.GOOGLE_CLIENT_ID!,
     clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
-    redirectUri: process.env.GOOGLE_REDIRECT_URI!
+    redirectUri
   })
+}
+
+// Get the appropriate redirect URI based on environment
+function getRedirectUri(): string {
+  // Production first
+  if (process.env.GOOGLE_REDIRECT_URI && process.env.GOOGLE_REDIRECT_URI.includes('tryenclave.com')) {
+    return process.env.GOOGLE_REDIRECT_URI
+  }
+  
+  // Development - detect current port
+  if (process.env.NODE_ENV === 'development') {
+    // Try to detect the current port from the environment
+    const port = process.env.PORT || '3000'
+    return `http://localhost:${port}/api/oauth/google/callback`
+  }
+  
+  // Fallback to production
+  return process.env.GOOGLE_REDIRECT_URI || 'https://tryenclave.com/api/oauth/google/callback'
 }
 
 // Create authenticated Google Drive client
@@ -208,13 +229,20 @@ export async function storeGoogleTokens(
 
 // Get Google account tokens
 export async function getGoogleTokens(userId: string) {
+  console.log('Getting Google tokens for user:', userId)
+  
   const { data, error } = await supabase
     .from('google_accounts')
     .select('*')
     .eq('user_id', userId)
     .maybeSingle()
 
-  if (error) throw error
+  if (error) {
+    console.error('Error fetching Google tokens:', error)
+    throw error
+  }
+  
+  console.log('Google tokens result:', data ? 'Found' : 'Not found')
   return data
 }
 
