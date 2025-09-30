@@ -25,6 +25,7 @@ export default function HomePage() {
   const [showConnectDoc, setShowConnectDoc] = useState(false)
   const [connectingDoc, setConnectingDoc] = useState(false)
   const [docUrl, setDocUrl] = useState('')
+  const [refreshingDocs, setRefreshingDocs] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [attaching, setAttaching] = useState(false)
   const [aiAnswer, setAiAnswer] = useState('')
@@ -179,6 +180,56 @@ export default function HomePage() {
     }
   }
 
+  const handleRefreshGoogleDocs = async () => {
+    setRefreshingDocs(true)
+    try {
+      // Get list of Google Docs
+      const listResponse = await fetch('/api/google/docs/list')
+      if (!listResponse.ok) {
+        throw new Error('Failed to fetch Google Docs list')
+      }
+      
+      const { googleDocs } = await listResponse.json()
+      
+      if (!googleDocs || googleDocs.length === 0) {
+        alert('No Google Docs connected')
+        return
+      }
+      
+      // Refresh each Google Doc
+      let refreshedCount = 0
+      for (const doc of googleDocs) {
+        try {
+          const refreshResponse = await fetch('/api/google/docs/refresh', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ sourceId: doc.id })
+          })
+          
+          if (refreshResponse.ok) {
+            const result = await refreshResponse.json()
+            if (result.isModified) {
+              refreshedCount++
+            }
+          }
+        } catch (error) {
+          console.error(`Failed to refresh doc ${doc.id}:`, error)
+        }
+      }
+      
+      if (refreshedCount > 0) {
+        alert(`Refreshed ${refreshedCount} Google Doc${refreshedCount > 1 ? 's' : ''}`)
+      } else {
+        alert('All Google Docs are up to date')
+      }
+    } catch (error) {
+      console.error('Error refreshing Google Docs:', error)
+      alert('Failed to refresh Google Docs')
+    } finally {
+      setRefreshingDocs(false)
+    }
+  }
+
   const handleConnectGoogleDoc = async () => {
     if (!docUrl.trim()) return
 
@@ -329,6 +380,24 @@ export default function HomePage() {
               >
                 <Link className="h-4 w-4" />
                 Connect Live Doc
+              </Button>
+              <Button
+                onClick={handleRefreshGoogleDocs}
+                disabled={refreshingDocs}
+                variant="outline"
+                className="border-green-600 text-green-600 hover:bg-green-50"
+              >
+                {refreshingDocs ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Refreshing...
+                  </>
+                ) : (
+                  <>
+                    <Link className="h-4 w-4 mr-2" />
+                    Refresh Docs
+                  </>
+                )}
               </Button>
               <div className="flex items-center space-x-3">
                 <div className="w-8 h-8 bg-panel rounded-full flex items-center justify-center text-primary text-sm font-medium">
