@@ -1,5 +1,6 @@
 import { supabase } from './supabase'
 import { ResourceWithTags, SearchResult } from './database.types'
+import { generateEmbedding } from './embeddings'
 
 export interface SearchFilters {
   type?: string
@@ -11,6 +12,77 @@ export interface SearchFilters {
 export interface SearchOptions {
   limit?: number
   offset?: number
+}
+
+// Hybrid search that includes both regular resources and Google Docs
+export async function searchResourcesHybrid(
+  query: string,
+  spaceId: string,
+  filters: SearchFilters = {},
+  options: SearchOptions = {}
+): Promise<SearchResult[]> {
+  const { limit = 20, offset = 0 } = options
+  
+  if (!query.trim()) {
+    // Return regular resources only for empty queries
+    return searchResources(query, spaceId, filters, options)
+  }
+
+  try {
+    // Generate embedding for vector search
+    const queryEmbedding = await generateEmbedding(query)
+    
+    // Search regular resources
+    const regularResults = await searchResources(query, spaceId, filters, { limit: limit * 2, offset: 0 })
+    
+    // Search Google Docs chunks
+    const { data: googleDocsResults, error: gdError } = await supabase
+      .rpc('search_google_docs_vector', {
+        query_embedding: queryEmbedding,
+        target_space_id: spaceId,
+        limit_count: limit * 2,
+        offset_count: 0
+      })
+
+    if (gdError) {
+      console.error('Google Docs search error:', gdError)
+    }
+
+    // Convert Google Docs results to SearchResult format
+    const googleDocsSearchResults: SearchResult[] = (googleDocsResults || []).map((chunk: any) => ({
+      id: `google_doc_${chunk.source_id}_${chunk.id}`,
+      title: `Google Doc Chunk`,
+      body: chunk.text,
+      type: 'google_doc',
+      url: `https://docs.google.com/document/d/${chunk.source_id}/edit`,
+      space_id: spaceId,
+      created_at: chunk.created_at,
+      updated_at: chunk.updated_at,
+      created_by: chunk.added_by,
+      tags: [],
+      rank: chunk.similarity || 0,
+      score: chunk.similarity || 0,
+      metadata: {
+        source_id: chunk.source_id,
+        heading_path: chunk.heading_path,
+        chunk_id: chunk.id
+      }
+    }))
+
+    // Combine and rank results
+    const allResults = [...regularResults, ...googleDocsSearchResults]
+    
+    // Sort by score/rank
+    allResults.sort((a, b) => (b.score || 0) - (a.score || 0))
+    
+    // Apply limit and offset
+    return allResults.slice(offset, offset + limit)
+    
+  } catch (error) {
+    console.error('Hybrid search error:', error)
+    // Fallback to regular search
+    return searchResources(query, spaceId, filters, options)
+  }
 }
 
 export async function searchResources(

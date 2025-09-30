@@ -112,6 +112,16 @@ export async function POST(request: NextRequest) {
 
   } catch (error) {
     console.error('Google Docs add error:', error)
+    
+    // Return more specific error information
+    if (error instanceof Error) {
+      return NextResponse.json({ 
+        error: 'Failed to add Google Doc',
+        details: error.message,
+        stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+      }, { status: 500 })
+    }
+    
     return NextResponse.json({ error: 'Failed to add Google Doc' }, { status: 500 })
   }
 }

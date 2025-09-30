@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@clerk/nextjs/server'
-import { searchResources, logQuery } from '@/lib/search'
+import { searchResourcesHybrid, logQuery } from '@/lib/search'
 
 export async function GET(request: NextRequest) {
   try {
@@ -25,7 +25,7 @@ export async function GET(request: NextRequest) {
       to
     }
 
-    const results = await searchResources(
+    const results = await searchResourcesHybrid(
       query,
       '00000000-0000-0000-0000-000000000000', // Default space for MVP
       filters,
