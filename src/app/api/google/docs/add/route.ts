@@ -112,8 +112,17 @@ export async function POST(request: NextRequest) {
       }
     })
 
-  } catch (error) {
+  } catch (error: any) {
     console.error('Google Docs add error:', error)
+    
+    // Check if it's a duplicate key error
+    if (error?.code === '23505' && error?.message?.includes('duplicate key')) {
+      return NextResponse.json({ 
+        error: 'This Google Doc is already connected',
+        details: 'The document has already been added to your resources.',
+        isAlreadyConnected: true
+      }, { status: 409 })
+    }
     
     // Return more specific error information
     if (error instanceof Error) {

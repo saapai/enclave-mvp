@@ -57,6 +57,12 @@ export default function HomePage() {
               setShowConnectDoc(false)
               setDocUrl('')
               window.location.reload()
+            } else if (response.status === 409) {
+              // Already connected
+              const errorData = await response.json()
+              alert(`Google Doc is already connected! You can search for its content now.`)
+              setShowConnectDoc(false)
+              setDocUrl('')
             } else {
               const errorData = await response.json()
               alert(`Failed to connect Google Doc: ${errorData.details || errorData.error}`)
@@ -197,6 +203,14 @@ export default function HomePage() {
           window.location.href = authUrl
           return
         }
+      }
+
+      if (response.status === 409) {
+        // Already connected
+        alert(`Google Doc is already connected! You can search for its content now.`)
+        setShowConnectDoc(false)
+        setDocUrl('')
+        return
       }
 
       if (!response.ok) {
