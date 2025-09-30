@@ -3,7 +3,7 @@
 
 -- Google OAuth accounts
 CREATE TABLE google_accounts (
-  user_id UUID PRIMARY KEY REFERENCES app_user(id) ON DELETE CASCADE,
+  user_id TEXT PRIMARY KEY,  -- Changed from UUID to TEXT for Clerk user IDs
   google_user_id TEXT UNIQUE NOT NULL,
   email TEXT NOT NULL,
   access_token TEXT NOT NULL,     -- encrypt at rest
@@ -24,7 +24,7 @@ CREATE TABLE sources_google_docs (
   latest_revision_id TEXT,
   modified_time TIMESTAMPTZ,
   permissions_hash TEXT,
-  added_by UUID NOT NULL REFERENCES app_user(id) ON DELETE CASCADE,
+  added_by TEXT NOT NULL,  -- Changed from UUID to TEXT for Clerk user IDs
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW(),
   UNIQUE(space_id, google_file_id)
