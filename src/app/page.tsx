@@ -476,8 +476,8 @@ export default function HomePage() {
 
       {/* Connect Google Doc Modal */}
       {showConnectDoc && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-panel border border-line rounded-xl p-6 w-full max-w-md mx-4">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[9999]">
+          <div className="bg-panel border border-line rounded-xl p-6 w-full max-w-md mx-4 shadow-2xl">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-lg font-semibold text-primary">Connect Google Doc</h2>
               <Button
