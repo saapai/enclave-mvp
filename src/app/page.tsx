@@ -146,11 +146,14 @@ export default function HomePage() {
       })
 
       if (response.status === 400) {
-        // User needs to connect Google account first
-        const oauthResponse = await fetch('/api/oauth/google/start')
-        const { authUrl } = await oauthResponse.json()
-        window.location.href = authUrl
-        return
+        const errorData = await response.json()
+        if (errorData.needsOAuth) {
+          // User needs to connect Google account first
+          const oauthResponse = await fetch('/api/oauth/google/start')
+          const { authUrl } = await oauthResponse.json()
+          window.location.href = authUrl
+          return
+        }
       }
 
       if (!response.ok) {

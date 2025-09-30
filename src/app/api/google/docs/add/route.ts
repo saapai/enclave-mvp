@@ -33,7 +33,11 @@ export async function POST(request: NextRequest) {
     // Get user's Google tokens
     const googleAccount = await getGoogleTokens(userId)
     if (!googleAccount) {
-      return NextResponse.json({ error: 'Google account not connected' }, { status: 400 })
+      return NextResponse.json({ 
+        error: 'Google account not connected',
+        needsOAuth: true,
+        oauthUrl: `/api/oauth/google/start`
+      }, { status: 400 })
     }
 
     // Refresh tokens if needed

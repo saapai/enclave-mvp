@@ -212,7 +212,7 @@ export async function getGoogleTokens(userId: string) {
     .from('google_accounts')
     .select('*')
     .eq('user_id', userId)
-    .single()
+    .maybeSingle()
 
   if (error) throw error
   return data
