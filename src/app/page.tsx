@@ -1,6 +1,6 @@
 'use client'
 
-import { useRef, useState } from 'react'
+import { useRef, useState, useEffect } from 'react'
 import { useUser } from '@clerk/nextjs'
 import { Search, Plus, Filter, Clock, MapPin, Calendar, ExternalLink, Sparkles, MessageSquare, Hash, Users, Settings, Menu, X, DollarSign, FileText, Send, Paperclip, Link, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -28,6 +28,46 @@ export default function HomePage() {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [attaching, setAttaching] = useState(false)
   const [aiAnswer, setAiAnswer] = useState('')
+
+  // Check if we just completed OAuth and have a pending Google Doc URL
+  useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search)
+    if (urlParams.get('google_connected') === 'true') {
+      const pendingUrl = localStorage.getItem('pendingGoogleDocUrl')
+      if (pendingUrl && user) {
+        // Remove from localStorage
+        localStorage.removeItem('pendingGoogleDocUrl')
+        
+        // Set the URL and automatically try to connect
+        setDocUrl(pendingUrl)
+        setShowConnectDoc(true)
+        
+        // Automatically try to connect after a short delay
+        setTimeout(async () => {
+          try {
+            const response = await fetch('/api/google/docs/add', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ urlOrFileId: pendingUrl })
+            })
+            
+            if (response.ok) {
+              const result = await response.json()
+              alert(`Successfully connected Google Doc: ${result.source?.title || 'Document'}`)
+              setShowConnectDoc(false)
+              setDocUrl('')
+              window.location.reload()
+            } else {
+              const errorData = await response.json()
+              alert(`Failed to connect Google Doc: ${errorData.details || errorData.error}`)
+            }
+          } catch (error) {
+            console.error('Error auto-connecting Google Doc:', error)
+          }
+        }, 1000)
+      }
+    }
+  }, [user])
 
   const handleSearch = async () => {
     if (!query.trim() || !user) return
@@ -148,6 +188,9 @@ export default function HomePage() {
       if (response.status === 400) {
         const errorData = await response.json()
         if (errorData.needsOAuth) {
+          // Store the Google Docs URL in localStorage before OAuth
+          localStorage.setItem('pendingGoogleDocUrl', docUrl.trim())
+          
           // User needs to connect Google account first
           const oauthResponse = await fetch('/api/oauth/google/start')
           const { authUrl } = await oauthResponse.json()
@@ -157,7 +200,8 @@ export default function HomePage() {
       }
 
       if (!response.ok) {
-        throw new Error('Failed to connect Google Doc')
+        const errorData = await response.json()
+        throw new Error(errorData.details || 'Failed to connect Google Doc')
       }
 
       const result = await response.json()
@@ -167,11 +211,13 @@ export default function HomePage() {
       setShowConnectDoc(false)
       setDocUrl('')
       
-      // Refresh the page or show success message
+      alert(`Successfully connected Google Doc: ${result.source?.title || 'Document'}`)
+      
+      // Refresh the page to show the new resource
       window.location.reload()
     } catch (error) {
       console.error('Error connecting Google Doc:', error)
-      alert('Failed to connect Google Doc. Please try again.')
+      alert(`Failed to connect Google Doc: ${error instanceof Error ? error.message : 'Unknown error'}`)
     } finally {
       setConnectingDoc(false)
     }
