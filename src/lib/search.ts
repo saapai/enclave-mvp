@@ -1,6 +1,6 @@
 import { supabase } from './supabase'
 import { ResourceWithTags, SearchResult } from './database.types'
-import { generateEmbedding } from './embeddings'
+import { embedText } from './embeddings'
 
 export interface SearchFilters {
   type?: string
@@ -30,7 +30,7 @@ export async function searchResourcesHybrid(
 
   try {
     // Generate embedding for vector search
-    const queryEmbedding = await generateEmbedding(query)
+    const queryEmbedding = await embedText(query)
     
     // Search regular resources
     const regularResults = await searchResources(query, spaceId, filters, { limit: limit * 2, offset: 0 })
