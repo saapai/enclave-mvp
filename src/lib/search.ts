@@ -3,6 +3,8 @@ import { ResourceWithTags, SearchResult } from './database.types'
 import { embedText } from './embeddings'
 import { logger } from './logger'
 import { cache, CACHE_KEYS, CACHE_TTL } from './cache'
+import { queryMonitor, monitorSupabaseQuery } from './query-monitor'
+import { metrics } from './metrics'
 
 export interface SearchFilters {
   type?: string
@@ -39,23 +41,28 @@ export async function searchResourcesHybrid(
   }
 
   try {
+    const searchStartTime = Date.now()
+    
     // Generate embedding for vector search
     const queryEmbedding = await embedText(query)
     
     // Search regular resources
     const regularResults = await searchResources(query, spaceId, filters, { limit: limit * 2, offset: 0 })
     
-    // Search Google Docs chunks
-    const { data: googleDocsResults, error: gdError } = await supabase
-      .rpc('search_google_docs_vector', {
+    // Search Google Docs chunks with monitoring
+    const { data: googleDocsResults, error: gdError } = await monitorSupabaseQuery(
+      'search_google_docs_vector',
+      () => supabase.rpc('search_google_docs_vector', {
         query_embedding: queryEmbedding,
         target_space_id: spaceId,
         limit_count: limit * 2,
         offset_count: 0
-      })
+      }),
+      limit * 2
+    )
 
     if (gdError) {
-      console.error('Google Docs search error:', gdError)
+      logger.error('Google Docs search error', gdError, { query, spaceId })
     }
 
     // Convert Google Docs results to SearchResult format
@@ -90,6 +97,10 @@ export async function searchResourcesHybrid(
     
     // Cache the results
     cache.set(cacheKey, allResults, CACHE_TTL.SEARCH_RESULTS)
+    
+    // Record search metrics
+    const searchDuration = Date.now() - searchStartTime
+    metrics.recordSearchQuery(query, searchDuration, finalResults.length, false)
     
     return finalResults
     
