@@ -1,13 +1,28 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@clerk/nextjs/server'
 import { ENV } from '@/lib/env'
+import { checkRateLimit } from '@/lib/rate-limit'
+import { logger } from '@/lib/logger'
 
 export async function POST(request: NextRequest) {
   try {
     const { userId } = await auth()
-    const isDev = process.env.NODE_ENV !== 'production'
-    if (!userId && !isDev) {
+    
+    if (!userId) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
+    // Check rate limit
+    const rateLimitResult = checkRateLimit(userId, 'AI_REQUEST')
+    if (!rateLimitResult.allowed) {
+      return NextResponse.json(
+        { 
+          error: 'Rate limit exceeded', 
+          remaining: rateLimitResult.remaining,
+          resetTime: rateLimitResult.resetTime
+        }, 
+        { status: 429 }
+      )
     }
 
     const body = await request.json()
@@ -64,7 +79,7 @@ export async function POST(request: NextRequest) {
 
     if (!response.ok) {
       const errorData = await response.text()
-      console.error('Mistral API error:', errorData)
+      logger.error('Mistral API error', new Error(errorData), { userId, query: safeQuery })
       return NextResponse.json(
         { error: 'Failed to get AI response' },
         { status: 500 }
@@ -74,14 +89,25 @@ export async function POST(request: NextRequest) {
     const data = await response.json()
     const aiResponse = data.choices?.[0]?.message?.content || 'No response generated'
 
+    logger.debug('AI response generated', { 
+      userId, 
+      query: safeQuery, 
+      type,
+      responseLength: aiResponse.length 
+    })
+
     return NextResponse.json({ 
       response: aiResponse,
       type,
-      query 
+      query: safeQuery,
+      rateLimit: {
+        remaining: rateLimitResult.remaining,
+        resetTime: rateLimitResult.resetTime
+      }
     })
 
   } catch (error) {
-    console.error('AI API error:', error)
+    logger.error('AI API error', error as Error, { userId, query: safeQuery })
     return NextResponse.json(
       { error: 'Internal server error' },
       { status: 500 }

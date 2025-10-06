@@ -2,6 +2,7 @@ import { supabase } from './supabase'
 import { ResourceWithTags, SearchResult } from './database.types'
 import { embedText } from './embeddings'
 import { logger } from './logger'
+import { cache, CACHE_KEYS, CACHE_TTL } from './cache'
 
 export interface SearchFilters {
   type?: string
@@ -27,6 +28,14 @@ export async function searchResourcesHybrid(
   if (!query.trim()) {
     // Return regular resources only for empty queries
     return searchResources(query, spaceId, filters, options)
+  }
+
+  // Check cache first
+  const cacheKey = CACHE_KEYS.SEARCH_RESULTS(query, spaceId, filters)
+  const cachedResults = cache.get<SearchResult[]>(cacheKey)
+  if (cachedResults) {
+    logger.debug('Returning cached search results', { query, spaceId, resultCount: cachedResults.length })
+    return cachedResults.slice(offset, offset + limit)
   }
 
   try {
@@ -77,10 +86,15 @@ export async function searchResourcesHybrid(
     allResults.sort((a, b) => (b.score || 0) - (a.score || 0))
     
     // Apply limit and offset
-    return allResults.slice(offset, offset + limit)
+    const finalResults = allResults.slice(offset, offset + limit)
+    
+    // Cache the results
+    cache.set(cacheKey, allResults, CACHE_TTL.SEARCH_RESULTS)
+    
+    return finalResults
     
   } catch (error) {
-    console.error('Hybrid search error:', error)
+    logger.error('Hybrid search error', error as Error, { query, spaceId })
     // Fallback to regular search
     return searchResources(query, spaceId, filters, options)
   }
