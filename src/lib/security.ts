@@ -1,4 +1,5 @@
 // Security utilities and validation functions
+import { checkRateLimit } from './rate-limit'
 
 export function sanitizeInput(input: string): string {
   if (typeof input !== 'string') return ''
@@ -80,15 +81,9 @@ export function validateTags(tags: string[]): { valid: boolean; error?: string }
   return { valid: true }
 }
 
-export function rateLimitCheck(userId: string, action: string): boolean {
-  // Simple in-memory rate limiting (in production, use Redis or similar)
-  const now = Date.now()
-  const windowMs = 60 * 1000 // 1 minute
-  const maxRequests = 60 // 60 requests per minute
-  
-  // This is a simplified implementation
-  // In production, implement proper rate limiting with persistent storage
-  return true
+export function rateLimitCheck(userId: string, action: 'SEARCH' | 'UPLOAD' | 'AI_REQUEST' | 'GOOGLE_DOCS' | 'GENERAL'): boolean {
+  const result = checkRateLimit(userId, action)
+  return result.allowed
 }
 
 export function validateFileUpload(file: File): { valid: boolean; error?: string } {
@@ -112,5 +107,56 @@ export function validateFileUpload(file: File): { valid: boolean; error?: string
   }
   
   return { valid: true }
+}
+
+export function validateGoogleFileId(fileId: string): { valid: boolean; error?: string } {
+  if (!fileId || typeof fileId !== 'string') {
+    return { valid: false, error: 'File ID is required' }
+  }
+  
+  // Google file IDs should only contain alphanumeric characters, hyphens, and underscores
+  if (!/^[a-zA-Z0-9-_]+$/.test(fileId)) {
+    return { valid: false, error: 'Invalid file ID format' }
+  }
+  
+  // Reasonable length limit
+  if (fileId.length > 100) {
+    return { valid: false, error: 'File ID too long' }
+  }
+  
+  return { valid: true }
+}
+
+export function validateGoogleUrl(url: string): { valid: boolean; error?: string } {
+  if (!url || typeof url !== 'string') {
+    return { valid: false, error: 'URL is required' }
+  }
+  
+  try {
+    const parsedUrl = new URL(url)
+    
+    // Only allow Google Docs URLs
+    if (!parsedUrl.hostname.includes('docs.google.com') && 
+        !parsedUrl.hostname.includes('drive.google.com')) {
+      return { valid: false, error: 'Only Google Docs and Google Drive URLs are supported' }
+    }
+    
+    // Check for valid Google Docs patterns
+    const validPatterns = [
+      /\/document\/d\/[a-zA-Z0-9-_]+/,
+      /\/spreadsheets\/d\/[a-zA-Z0-9-_]+/,
+      /\/presentation\/d\/[a-zA-Z0-9-_]+/,
+      /\/file\/d\/[a-zA-Z0-9-_]+/
+    ]
+    
+    const hasValidPattern = validPatterns.some(pattern => pattern.test(parsedUrl.pathname))
+    if (!hasValidPattern) {
+      return { valid: false, error: 'Invalid Google Docs URL format' }
+    }
+    
+    return { valid: true }
+  } catch {
+    return { valid: false, error: 'Invalid URL format' }
+  }
 }
 

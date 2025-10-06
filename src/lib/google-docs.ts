@@ -2,6 +2,7 @@ import { google } from 'googleapis'
 import { v4 as uuidv4 } from 'uuid'
 import { supabase } from '@/lib/supabase'
 import { embedText } from '@/lib/embeddings'
+import { validateGoogleUrl, validateGoogleFileId } from './security'
 
 // Google OAuth client configuration
 export function createOAuthClient() {
@@ -49,6 +50,12 @@ export function createDocsClient(tokens: any) {
 
 // Extract file ID from Google Docs URL
 export function extractFileIdFromUrl(url: string): string | null {
+  // Validate URL first
+  const urlValidation = validateGoogleUrl(url)
+  if (!urlValidation.valid) {
+    return null
+  }
+  
   const patterns = [
     /\/document\/d\/([a-zA-Z0-9-_]+)/,
     /\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/,
@@ -58,7 +65,14 @@ export function extractFileIdFromUrl(url: string): string | null {
   
   for (const pattern of patterns) {
     const match = url.match(pattern)
-    if (match) return match[1]
+    if (match) {
+      const fileId = match[1]
+      // Validate extracted file ID
+      const idValidation = validateGoogleFileId(fileId)
+      if (idValidation.valid) {
+        return fileId
+      }
+    }
   }
   
   return null

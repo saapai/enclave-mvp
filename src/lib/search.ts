@@ -1,6 +1,7 @@
 import { supabase } from './supabase'
 import { ResourceWithTags, SearchResult } from './database.types'
 import { embedText } from './embeddings'
+import { logger } from './logger'
 
 export interface SearchFilters {
   type?: string
@@ -213,19 +214,58 @@ export async function logQuery(
   userId: string,
   query: string,
   resultsCount: number,
-  _clickedResourceId?: string
+  clickedResourceId?: string
 ) {
-  // Temporarily disable query logging to avoid foreign key constraint issues
-  // TODO: Fix the foreign key constraints and re-enable logging
-  console.log(`Query logged: "${query}" - ${resultsCount} results`)
+  try {
+    // Only log if we have valid data
+    if (!spaceId || !userId || !query.trim()) {
+      logger.warn('Invalid query log data', { spaceId, userId, query })
+      return
+    }
+
+    const { data, error } = await supabase
+      .from('query_log')
+      .insert({
+        space_id: spaceId,
+        user_id: userId,
+        text: query.trim(),
+        results_count: resultsCount,
+        clicked_resource_id: clickedResourceId || null
+      })
+
+    if (error) {
+      logger.error('Failed to log query', error, { spaceId, userId, query })
+    } else {
+      logger.debug('Query logged successfully', { spaceId, userId, query, resultsCount })
+    }
+  } catch (error) {
+    logger.error('Query logging error', error as Error, { spaceId, userId, query })
+  }
 }
 
 export async function updateQuerySatisfaction(
   queryId: string,
   satisfaction: 'thumbs_up' | 'thumbs_down'
 ) {
-  // For now, just log the satisfaction - we'll implement this later
-  console.log(`Query ${queryId} satisfaction: ${satisfaction}`)
+  try {
+    if (!queryId || !satisfaction) {
+      logger.warn('Invalid satisfaction update data', { queryId, satisfaction })
+      return
+    }
+
+    const { error } = await supabase
+      .from('query_log')
+      .update({ satisfaction })
+      .eq('id', queryId)
+
+    if (error) {
+      logger.error('Failed to update query satisfaction', error, { queryId, satisfaction })
+    } else {
+      logger.debug('Query satisfaction updated', { queryId, satisfaction })
+    }
+  } catch (error) {
+    logger.error('Query satisfaction update error', error as Error, { queryId, satisfaction })
+  }
 }
 
 // Helper function to extract searchable text from a resource
