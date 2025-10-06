@@ -4,6 +4,8 @@ import { supabase, supabaseAdmin } from '@/lib/supabase'
 import { upsertResourceEmbedding, upsertResourceChunks } from '@/lib/embeddings'
 import { validateResourceTitle, validateResourceDescription, validateTags, validateUrl, sanitizeInput } from '@/lib/security'
 import { apiCache, CACHE_KEYS } from '@/lib/cache'
+import { checkRateLimit } from '@/lib/rate-limit'
+import { logger } from '@/lib/logger'
 
 // Storage bucket used for uploaded files
 const STORAGE_BUCKET = 'resources'
@@ -155,13 +157,25 @@ async function extractTextFromFile(file: File): Promise<string | null> {
 
 export async function POST(request: NextRequest) {
   try {
-    console.log('Upload API called')
+    logger.debug('Upload API called')
     const { userId } = await auth()
-    console.log('User ID:', userId)
-    const isDev = process.env.NODE_ENV !== 'production'
-    if (!userId && !isDev) {
-      console.log('Unauthorized access attempt')
+    
+    if (!userId) {
+      logger.warn('Unauthorized upload attempt')
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
+    // Check rate limit
+    const rateLimitResult = checkRateLimit(userId, 'UPLOAD')
+    if (!rateLimitResult.allowed) {
+      return NextResponse.json(
+        { 
+          error: 'Rate limit exceeded', 
+          remaining: rateLimitResult.remaining,
+          resetTime: rateLimitResult.resetTime
+        }, 
+        { status: 429 }
+      )
     }
 
     const form = await request.formData()

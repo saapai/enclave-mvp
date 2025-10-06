@@ -4,6 +4,7 @@ import { ClerkProvider } from '@clerk/nextjs'
 import { Toaster } from 'sonner'
 import { ThemeProvider } from '@/components/theme-provider'
 import { SpaceProvider } from '@/components/space-context'
+import ErrorBoundary from '@/components/error-boundary'
 import './globals.css'
 
 export const metadata: Metadata = {
@@ -78,17 +79,19 @@ export default function RootLayout({
           />
         </head>
         <body className="antialiased">
-          <ThemeProvider
-            attribute="class"
-            defaultTheme="dark"
-            disableTransitionOnChange
-            enableSystem
-          >
-            <SpaceProvider>
-              <Toaster position="top-center" />
-              {children}
-            </SpaceProvider>
-          </ThemeProvider>
+          <ErrorBoundary>
+            <ThemeProvider
+              attribute="class"
+              defaultTheme="dark"
+              disableTransitionOnChange
+              enableSystem
+            >
+              <SpaceProvider>
+                <Toaster position="top-center" />
+                {children}
+              </SpaceProvider>
+            </ThemeProvider>
+          </ErrorBoundary>
         </body>
       </html>
     </ClerkProvider>

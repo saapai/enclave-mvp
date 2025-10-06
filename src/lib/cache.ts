@@ -1,21 +1,31 @@
 // Simple in-memory cache for API responses
-interface CacheEntry {
-  data: any
+interface CacheEntry<T> {
+  data: T
   timestamp: number
   ttl: number
 }
 
 class SimpleCache {
-  private cache = new Map<string, CacheEntry>()
-  private maxSize = 100
+  private cache = new Map<string, CacheEntry<any>>()
+  private cleanupInterval: NodeJS.Timeout
 
-  set(key: string, data: any, ttlMs = 5 * 60 * 1000) { // 5 minutes default
-    // Remove oldest entries if cache is full
-    if (this.cache.size >= this.maxSize) {
-      const oldestKey = this.cache.keys().next().value
-      this.cache.delete(oldestKey)
+  constructor() {
+    // Clean up expired entries every 5 minutes
+    this.cleanupInterval = setInterval(() => {
+      this.cleanup()
+    }, 5 * 60 * 1000)
+  }
+
+  private cleanup() {
+    const now = Date.now()
+    for (const [key, entry] of this.cache.entries()) {
+      if (now - entry.timestamp > entry.ttl) {
+        this.cache.delete(key)
+      }
     }
+  }
 
+  set<T>(key: string, data: T, ttlMs: number = 5 * 60 * 1000): void {
     this.cache.set(key, {
       data,
       timestamp: Date.now(),
@@ -23,34 +33,63 @@ class SimpleCache {
     })
   }
 
-  get(key: string): any | null {
+  get<T>(key: string): T | null {
     const entry = this.cache.get(key)
     if (!entry) return null
 
-    // Check if expired
-    if (Date.now() - entry.timestamp > entry.ttl) {
+    const now = Date.now()
+    if (now - entry.timestamp > entry.ttl) {
       this.cache.delete(key)
       return null
     }
 
-    return entry.data
+    return entry.data as T
   }
 
-  clear() {
+  delete(key: string): boolean {
+    return this.cache.delete(key)
+  }
+
+  clear(): void {
     this.cache.clear()
   }
 
-  delete(key: string) {
-    this.cache.delete(key)
+  size(): number {
+    return this.cache.size
+  }
+
+  destroy() {
+    if (this.cleanupInterval) {
+      clearInterval(this.cleanupInterval)
+    }
   }
 }
 
-export const apiCache = new SimpleCache()
+// Global cache instance
+const cache = new SimpleCache()
 
 // Cache keys
 export const CACHE_KEYS = {
-  RESOURCES: 'resources',
-  SEARCH: (query: string) => `search:${query}`,
-  AI_RESPONSE: (query: string, context: string) => `ai:${query}:${context.slice(0, 50)}`
+  SEARCH_RESULTS: (query: string, spaceId: string, filters: any) => 
+    `search:${spaceId}:${query}:${JSON.stringify(filters)}`,
+  USER_GOOGLE_TOKENS: (userId: string) => `google_tokens:${userId}`,
+  GOOGLE_DOC_METADATA: (fileId: string) => `gdoc_meta:${fileId}`,
+  RESOURCE_EMBEDDING: (resourceId: string) => `embedding:${resourceId}`,
 } as const
 
+// Cache TTLs (in milliseconds)
+export const CACHE_TTL = {
+  SEARCH_RESULTS: 5 * 60 * 1000, // 5 minutes
+  USER_GOOGLE_TOKENS: 10 * 60 * 1000, // 10 minutes
+  GOOGLE_DOC_METADATA: 30 * 60 * 1000, // 30 minutes
+  RESOURCE_EMBEDDING: 60 * 60 * 1000, // 1 hour
+} as const
+
+export { cache }
+
+// Cleanup on process exit
+if (typeof process !== 'undefined') {
+  process.on('exit', () => {
+    cache.destroy()
+  })
+}

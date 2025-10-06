@@ -13,6 +13,8 @@ import {
   createDriveWatch,
   storeDriveWatch
 } from '@/lib/google-docs'
+import { checkRateLimit } from '@/lib/rate-limit'
+import { logger } from '@/lib/logger'
 
 const DEFAULT_SPACE_ID = '00000000-0000-0000-0000-000000000000'
 
@@ -23,10 +25,23 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
+    // Check rate limit
+    const rateLimitResult = checkRateLimit(userId, 'GOOGLE_DOCS')
+    if (!rateLimitResult.allowed) {
+      return NextResponse.json(
+        { 
+          error: 'Rate limit exceeded', 
+          remaining: rateLimitResult.remaining,
+          resetTime: rateLimitResult.resetTime
+        }, 
+        { status: 429 }
+      )
+    }
+
     const body = await request.json()
     const { urlOrFileId, spaceId = DEFAULT_SPACE_ID } = body
 
-    console.log('Google Docs add request:', { userId, urlOrFileId, spaceId })
+    logger.debug('Google Docs add request', { userId, urlOrFileId, spaceId })
 
     if (!urlOrFileId) {
       return NextResponse.json({ error: 'URL or file ID is required' }, { status: 400 })

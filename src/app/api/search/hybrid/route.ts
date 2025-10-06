@@ -1,13 +1,29 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@clerk/nextjs/server'
 import { searchResourcesHybrid, logQuery } from '@/lib/search'
+import { checkRateLimit } from '@/lib/rate-limit'
+import { logger } from '@/lib/logger'
 
 export async function GET(request: NextRequest) {
   try {
     const { userId } = await auth()
     
-    // For testing, allow requests without authentication
-    const testUserId = userId || '00000000-0000-0000-0000-000000000000'
+    if (!userId) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
+    // Check rate limit
+    const rateLimitResult = checkRateLimit(userId, 'SEARCH')
+    if (!rateLimitResult.allowed) {
+      return NextResponse.json(
+        { 
+          error: 'Rate limit exceeded', 
+          remaining: rateLimitResult.remaining,
+          resetTime: rateLimitResult.resetTime
+        }, 
+        { status: 429 }
+      )
+    }
 
     const { searchParams } = new URL(request.url)
     const query = searchParams.get('q') || ''
@@ -36,14 +52,20 @@ export async function GET(request: NextRequest) {
     // Log the query
     await logQuery(
       spaceId,
-      testUserId,
+      userId,
       query,
       results.length
     )
 
-    return NextResponse.json({ results })
+    return NextResponse.json({ 
+      results,
+      rateLimit: {
+        remaining: rateLimitResult.remaining,
+        resetTime: rateLimitResult.resetTime
+      }
+    })
   } catch (error) {
-    console.error('Hybrid search API error:', error)
+    logger.error('Hybrid search API error', error as Error, { userId, query })
     return NextResponse.json(
       { error: 'Internal server error' },
       { status: 500 }

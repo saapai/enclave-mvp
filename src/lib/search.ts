@@ -1,6 +1,10 @@
 import { supabase } from './supabase'
 import { ResourceWithTags, SearchResult } from './database.types'
 import { embedText } from './embeddings'
+import { logger } from './logger'
+import { cache, CACHE_KEYS, CACHE_TTL } from './cache'
+import { queryMonitor, monitorSupabaseQuery } from './query-monitor'
+import { metrics } from './metrics'
 
 export interface SearchFilters {
   type?: string
@@ -28,24 +32,37 @@ export async function searchResourcesHybrid(
     return searchResources(query, spaceId, filters, options)
   }
 
+  // Check cache first
+  const cacheKey = CACHE_KEYS.SEARCH_RESULTS(query, spaceId, filters)
+  const cachedResults = cache.get<SearchResult[]>(cacheKey)
+  if (cachedResults) {
+    logger.debug('Returning cached search results', { query, spaceId, resultCount: cachedResults.length })
+    return cachedResults.slice(offset, offset + limit)
+  }
+
   try {
+    const searchStartTime = Date.now()
+    
     // Generate embedding for vector search
     const queryEmbedding = await embedText(query)
     
     // Search regular resources
     const regularResults = await searchResources(query, spaceId, filters, { limit: limit * 2, offset: 0 })
     
-    // Search Google Docs chunks
-    const { data: googleDocsResults, error: gdError } = await supabase
-      .rpc('search_google_docs_vector', {
+    // Search Google Docs chunks with monitoring
+    const { data: googleDocsResults, error: gdError } = await monitorSupabaseQuery(
+      'search_google_docs_vector',
+      () => supabase.rpc('search_google_docs_vector', {
         query_embedding: queryEmbedding,
         target_space_id: spaceId,
         limit_count: limit * 2,
         offset_count: 0
-      })
+      }),
+      limit * 2
+    )
 
     if (gdError) {
-      console.error('Google Docs search error:', gdError)
+      logger.error('Google Docs search error', gdError, { query, spaceId })
     }
 
     // Convert Google Docs results to SearchResult format
@@ -76,10 +93,19 @@ export async function searchResourcesHybrid(
     allResults.sort((a, b) => (b.score || 0) - (a.score || 0))
     
     // Apply limit and offset
-    return allResults.slice(offset, offset + limit)
+    const finalResults = allResults.slice(offset, offset + limit)
+    
+    // Cache the results
+    cache.set(cacheKey, allResults, CACHE_TTL.SEARCH_RESULTS)
+    
+    // Record search metrics
+    const searchDuration = Date.now() - searchStartTime
+    metrics.recordSearchQuery(query, searchDuration, finalResults.length, false)
+    
+    return finalResults
     
   } catch (error) {
-    console.error('Hybrid search error:', error)
+    logger.error('Hybrid search error', error as Error, { query, spaceId })
     // Fallback to regular search
     return searchResources(query, spaceId, filters, options)
   }
@@ -213,19 +239,58 @@ export async function logQuery(
   userId: string,
   query: string,
   resultsCount: number,
-  _clickedResourceId?: string
+  clickedResourceId?: string
 ) {
-  // Temporarily disable query logging to avoid foreign key constraint issues
-  // TODO: Fix the foreign key constraints and re-enable logging
-  console.log(`Query logged: "${query}" - ${resultsCount} results`)
+  try {
+    // Only log if we have valid data
+    if (!spaceId || !userId || !query.trim()) {
+      logger.warn('Invalid query log data', { spaceId, userId, query })
+      return
+    }
+
+    const { data, error } = await supabase
+      .from('query_log')
+      .insert({
+        space_id: spaceId,
+        user_id: userId,
+        text: query.trim(),
+        results_count: resultsCount,
+        clicked_resource_id: clickedResourceId || null
+      })
+
+    if (error) {
+      logger.error('Failed to log query', error, { spaceId, userId, query })
+    } else {
+      logger.debug('Query logged successfully', { spaceId, userId, query, resultsCount })
+    }
+  } catch (error) {
+    logger.error('Query logging error', error as Error, { spaceId, userId, query })
+  }
 }
 
 export async function updateQuerySatisfaction(
   queryId: string,
   satisfaction: 'thumbs_up' | 'thumbs_down'
 ) {
-  // For now, just log the satisfaction - we'll implement this later
-  console.log(`Query ${queryId} satisfaction: ${satisfaction}`)
+  try {
+    if (!queryId || !satisfaction) {
+      logger.warn('Invalid satisfaction update data', { queryId, satisfaction })
+      return
+    }
+
+    const { error } = await supabase
+      .from('query_log')
+      .update({ satisfaction })
+      .eq('id', queryId)
+
+    if (error) {
+      logger.error('Failed to update query satisfaction', error, { queryId, satisfaction })
+    } else {
+      logger.debug('Query satisfaction updated', { queryId, satisfaction })
+    }
+  } catch (error) {
+    logger.error('Query satisfaction update error', error as Error, { queryId, satisfaction })
+  }
 }
 
 // Helper function to extract searchable text from a resource

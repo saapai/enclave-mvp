@@ -2,6 +2,8 @@ import { google } from 'googleapis'
 import { v4 as uuidv4 } from 'uuid'
 import { supabase } from '@/lib/supabase'
 import { embedText } from '@/lib/embeddings'
+import { validateGoogleUrl, validateGoogleFileId } from './security'
+import { logger } from './logger'
 
 // Google OAuth client configuration
 export function createOAuthClient() {
@@ -49,6 +51,12 @@ export function createDocsClient(tokens: any) {
 
 // Extract file ID from Google Docs URL
 export function extractFileIdFromUrl(url: string): string | null {
+  // Validate URL first
+  const urlValidation = validateGoogleUrl(url)
+  if (!urlValidation.valid) {
+    return null
+  }
+  
   const patterns = [
     /\/document\/d\/([a-zA-Z0-9-_]+)/,
     /\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/,
@@ -58,7 +66,14 @@ export function extractFileIdFromUrl(url: string): string | null {
   
   for (const pattern of patterns) {
     const match = url.match(pattern)
-    if (match) return match[1]
+    if (match) {
+      const fileId = match[1]
+      // Validate extracted file ID
+      const idValidation = validateGoogleFileId(fileId)
+      if (idValidation.valid) {
+        return fileId
+      }
+    }
   }
   
   return null
@@ -229,7 +244,7 @@ export async function storeGoogleTokens(
 
 // Get Google account tokens
 export async function getGoogleTokens(userId: string) {
-  console.log('Getting Google tokens for user:', userId)
+  logger.debug('Getting Google tokens for user', { userId })
   
   const { data, error } = await supabase
     .from('google_accounts')
@@ -238,16 +253,23 @@ export async function getGoogleTokens(userId: string) {
     .maybeSingle()
 
   if (error) {
-    console.error('Error fetching Google tokens:', error)
+    logger.error('Error fetching Google tokens', error, { userId })
     throw error
   }
   
-  console.log('Google tokens result:', data ? 'Found' : 'Not found')
+  logger.debug('Google tokens result', { 
+    userId, 
+    found: !!data 
+  })
   return data
 }
 
 // Refresh Google tokens if needed
-export async function refreshTokensIfNeeded(tokens: any) {
+export async function refreshTokensIfNeeded(tokens: {
+  access_token: string
+  refresh_token: string
+  expiry_date: number
+}) {
   const auth = createOAuthClient()
   auth.setCredentials(tokens)
   
@@ -255,7 +277,7 @@ export async function refreshTokensIfNeeded(tokens: any) {
     const { credentials } = await auth.refreshAccessToken()
     return credentials
   } catch (error) {
-    console.error('Token refresh failed:', error)
+    logger.error('Token refresh failed', error as Error)
     throw error
   }
 }
