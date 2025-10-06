@@ -14,9 +14,12 @@ import { ResourceWithTags } from '@/lib/database.types'
 import { UploadDialog } from '@/components/upload-dialog'
 import { AIResponse } from '@/components/ai-response'
 import { PromptCard } from '@/components/prompt-card'
+import { GroupsPanel } from '@/components/groups-panel'
+import { useSpace } from '@/components/space-context'
 
 export default function HomePage() {
   const { user, isLoaded } = useUser()
+  const { currentSpaceId } = useSpace()
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<ResourceWithTags[]>([])
   const [loading, setLoading] = useState(false)
@@ -168,6 +171,7 @@ export default function HomePage() {
       form.append('type', 'doc')
       form.append('url', '')
       form.append('tags', JSON.stringify([]))
+      form.append('spaceId', currentSpaceId)
       const res = await fetch('/api/upload', { method: 'POST', body: form })
       if (res.ok && query.trim()) {
         await handleSearch()
@@ -602,6 +606,11 @@ export default function HomePage() {
           </div>
         </div>
       </main>
+
+      {/* Left sidebar groups (desktop) */}
+      <div className="fixed left-4 top-24 hidden lg:block w-72">
+        <GroupsPanel />
+      </div>
 
       {/* Upload Dialog */}
       <UploadDialog open={showUpload} onOpenChange={setShowUpload} />

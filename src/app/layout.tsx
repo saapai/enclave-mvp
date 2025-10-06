@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from 'next/font/google'
 import { ClerkProvider } from '@clerk/nextjs'
 import { Toaster } from 'sonner'
 import { ThemeProvider } from '@/components/theme-provider'
+import { SpaceProvider } from '@/components/space-context'
 import './globals.css'
 
 export const metadata: Metadata = {
@@ -83,8 +84,10 @@ export default function RootLayout({
             disableTransitionOnChange
             enableSystem
           >
-            <Toaster position="top-center" />
-            {children}
+            <SpaceProvider>
+              <Toaster position="top-center" />
+              {children}
+            </SpaceProvider>
           </ThemeProvider>
         </body>
       </html>
