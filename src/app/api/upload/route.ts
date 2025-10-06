@@ -172,6 +172,7 @@ export async function POST(request: NextRequest) {
     const type = (form.get('type') as string | null)?.trim() || 'doc'
     const url = (form.get('url') as string | null)?.trim() || ''
     const tagsRaw = (form.get('tags') as string | null) || '[]'
+    const spaceId = (form.get('spaceId') as string | null)?.trim() || DEFAULT_SPACE_ID
     const startAt = (form.get('startAt') as string | null) || ''
     const endAt = (form.get('endAt') as string | null) || ''
 
@@ -231,7 +232,7 @@ export async function POST(request: NextRequest) {
     const { data: inserted, error: insertError } = await supabase
       .from('resource')
       .insert({
-        space_id: DEFAULT_SPACE_ID,
+        space_id: spaceId,
         type: (['event', 'doc', 'form', 'link', 'faq'] as const).includes(type as any) ? type : 'doc',
         title: sanitizedTitle || (file ? file.name : 'Untitled'),
         body: extractedText || sanitizedDescription || null,
