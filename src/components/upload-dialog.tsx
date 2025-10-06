@@ -9,6 +9,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Badge } from '@/components/ui/badge'
 import { toast } from 'sonner'
+import { useSpace } from './space-context'
 
 interface UploadDialogProps {
   open: boolean
@@ -17,6 +18,7 @@ interface UploadDialogProps {
 
 export function UploadDialog({ open, onOpenChange }: UploadDialogProps) {
   const { user } = useUser()
+  const { currentSpaceId } = useSpace()
   const [loading, setLoading] = useState(false)
   
   // Form state
@@ -61,6 +63,7 @@ export function UploadDialog({ open, onOpenChange }: UploadDialogProps) {
         form.append('type', 'doc')
         form.append('url', url)
         form.append('tags', JSON.stringify(tags))
+        form.append('spaceId', currentSpaceId)
 
         const res = await fetch('/api/upload', { method: 'POST', body: form })
         if (!res.ok) {
@@ -76,6 +79,7 @@ export function UploadDialog({ open, onOpenChange }: UploadDialogProps) {
         form.append('type', 'doc')
         form.append('url', url)
         form.append('tags', JSON.stringify(tags))
+        form.append('spaceId', currentSpaceId)
 
         const res = await fetch('/api/upload', { method: 'POST', body: form })
         if (!res.ok) {

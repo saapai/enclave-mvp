@@ -11,6 +11,7 @@ export async function GET(request: NextRequest) {
 
     const { searchParams } = new URL(request.url)
     const query = searchParams.get('q') || ''
+    const spaceId = searchParams.get('spaceId') || '00000000-0000-0000-0000-000000000000'
     const type = searchParams.get('type') || undefined
     const tags = searchParams.get('tags')?.split(',').filter(Boolean) || []
     const from = searchParams.get('from') || undefined
@@ -27,14 +28,14 @@ export async function GET(request: NextRequest) {
 
     const results = await searchResourcesHybrid(
       query,
-      '00000000-0000-0000-0000-000000000000', // Default space for MVP
+      spaceId,
       filters,
       { limit, offset }
     )
 
     // Log the query
     await logQuery(
-      '00000000-0000-0000-0000-000000000000',
+      spaceId,
       testUserId,
       query,
       results.length
