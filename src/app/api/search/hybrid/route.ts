@@ -5,6 +5,7 @@ import { searchResourcesHybrid, logQuery } from '@/lib/search'
 export async function GET(request: NextRequest) {
   try {
     const { userId } = await auth()
+    const { supabase } = await import('@/lib/supabase')
     
     // For testing, allow requests without authentication
     const testUserId = userId || '00000000-0000-0000-0000-000000000000'
@@ -25,22 +26,47 @@ export async function GET(request: NextRequest) {
       to
     }
 
-    const results = await searchResourcesHybrid(
-      query,
-      '00000000-0000-0000-0000-000000000000', // Default space for MVP
-      filters,
-      { limit, offset }
-    )
+    // Get user's spaces to search across all of them
+    let spaceIds = ['00000000-0000-0000-0000-000000000000']
+    if (userId) {
+      const clerkUser = await (await import('@clerk/nextjs/server')).clerkClient().users.getUser(userId)
+      const userEmail = clerkUser.emailAddresses[0]?.emailAddress
+
+      const { data: userSpaces } = await supabase
+        .from('app_user')
+        .select('space_id')
+        .eq('email', userEmail)
+
+      const userSpaceIds = userSpaces?.map(u => u.space_id) || []
+      spaceIds = [...new Set([...spaceIds, ...userSpaceIds])]
+    }
+
+    // Search across all user spaces
+    const allResults = []
+    for (const spaceId of spaceIds) {
+      const results = await searchResourcesHybrid(
+        query,
+        spaceId,
+        filters,
+        { limit, offset }
+      )
+      allResults.push(...results)
+    }
+
+    // Remove duplicates and sort by relevance
+    const uniqueResults = Array.from(
+      new Map(allResults.map(r => [r.id, r])).values()
+    ).slice(0, limit)
 
     // Log the query
     await logQuery(
       '00000000-0000-0000-0000-000000000000',
       testUserId,
       query,
-      results.length
+      uniqueResults.length
     )
 
-    return NextResponse.json({ results })
+    return NextResponse.json({ results: uniqueResults })
   } catch (error) {
     console.error('Hybrid search API error:', error)
     return NextResponse.json(

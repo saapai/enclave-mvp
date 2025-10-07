@@ -14,11 +14,29 @@ export async function GET(request: NextRequest) {
     }
 
     // Check cache first
-    const cached = apiCache.get(CACHE_KEYS.RESOURCES)
+    const cacheKey = `${CACHE_KEYS.RESOURCES}_${userId}`
+    const cached = apiCache.get(cacheKey)
     if (cached) {
       return NextResponse.json({ resources: cached })
     }
 
+    // Get user's email to find their spaces
+    const clerkUser = await (await import('@clerk/nextjs/server')).clerkClient().users.getUser(userId!)
+    const userEmail = clerkUser.emailAddresses[0]?.emailAddress
+
+    // Get all spaces the user belongs to
+    const { data: userSpaces } = await supabase
+      .from('app_user')
+      .select('space_id')
+      .eq('email', userEmail)
+
+    const spaceIds = userSpaces?.map(u => u.space_id) || []
+    // Always include default space
+    if (!spaceIds.includes(DEFAULT_SPACE_ID)) {
+      spaceIds.push(DEFAULT_SPACE_ID)
+    }
+
+    // Fetch resources from all user's spaces
     const { data: resources, error } = await supabase
       .from('resource')
       .select(`
@@ -29,7 +47,7 @@ export async function GET(request: NextRequest) {
         event_meta(*),
         created_by_user:app_user(*)
       `)
-      .eq('space_id', DEFAULT_SPACE_ID)
+      .in('space_id', spaceIds)
       .order('updated_at', { ascending: false })
 
     if (error) {
@@ -42,8 +60,8 @@ export async function GET(request: NextRequest) {
       tags: (r?.tags || []).map((rt: any) => rt.tag).filter(Boolean) || []
     }))
 
-    // Cache the result for 2 minutes
-    apiCache.set(CACHE_KEYS.RESOURCES, transformed, 2 * 60 * 1000)
+    // Cache the result for 2 minutes (per user)
+    apiCache.set(cacheKey, transformed, 2 * 60 * 1000)
 
     return NextResponse.json({ resources: transformed })
   } catch (error) {
