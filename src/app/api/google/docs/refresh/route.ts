@@ -51,11 +51,22 @@ export async function POST(request: NextRequest) {
     }
 
     // Refresh tokens if needed
-    const tokens = await refreshTokensIfNeeded({
-      access_token: googleAccount.access_token,
-      refresh_token: googleAccount.refresh_token,
-      expiry_date: new Date(googleAccount.token_expiry).getTime()
-    })
+    let tokens
+    try {
+      tokens = await refreshTokensIfNeeded({
+        access_token: googleAccount.access_token,
+        refresh_token: googleAccount.refresh_token,
+        expiry_date: new Date(googleAccount.token_expiry).getTime()
+      })
+    } catch (tokenError) {
+      console.error('Token refresh failed:', tokenError)
+      return NextResponse.json({ 
+        error: 'Google account needs re-authentication',
+        needsOAuth: true,
+        oauthUrl: `/api/oauth/google/start`,
+        details: 'Your Google account session has expired. Please reconnect your Google account.'
+      }, { status: 400 })
+    }
 
     // Get file metadata to check if it's been modified
     const { file, permissionsHash } = await getFileMetadata(source.google_file_id, tokens)
