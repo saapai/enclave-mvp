@@ -1,7 +1,10 @@
+-- Drop the existing function first to allow type changes
+DROP FUNCTION IF EXISTS search_resources(text, uuid, integer, integer);
+
 -- Create the search function for full-text search with ranking
 CREATE OR REPLACE FUNCTION search_resources(
   search_query TEXT,
-  space_id UUID,
+  target_space_id UUID,
   limit_count INTEGER DEFAULT 20,
   offset_count INTEGER DEFAULT 0
 )
@@ -64,7 +67,7 @@ BEGIN
       END
     ) as score
   FROM resource r
-  WHERE r.space_id = search_resources.space_id
+  WHERE r.space_id = target_space_id
     AND to_tsvector('english', coalesce(r.title, '') || ' ' || coalesce(r.body, '')) 
         @@ plainto_tsquery('english', search_query)
   ORDER BY score DESC, rank DESC

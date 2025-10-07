@@ -1,6 +1,9 @@
 -- Search function for Enclave MVP
 -- Run this in the Supabase SQL Editor AFTER running supabase-setup.sql
 
+-- Drop the existing function first to allow type changes
+DROP FUNCTION IF EXISTS search_resources(text, uuid, integer, integer);
+
 -- Create the search function for full-text search with ranking
 CREATE OR REPLACE FUNCTION search_resources(
   search_query TEXT,
@@ -20,8 +23,8 @@ RETURNS TABLE (
   created_by UUID,
   updated_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ,
-  rank REAL,
-  score REAL
+  rank DOUBLE PRECISION,
+  score DOUBLE PRECISION
 ) AS $$
 BEGIN
   RETURN QUERY
