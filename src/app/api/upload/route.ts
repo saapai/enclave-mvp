@@ -376,7 +376,7 @@ export async function POST(request: NextRequest) {
       }
     } catch (_e) { /* ignore embedding failures */ }
 
-    // Return the created resource including tags and event_meta
+    // Return the first created resource including tags and event_meta
     const { data: resource, error: fetchError } = await supabase
       .from('resource')
       .select(`
@@ -387,7 +387,7 @@ export async function POST(request: NextRequest) {
         event_meta(*),
         created_by_user:app_user(*)
       `)
-      .eq('id', resourceId)
+      .eq('id', primaryResourceId)
       .single()
 
     if (fetchError) throw fetchError
