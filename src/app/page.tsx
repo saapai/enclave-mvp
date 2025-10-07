@@ -2,7 +2,7 @@
 
 import { useRef, useState, useEffect } from 'react'
 import { useUser } from '@clerk/nextjs'
-import { Search, Plus, Filter, Clock, MapPin, Calendar, ExternalLink, Sparkles, MessageSquare, Hash, Users, Settings, Menu, X, DollarSign, FileText, Send, Paperclip, Link, Loader2 } from 'lucide-react'
+import { Search, Plus, Filter, Clock, MapPin, Calendar, ExternalLink, Sparkles, MessageSquare, Hash, Users, Settings, Menu, X, DollarSign, FileText, Send, Paperclip, Link, Loader2, RefreshCw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -14,6 +14,7 @@ import { ResourceWithTags } from '@/lib/database.types'
 import { UploadDialog } from '@/components/upload-dialog'
 import { AIResponse } from '@/components/ai-response'
 import { PromptCard } from '@/components/prompt-card'
+import { GroupsDialog } from '@/components/groups-dialog'
 
 export default function HomePage() {
   const { user, isLoaded } = useUser()
@@ -29,6 +30,135 @@ export default function HomePage() {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [attaching, setAttaching] = useState(false)
   const [aiAnswer, setAiAnswer] = useState('')
+  const [autoRefreshing, setAutoRefreshing] = useState(false)
+  const [showGroups, setShowGroups] = useState(false)
+  const [spaces, setSpaces] = useState<any[]>([])
+  const [selectedSpaceIds, setSelectedSpaceIds] = useState<string[]>(['00000000-0000-0000-0000-000000000000'])
+
+  // Fetch spaces when user loads
+  useEffect(() => {
+    if (user) {
+      fetchSpaces()
+    }
+  }, [user])
+
+  const fetchSpaces = async () => {
+    try {
+      const response = await fetch('/api/spaces')
+      if (response.ok) {
+        const data = await response.json()
+        setSpaces(data.spaces || [])
+        // Set default to all spaces
+        if (data.spaces && data.spaces.length > 0) {
+          setSelectedSpaceIds(data.spaces.map((s: any) => s.id))
+        }
+      }
+    } catch (error) {
+      console.error('Failed to fetch spaces:', error)
+    }
+  }
+
+  const toggleSpace = (spaceId: string) => {
+    setSelectedSpaceIds(prev => {
+      if (prev.includes(spaceId)) {
+        // Don't allow deselecting all spaces
+        if (prev.length > 1) {
+          return prev.filter(id => id !== spaceId)
+        }
+        return prev
+      } else {
+        return [...prev, spaceId]
+      }
+    })
+  }
+
+  const selectAllSpaces = () => {
+    setSelectedSpaceIds(spaces.map(space => space.id))
+  }
+
+  const getSelectedSpaceNames = () => {
+    return selectedSpaceIds.map(id => spaces.find(s => s.id === id)?.name).filter(Boolean).join(', ')
+  }
+
+  // Auto-refresh Google Docs every 2 minutes
+  useEffect(() => {
+    if (!user) return
+
+    let isActive = true
+
+    const autoRefreshGoogleDocs = async () => {
+      if (!isActive || autoRefreshing) return // Prevent overlapping refreshes
+      
+      setAutoRefreshing(true)
+      console.log('[Auto-Refresh] Starting Google Docs auto-refresh check...')
+      
+      try {
+        // Get list of Google Docs
+        const listResponse = await fetch('/api/google/docs/list')
+        if (!listResponse.ok) {
+          console.log('[Auto-Refresh] Failed to fetch Google Docs list')
+          return
+        }
+        
+        const { googleDocs } = await listResponse.json()
+        
+        if (!googleDocs || googleDocs.length === 0) {
+          console.log('[Auto-Refresh] No Google Docs found')
+          return
+        }
+        
+        console.log(`[Auto-Refresh] Found ${googleDocs.length} Google Doc(s) to check`)
+        
+        // Refresh each Google Doc silently in the background
+        let refreshedCount = 0
+        for (const doc of googleDocs) {
+          if (!isActive) break
+          try {
+            console.log(`[Auto-Refresh] Checking doc: ${doc.title} (${doc.id})`)
+            const response = await fetch('/api/google/docs/refresh', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ sourceId: doc.id })
+            })
+            
+            if (response.ok) {
+              const result = await response.json()
+              if (result.isModified) {
+                console.log(`[Auto-Refresh] ✓ Updated: ${doc.title}`)
+                refreshedCount++
+              } else {
+                console.log(`[Auto-Refresh] - No changes: ${doc.title}`)
+              }
+            }
+          } catch (error) {
+            console.error(`[Auto-Refresh] Failed to refresh doc ${doc.id}:`, error)
+          }
+        }
+        
+        if (refreshedCount > 0) {
+          console.log(`[Auto-Refresh] Completed: ${refreshedCount} doc(s) updated`)
+        } else {
+          console.log('[Auto-Refresh] Completed: All docs up to date')
+        }
+      } catch (error) {
+        console.error('[Auto-Refresh] Error:', error)
+      } finally {
+        if (isActive) setAutoRefreshing(false)
+      }
+    }
+
+    // Initial refresh after 10 seconds
+    const initialTimeout = setTimeout(autoRefreshGoogleDocs, 10000)
+    
+    // Then refresh every 2 minutes
+    const interval = setInterval(autoRefreshGoogleDocs, 2 * 60 * 1000)
+    
+    return () => {
+      isActive = false
+      clearTimeout(initialTimeout)
+      clearInterval(interval)
+    }
+  }, [user, autoRefreshing])
 
   // Check if we just completed OAuth and have a pending Google Doc URL
   useEffect(() => {
@@ -81,6 +211,42 @@ export default function HomePage() {
 
     setLoading(true)
     try {
+      // CRITICAL: Check Google Docs for updates BEFORE processing the search query
+      console.log('[Search] Checking Google Docs for updates BEFORE search...')
+      try {
+        const listResponse = await fetch('/api/google/docs/list')
+        if (listResponse.ok) {
+          const { googleDocs } = await listResponse.json()
+          
+          if (googleDocs && googleDocs.length > 0) {
+            console.log(`[Search] Checking ${googleDocs.length} Google Doc(s) for updates before search...`)
+            
+            // Check each Google Doc for updates BEFORE searching
+            for (const doc of googleDocs) {
+              try {
+                const response = await fetch('/api/google/docs/refresh', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ sourceId: doc.id })
+                })
+                
+                if (response.ok) {
+                  const result = await response.json()
+                  if (result.isModified) {
+                    console.log(`[Search] ✓ Updated Google Doc before search: ${doc.title}`)
+                  }
+                }
+              } catch (error) {
+                console.error(`[Search] Failed to check doc ${doc.id}:`, error)
+              }
+            }
+          }
+        }
+      } catch (error) {
+        console.error('[Search] Failed to check Google Docs before search:', error)
+      }
+
+      // Now execute the search with potentially updated Google Doc content
       const res = await fetch(`/api/search/hybrid?q=${encodeURIComponent(query)}&limit=20`)
       if (!res.ok) throw new Error('Search API failed')
       const data = await res.json()
@@ -239,7 +405,10 @@ export default function HomePage() {
       const response = await fetch('/api/google/docs/add', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ urlOrFileId: docUrl.trim() })
+        body: JSON.stringify({ 
+          urlOrFileId: docUrl.trim(),
+          spaceIds: selectedSpaceIds
+        })
       })
 
       if (response.status === 400) {
@@ -362,6 +531,13 @@ export default function HomePage() {
             <div className="flex items-center space-x-4">
               <Button
                 variant="secondary"
+                onClick={() => setShowGroups(true)}
+              >
+                <Users className="h-4 w-4" />
+                +Group
+              </Button>
+              <Button
+                variant="secondary"
                 onClick={() => window.location.href = '/resources'}
               >
                 <FileText className="h-4 w-4" />
@@ -376,7 +552,7 @@ export default function HomePage() {
               </Button>
               <Button
                 onClick={() => setShowConnectDoc(true)}
-                className="bg-gradient-to-r from-green-600 to-blue-600 hover:from-green-700 hover:to-blue-700 text-white border-0"
+                className="bg-gradient-to-r from-blue-600 to-red-600 hover:from-blue-700 hover:to-red-700 text-white border-0"
               >
                 <Link className="h-4 w-4" />
                 Connect Live Doc
@@ -385,7 +561,7 @@ export default function HomePage() {
                 onClick={handleRefreshGoogleDocs}
                 disabled={refreshingDocs}
                 variant="outline"
-                className="border-green-600 text-green-600 hover:bg-green-50"
+                className="border-blue-600 text-blue-600 hover:bg-blue-50"
               >
                 {refreshingDocs ? (
                   <>
@@ -449,6 +625,12 @@ export default function HomePage() {
                             <Badge variant="outline" className="border-blue-500/40 text-blue-400 text-xs bg-transparent">
                               {resource.type}
                             </Badge>
+                            {resource.source === 'gdoc' && (
+                              <Badge variant="outline" className="border-green-500/40 text-green-400 text-xs bg-green-500/10 flex items-center gap-1">
+                                <RefreshCw className="h-3 w-3" />
+                                Live Doc
+                              </Badge>
+                            )}
                             {resource.tags?.slice(0, 2).map((tag) => (
                               <Badge key={tag.id} variant="outline" className="border-blue-500/40 text-primary/80 text-xs bg-transparent">
                                 {tag.name}
@@ -606,6 +788,9 @@ export default function HomePage() {
       {/* Upload Dialog */}
       <UploadDialog open={showUpload} onOpenChange={setShowUpload} />
 
+      {/* Groups Dialog */}
+      <GroupsDialog open={showGroups} onOpenChange={setShowGroups} />
+
       {/* Connect Google Doc Modal */}
       {showConnectDoc && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[9999] backdrop-blur-sm">
@@ -638,12 +823,60 @@ export default function HomePage() {
                   Paste the URL of your Google Doc to sync it live
                 </p>
               </div>
+
+              <div>
+                <label className="text-sm font-medium text-primary mb-2 block">
+                  Spaces
+                </label>
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm text-muted">
+                      {selectedSpaceIds.length === spaces.length ? 'All spaces selected' : `${selectedSpaceIds.length} of ${spaces.length} spaces selected`}
+                    </span>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={selectAllSpaces}
+                      className="text-xs px-2 py-1 h-auto"
+                    >
+                      {selectedSpaceIds.length === spaces.length ? 'Deselect All' : 'Select All'}
+                    </Button>
+                  </div>
+                  
+                  <div className="grid grid-cols-1 gap-2 max-h-32 overflow-y-auto">
+                    {spaces.map((space) => (
+                      <div key={space.id} className="flex items-center space-x-2">
+                        <input
+                          type="checkbox"
+                          id={`gdoc-space-${space.id}`}
+                          checked={selectedSpaceIds.includes(space.id)}
+                          onChange={() => toggleSpace(space.id)}
+                          className="rounded border-line bg-panel text-primary focus:ring-primary focus:ring-2"
+                        />
+                        <label htmlFor={`gdoc-space-${space.id}`} className="text-sm text-primary cursor-pointer flex-1">
+                          {space.name}
+                        </label>
+                      </div>
+                    ))}
+                  </div>
+                  
+                  {selectedSpaceIds.length > 0 && (
+                    <div className="text-xs text-muted">
+                      Selected: {getSelectedSpaceNames()}
+                    </div>
+                  )}
+                </div>
+                <p className="text-xs text-muted mt-1">
+                  Select which spaces this Google Doc belongs to (default: all spaces)
+                </p>
+              </div>
               
               <div className="flex items-center space-x-3">
                 <Button
                   onClick={handleConnectGoogleDoc}
                   disabled={!docUrl.trim() || connectingDoc}
-                  className="bg-gradient-to-r from-green-600 to-blue-600 hover:from-green-700 hover:to-blue-700 text-white border-0 flex-1"
+                  className="bg-gradient-to-r from-blue-600 to-red-600 hover:from-blue-700 hover:to-red-700 text-white border-0 flex-1"
                 >
                   {connectingDoc ? (
                     <>

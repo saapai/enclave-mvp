@@ -68,15 +68,27 @@ export async function POST(request: NextRequest) {
     })
 
     // Check if the document has been modified
-    const isModified = file.headRevisionId !== source.latest_revision_id
+    // Use both revision ID and modified time for better detection
+    const revisionChanged = file.headRevisionId !== source.latest_revision_id
+    const timeChanged = new Date(file.modifiedTime!).getTime() > new Date(source.modified_time).getTime()
+    const isModified = revisionChanged || timeChanged
+
+    console.log('Modification check:', {
+      revisionChanged,
+      timeChanged,
+      isModified
+    })
 
     if (!isModified) {
+      console.log('Google Doc is already up to date, skipping refresh')
       return NextResponse.json({ 
         success: true,
         message: 'Google Doc is already up to date',
         isModified: false
       })
     }
+
+    console.log('Google Doc has changes, re-indexing...')
 
     // Fetch updated document content
     const docs = createDocsClient(tokens)
@@ -118,6 +130,26 @@ export async function POST(request: NextRequest) {
       console.error('Error updating source metadata:', updateError)
     }
 
+    // Update the corresponding resource entry
+    const { error: resourceUpdateError } = await supabase
+      .from('resource')
+      .update({
+        body: `Live Google Doc - ${chunks.length} sections indexed`,
+        updated_at: new Date().toISOString()
+      })
+      .eq('source', 'gdoc')
+      .eq('title', source.title)
+
+    if (resourceUpdateError) {
+      console.error('Error updating resource:', resourceUpdateError)
+    }
+
+    // CRITICAL: Clear ALL caches to ensure updated content appears in search results
+    const { apiCache, CACHE_KEYS } = await import('@/lib/cache')
+    apiCache.delete(CACHE_KEYS.RESOURCES)
+    
+    console.log('Cleared resources cache to refresh search results')
+
     console.log('Google Doc refreshed successfully:', {
       sourceId,
       chunksCount: chunks.length,
@@ -140,3 +172,4 @@ export async function POST(request: NextRequest) {
     }, { status: 500 })
   }
 }
+

@@ -54,3 +54,4 @@ export const CACHE_KEYS = {
   AI_RESPONSE: (query: string, context: string) => `ai:${query}:${context.slice(0, 50)}`
 } as const
 
+

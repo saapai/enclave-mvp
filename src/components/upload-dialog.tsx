@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useUser } from '@clerk/nextjs'
 import { X, Plus, Paperclip } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -9,6 +9,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Badge } from '@/components/ui/badge'
 import { toast } from 'sonner'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 
 interface UploadDialogProps {
   open: boolean
@@ -26,6 +27,8 @@ export function UploadDialog({ open, onOpenChange }: UploadDialogProps) {
   const [tags, setTags] = useState<string[]>([])
   const [newTag, setNewTag] = useState('')
   const [file, setFile] = useState<File | null>(null)
+  const [spaces, setSpaces] = useState<any[]>([])
+  const [selectedSpaceIds, setSelectedSpaceIds] = useState<string[]>(['00000000-0000-0000-0000-000000000000'])
 
   const predefinedTags = [
     'rush', 'philanthropy', 'social', 'academics', 'athletics', 'housing', 'alumni', 'risk', 'finance', 'tech',
@@ -33,6 +36,28 @@ export function UploadDialog({ open, onOpenChange }: UploadDialogProps) {
     'pledges', 'actives', 'officers',
     'bylaws', 'handbook', 'forms', 'waivers'
   ]
+
+  useEffect(() => {
+    if (open && user) {
+      fetchSpaces()
+    }
+  }, [open, user])
+
+  const fetchSpaces = async () => {
+    try {
+      const response = await fetch('/api/spaces')
+      if (response.ok) {
+        const data = await response.json()
+        setSpaces(data.spaces || [])
+        // Set default to all spaces if user hasn't selected any
+        if (data.spaces && data.spaces.length > 0) {
+          setSelectedSpaceIds(data.spaces.map((s: any) => s.id))
+        }
+      }
+    } catch (error) {
+      console.error('Failed to fetch spaces:', error)
+    }
+  }
 
   const addTag = (tag: string) => {
     if (tag && !tags.includes(tag)) {
@@ -42,6 +67,28 @@ export function UploadDialog({ open, onOpenChange }: UploadDialogProps) {
 
   const removeTag = (tagToRemove: string) => {
     setTags(tags.filter(tag => tag !== tagToRemove))
+  }
+
+  const toggleSpace = (spaceId: string) => {
+    setSelectedSpaceIds(prev => {
+      if (prev.includes(spaceId)) {
+        // Don't allow deselecting all spaces
+        if (prev.length > 1) {
+          return prev.filter(id => id !== spaceId)
+        }
+        return prev
+      } else {
+        return [...prev, spaceId]
+      }
+    })
+  }
+
+  const selectAllSpaces = () => {
+    setSelectedSpaceIds(spaces.map(space => space.id))
+  }
+
+  const getSelectedSpaceNames = () => {
+    return selectedSpaceIds.map(id => spaces.find(s => s.id === id)?.name).filter(Boolean).join(', ')
   }
 
   const handleSubmit = async () => {
@@ -61,6 +108,7 @@ export function UploadDialog({ open, onOpenChange }: UploadDialogProps) {
         form.append('type', 'doc')
         form.append('url', url)
         form.append('tags', JSON.stringify(tags))
+        form.append('spaceIds', JSON.stringify(selectedSpaceIds))
 
         const res = await fetch('/api/upload', { method: 'POST', body: form })
         if (!res.ok) {
@@ -76,6 +124,7 @@ export function UploadDialog({ open, onOpenChange }: UploadDialogProps) {
         form.append('type', 'doc')
         form.append('url', url)
         form.append('tags', JSON.stringify(tags))
+        form.append('spaceIds', JSON.stringify(selectedSpaceIds))
 
         const res = await fetch('/api/upload', { method: 'POST', body: form })
         if (!res.ok) {
@@ -117,6 +166,50 @@ export function UploadDialog({ open, onOpenChange }: UploadDialogProps) {
         </DialogHeader>
 
         <div className="space-y-6">
+          <div>
+            <label className="text-sm font-semibold text-white/70 leading-[1.2] mb-2 block">Spaces *</label>
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-muted">
+                  {selectedSpaceIds.length === spaces.length ? 'All spaces selected' : `${selectedSpaceIds.length} of ${spaces.length} spaces selected`}
+                </span>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={selectAllSpaces}
+                  className="text-xs px-2 py-1 h-auto"
+                >
+                  {selectedSpaceIds.length === spaces.length ? 'Deselect All' : 'Select All'}
+                </Button>
+              </div>
+              
+              <div className="grid grid-cols-1 gap-2 max-h-32 overflow-y-auto">
+                {spaces.map((space) => (
+                  <div key={space.id} className="flex items-center space-x-2">
+                    <input
+                      type="checkbox"
+                      id={`space-${space.id}`}
+                      checked={selectedSpaceIds.includes(space.id)}
+                      onChange={() => toggleSpace(space.id)}
+                      className="rounded border-line bg-panel text-primary focus:ring-primary focus:ring-2"
+                    />
+                    <label htmlFor={`space-${space.id}`} className="text-sm text-primary cursor-pointer flex-1">
+                      {space.name}
+                    </label>
+                  </div>
+                ))}
+              </div>
+              
+              {selectedSpaceIds.length > 0 && (
+                <div className="text-xs text-muted">
+                  Selected: {getSelectedSpaceNames()}
+                </div>
+              )}
+            </div>
+            <p className="text-xs text-muted mt-1">Select which spaces this resource belongs to (default: all spaces)</p>
+          </div>
+
           <div>
             <label className="text-sm font-semibold text-white/70 leading-[1.2] mb-2 block">Title *</label>
             <Input

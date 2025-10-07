@@ -13,9 +13,13 @@ import {
   Clock, 
   FileText,
   ArrowLeft,
-  Eye
+  Eye,
+  RefreshCw,
+  Plus,
+  Filter
 } from 'lucide-react'
 import Link from 'next/link'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 
 interface ResourceWithTags {
   id: string
@@ -25,6 +29,7 @@ interface ResourceWithTags {
   url?: string
   updated_at: string
   source: string
+  space_id: string
   tags: Array<{ id: string; name: string }>
   event_meta?: {
     start_at?: string
@@ -33,9 +38,18 @@ interface ResourceWithTags {
   }
 }
 
+interface Space {
+  id: string
+  name: string
+  domain?: string
+}
+
 export default function ResourcesPage() {
   const { user, isLoaded } = useUser()
   const [resources, setResources] = useState<ResourceWithTags[]>([])
+  const [allResources, setAllResources] = useState<ResourceWithTags[]>([])
+  const [spaces, setSpaces] = useState<Space[]>([])
+  const [selectedSpaceFilter, setSelectedSpaceFilter] = useState<string>('all')
   const [loading, setLoading] = useState(true)
   const [selectedResource, setSelectedResource] = useState<ResourceWithTags | null>(null)
   const [deleting, setDeleting] = useState<string | null>(null)
@@ -43,14 +57,25 @@ export default function ResourcesPage() {
   useEffect(() => {
     if (isLoaded && user) {
       fetchResources()
+      fetchSpaces()
     }
   }, [isLoaded, user])
+
+  useEffect(() => {
+    // Filter resources by selected space
+    if (selectedSpaceFilter === 'all') {
+      setResources(allResources)
+    } else {
+      setResources(allResources.filter(r => r.space_id === selectedSpaceFilter))
+    }
+  }, [selectedSpaceFilter, allResources])
 
   const fetchResources = async () => {
     try {
       const response = await fetch('/api/resources')
       if (response.ok) {
         const data = await response.json()
+        setAllResources(data.resources || [])
         setResources(data.resources || [])
       }
     } catch (error) {
@@ -58,6 +83,23 @@ export default function ResourcesPage() {
     } finally {
       setLoading(false)
     }
+  }
+
+  const fetchSpaces = async () => {
+    try {
+      const response = await fetch('/api/spaces')
+      if (response.ok) {
+        const data = await response.json()
+        setSpaces(data.spaces || [])
+      }
+    } catch (error) {
+      console.error('Failed to fetch spaces:', error)
+    }
+  }
+
+  const getSpaceName = (spaceId: string) => {
+    const space = spaces.find(s => s.id === spaceId)
+    return space?.name || 'Unknown Space'
   }
 
   const handleDelete = async (resourceId: string) => {
@@ -155,10 +197,19 @@ export default function ResourcesPage() {
           <Card className="bg-panel border border-line rounded-xl">
             <CardContent className="p-8">
               <div className="mb-6">
-                <div className="flex items-center space-x-2 mb-3">
+                <div className="flex items-center space-x-2 mb-3 flex-wrap gap-y-2">
                   <Badge variant="outline" className="border-blue-500/40 text-blue-400 text-xs bg-transparent">
                     {selectedResource.type}
                   </Badge>
+                  <Badge variant="outline" className="border-purple-500/40 text-purple-400 text-xs bg-purple-500/10">
+                    {getSpaceName(selectedResource.space_id)}
+                  </Badge>
+                  {selectedResource.source === 'gdoc' && (
+                    <Badge variant="outline" className="border-green-500/40 text-green-400 text-xs bg-green-500/10 flex items-center gap-1">
+                      <RefreshCw className="h-3 w-3" />
+                      Live Google Doc
+                    </Badge>
+                  )}
                   {selectedResource.tags?.map((tag) => (
                     <Badge key={tag.id} variant="outline" className="border-blue-500/40 text-primary/80 text-xs bg-transparent">
                       {tag.name}
@@ -241,12 +292,28 @@ export default function ResourcesPage() {
             <h1 className="text-3xl font-bold text-primary mb-2">Resources</h1>
             <p className="text-muted">Manage your chapter's resources and information</p>
           </div>
-          <Link href="/">
-            <Button variant="outline">
-              <ArrowLeft className="h-4 w-4 mr-2" />
-              Back to Search
-            </Button>
-          </Link>
+          <div className="flex items-center space-x-3">
+            <Select value={selectedSpaceFilter} onValueChange={setSelectedSpaceFilter}>
+              <SelectTrigger className="w-[200px] bg-panel border-line">
+                <Filter className="h-4 w-4 mr-2" />
+                <SelectValue placeholder="Filter by space" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Spaces</SelectItem>
+                {spaces.map((space) => (
+                  <SelectItem key={space.id} value={space.id}>
+                    {space.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Link href="/">
+              <Button variant="outline">
+                <ArrowLeft className="h-4 w-4 mr-2" />
+                Back to Search
+              </Button>
+            </Link>
+          </div>
         </div>
 
         {/* Resources List */}
@@ -275,10 +342,19 @@ export default function ResourcesPage() {
                 <CardContent className="p-6">
                   <div className="flex items-start justify-between">
                     <div className="flex-1">
-                      <div className="flex items-center space-x-2 mb-3">
+                      <div className="flex items-center space-x-2 mb-3 flex-wrap gap-y-2">
                         <Badge variant="outline" className="border-blue-500/40 text-blue-400 text-xs bg-transparent">
                           {resource.type}
                         </Badge>
+                        <Badge variant="outline" className="border-purple-500/40 text-purple-400 text-xs bg-purple-500/10">
+                          {getSpaceName(resource.space_id)}
+                        </Badge>
+                        {resource.source === 'gdoc' && (
+                          <Badge variant="outline" className="border-green-500/40 text-green-400 text-xs bg-green-500/10 flex items-center gap-1">
+                            <RefreshCw className="h-3 w-3" />
+                            Live Google Doc
+                          </Badge>
+                        )}
                         {resource.tags?.slice(0, 3).map((tag) => (
                           <Badge key={tag.id} variant="outline" className="border-blue-500/40 text-primary/80 text-xs bg-transparent">
                             {tag.name}
@@ -332,4 +408,5 @@ export default function ResourcesPage() {
     </div>
   )
 }
+
 

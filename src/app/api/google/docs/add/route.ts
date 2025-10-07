@@ -13,6 +13,8 @@ import {
   createDriveWatch,
   storeDriveWatch
 } from '@/lib/google-docs'
+import { supabase } from '@/lib/supabase'
+import { apiCache, CACHE_KEYS } from '@/lib/cache'
 
 const DEFAULT_SPACE_ID = '00000000-0000-0000-0000-000000000000'
 
@@ -24,9 +26,9 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json()
-    const { urlOrFileId, spaceId = DEFAULT_SPACE_ID } = body
+    const { urlOrFileId, spaceIds = [DEFAULT_SPACE_ID] } = body
 
-    console.log('Google Docs add request:', { userId, urlOrFileId, spaceId })
+    console.log('Google Docs add request:', { userId, urlOrFileId, spaceIds })
 
     if (!urlOrFileId) {
       return NextResponse.json({ error: 'URL or file ID is required' }, { status: 400 })
@@ -78,20 +80,27 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'No content found in document' }, { status: 400 })
     }
 
-    // Store the source
-    const source = await storeGoogleDocSource(
-      spaceId,
-      fileId,
-      file.name || 'Untitled Document',
-      file.mimeType!,
-      file.headRevisionId!,
-      file.modifiedTime!,
-      permissionsHash,
-      userId
-    )
+    // Store the source for each space
+    const sources = []
+    for (const spaceId of spaceIds) {
+      const source = await storeGoogleDocSource(
+        spaceId,
+        fileId,
+        file.name || 'Untitled Document',
+        file.mimeType!,
+        file.headRevisionId!,
+        file.modifiedTime!,
+        permissionsHash,
+        userId
+      )
+      sources.push(source)
 
-    // Store chunks with embeddings
-    await storeGoogleDocChunks(spaceId, source.id, chunks)
+      // Store chunks with embeddings for this space
+      await storeGoogleDocChunks(spaceId, source.id, chunks)
+    }
+
+    // Use the first source for drive watch (only need one watch per file)
+    const primarySource = sources[0]
 
     // Create drive watch for real-time updates
     try {
@@ -102,13 +111,46 @@ export async function POST(request: NextRequest) {
       // Continue without watch - manual sync will still work
     }
 
+    // Create resource entries for the Google Doc in each space
+    const docUrl = file.webViewLink || `https://docs.google.com/document/d/${fileId}/edit`
+    const resources = []
+    
+    for (const spaceId of spaceIds) {
+      const { data: resource, error: resourceError } = await supabase
+        .from('resource')
+        .insert({
+          space_id: spaceId,
+          type: 'doc',
+          title: file.name || 'Untitled Document',
+          body: `Live Google Doc - ${chunks.length} sections indexed`,
+          url: docUrl,
+          source: 'gdoc',
+          visibility: 'space',
+          created_by: null
+        })
+        .select()
+        .single()
+
+      if (resourceError) {
+        console.warn(`Failed to create resource entry for Google Doc in space ${spaceId}:`, resourceError)
+        // Continue without resource entry - it's still in sources_google_docs
+      } else {
+        resources.push(resource)
+      }
+    }
+
+    // Clear resources cache so the new Google Doc appears
+    apiCache.delete(CACHE_KEYS.RESOURCES)
+
     return NextResponse.json({ 
       success: true, 
       source: {
-        id: source.id,
-        title: source.title,
-        fileId: source.google_file_id,
-        chunksCount: chunks.length
+        id: primarySource.id,
+        title: primarySource.title,
+        fileId: primarySource.google_file_id,
+        chunksCount: chunks.length,
+        resourceIds: resources.map(r => r.id),
+        spacesCount: spaceIds.length
       }
     })
 

@@ -172,6 +172,7 @@ export async function POST(request: NextRequest) {
     const type = (form.get('type') as string | null)?.trim() || 'doc'
     const url = (form.get('url') as string | null)?.trim() || ''
     const tagsRaw = (form.get('tags') as string | null) || '[]'
+    const spaceIdsRaw = (form.get('spaceIds') as string | null) || `["${DEFAULT_SPACE_ID}"]`
     const startAt = (form.get('startAt') as string | null) || ''
     const endAt = (form.get('endAt') as string | null) || ''
 
@@ -197,6 +198,13 @@ export async function POST(request: NextRequest) {
       tags = JSON.parse(tagsRaw)
     } catch {
       return NextResponse.json({ error: 'Invalid tags format' }, { status: 400 })
+    }
+
+    let spaceIds: string[] = []
+    try {
+      spaceIds = JSON.parse(spaceIdsRaw)
+    } catch {
+      return NextResponse.json({ error: 'Invalid space IDs format' }, { status: 400 })
     }
 
     const tagsValidation = validateTags(tags)
@@ -226,39 +234,48 @@ export async function POST(request: NextRequest) {
     }
 
 
-    // Insert resource first (body uses extracted text if any, else description)
-    console.log('Inserting resource into database...')
-    const { data: inserted, error: insertError } = await supabase
-      .from('resource')
-      .insert({
-        space_id: DEFAULT_SPACE_ID,
-        type: (['event', 'doc', 'form', 'link', 'faq'] as const).includes(type as any) ? type : 'doc',
-        title: sanitizedTitle || (file ? file.name : 'Untitled'),
-        body: extractedText || sanitizedDescription || null,
-        url: sanitizedUrl || null,
-        source: 'upload',
-        visibility: 'space',
-        created_by: null as any
-      } as any)
-      .select()
-      .single()
+    // Insert resources for each selected space
+    console.log('Inserting resources into database for spaces:', spaceIds)
+    const insertedResources = []
+    
+    for (const spaceId of spaceIds) {
+      const { data: inserted, error: insertError } = await supabase
+        .from('resource')
+        .insert({
+          space_id: spaceId,
+          type: (['event', 'doc', 'form', 'link', 'faq'] as const).includes(type as any) ? type : 'doc',
+          title: sanitizedTitle || (file ? file.name : 'Untitled'),
+          body: extractedText || sanitizedDescription || null,
+          url: sanitizedUrl || null,
+          source: 'upload',
+          visibility: 'space',
+          created_by: null as any
+        } as any)
+        .select()
+        .single()
 
-    if (insertError) {
-      console.error('Database insert error:', insertError)
-      throw insertError
+      if (insertError) {
+        console.error('Database insert error for space', spaceId, ':', insertError)
+        throw insertError
+      }
+      
+      insertedResources.push(inserted)
+      console.log('Resource inserted successfully for space', spaceId, ':', inserted)
     }
-    console.log('Resource inserted successfully:', inserted)
 
-    const resourceId = (inserted as any).id as string
+    // Use the first resource ID for file upload and other operations
+    const primaryResourceId = (insertedResources[0] as any).id as string
 
-    // Upload file to storage and update resource URL
+    // Upload file to storage and update resource URLs for all resources
     if (file) {
       await ensureBucketExists()
 
       const arrayBuffer = await file.arrayBuffer()
       const buffer = Buffer.from(arrayBuffer)
       const ext = file.name.split('.').pop() || 'bin'
-      const objectPath = `${DEFAULT_SPACE_ID}/${resourceId}/${Date.now()}-${file.name}`
+      
+      // Upload file once and get public URL
+      const objectPath = `${DEFAULT_SPACE_ID}/${primaryResourceId}/${Date.now()}-${file.name}`
 
       const { error: uploadError } = await supabase.storage
         .from(STORAGE_BUCKET)
@@ -271,57 +288,67 @@ export async function POST(request: NextRequest) {
         const { data: pub } = supabase.storage.from(STORAGE_BUCKET).getPublicUrl(objectPath)
         const publicUrl = pub?.publicUrl || null
         if (publicUrl) {
-          await supabase
-            .from('resource')
-            .update({ url: publicUrl })
-            .eq('id', resourceId)
+          // Update URL for all resources
+          for (const resource of insertedResources) {
+            await supabase
+              .from('resource')
+              .update({ url: publicUrl })
+              .eq('id', (resource as any).id)
+          }
         }
       }
     }
 
-    // Handle tags
+    // Handle tags for all resources
     if (sanitizedTags.length > 0) {
-      for (const tagName of sanitizedTags) {
-        const { data: existingTag } = await supabase
-          .from('tag')
-          .select('id')
-          .eq('space_id', DEFAULT_SPACE_ID)
-          .eq('name', tagName)
-          .single()
-        let tagId = (existingTag as any)?.id as string | undefined
-        if (!tagId) {
-          const { data: newTag } = await supabase
+      for (const resource of insertedResources) {
+        const resourceId = (resource as any).id
+        const spaceId = (resource as any).space_id
+        
+        for (const tagName of sanitizedTags) {
+          const { data: existingTag } = await supabase
             .from('tag')
-            .insert({
-              space_id: DEFAULT_SPACE_ID,
-              name: tagName,
-              kind: 'topic'
-            } as any)
-            .select()
+            .select('id')
+            .eq('space_id', spaceId)
+            .eq('name', tagName)
             .single()
-          tagId = (newTag as any)?.id
-        }
-        if (tagId) {
-          await supabase
-            .from('resource_tag')
-            .insert({ resource_id: resourceId, tag_id: tagId } as any)
+          let tagId = (existingTag as any)?.id as string | undefined
+          if (!tagId) {
+            const { data: newTag } = await supabase
+              .from('tag')
+              .insert({
+                space_id: spaceId,
+                name: tagName,
+                kind: 'topic'
+              } as any)
+              .select()
+              .single()
+            tagId = (newTag as any)?.id
+          }
+          if (tagId) {
+            await supabase
+              .from('resource_tag')
+              .insert({ resource_id: resourceId, tag_id: tagId } as any)
+          }
         }
       }
     }
 
-    // Event metadata
+    // Event metadata for all resources
     if (type === 'event' && (startAt || endAt || location || rsvpLink || cost || dressCode)) {
-      await supabase
-        .from('event_meta')
-        .insert({
-          resource_id: resourceId,
-          start_at: startAt || null,
-          end_at: endAt || null,
-          location: location || null,
-          rsvp_link: rsvpLink || null,
-          cost: cost || null,
-          dress_code: dressCode || null
-        } as any)
+      for (const resource of insertedResources) {
+        await supabase
+          .from('event_meta')
+          .insert({
+            resource_id: (resource as any).id,
+            start_at: startAt || null,
+            end_at: endAt || null,
+            location: location || null,
+            rsvp_link: rsvpLink || null,
+            cost: cost || null,
+            dress_code: dressCode || null
+          } as any)
+      }
     }
 
     // Compute embedding and chunks asynchronously (best-effort). Skip if tables are missing.

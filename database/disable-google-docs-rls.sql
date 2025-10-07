@@ -15,3 +15,4 @@ ALTER TABLE gdrive_watches DISABLE ROW LEVEL SECURITY;
 
 -- Note: Authentication is handled by Clerk at the API level
 -- The API routes already check for valid user sessions before accessing these tables
+

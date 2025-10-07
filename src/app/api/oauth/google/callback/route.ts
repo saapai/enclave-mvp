@@ -47,3 +47,4 @@ export async function GET(request: NextRequest) {
     return NextResponse.redirect(new URL('/?error=google_auth_failed', request.url))
   }
 }
+
