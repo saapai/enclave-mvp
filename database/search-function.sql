@@ -17,8 +17,8 @@ RETURNS TABLE (
   created_by UUID,
   updated_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ,
-  rank REAL,
-  score REAL
+  rank DOUBLE PRECISION,
+  score DOUBLE PRECISION
 ) AS $$
 BEGIN
   RETURN QUERY

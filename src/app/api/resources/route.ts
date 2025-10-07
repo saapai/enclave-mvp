@@ -24,7 +24,8 @@ export async function GET(request: NextRequest) {
     let spaceIds = [DEFAULT_SPACE_ID]
     try {
       const { clerkClient } = await import('@clerk/nextjs/server')
-      const clerkUser = await clerkClient().users.getUser(userId!)
+      const client = await clerkClient()
+      const clerkUser = await client.users.getUser(userId!)
       const userEmail = clerkUser.emailAddresses[0]?.emailAddress
 
       // Get all spaces the user belongs to

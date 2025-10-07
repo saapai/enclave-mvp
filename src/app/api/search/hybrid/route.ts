@@ -31,7 +31,8 @@ export async function GET(request: NextRequest) {
     if (userId) {
       try {
         const { clerkClient } = await import('@clerk/nextjs/server')
-        const clerkUser = await clerkClient().users.getUser(userId)
+        const client = await clerkClient()
+        const clerkUser = await client.users.getUser(userId)
         const userEmail = clerkUser.emailAddresses[0]?.emailAddress
 
         const { data: userSpaces } = await supabase
