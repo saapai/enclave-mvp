@@ -21,19 +21,23 @@ export async function GET(request: NextRequest) {
     }
 
     // Get user's email to find their spaces
-    const clerkUser = await (await import('@clerk/nextjs/server')).clerkClient().users.getUser(userId!)
-    const userEmail = clerkUser.emailAddresses[0]?.emailAddress
+    let spaceIds = [DEFAULT_SPACE_ID]
+    try {
+      const { clerkClient } = await import('@clerk/nextjs/server')
+      const clerkUser = await clerkClient().users.getUser(userId!)
+      const userEmail = clerkUser.emailAddresses[0]?.emailAddress
 
-    // Get all spaces the user belongs to
-    const { data: userSpaces } = await supabase
-      .from('app_user')
-      .select('space_id')
-      .eq('email', userEmail)
+      // Get all spaces the user belongs to
+      const { data: userSpaces } = await supabase
+        .from('app_user')
+        .select('space_id')
+        .eq('email', userEmail)
 
-    const spaceIds = userSpaces?.map(u => u.space_id) || []
-    // Always include default space
-    if (!spaceIds.includes(DEFAULT_SPACE_ID)) {
-      spaceIds.push(DEFAULT_SPACE_ID)
+      const userSpaceIds = userSpaces?.map(u => u.space_id) || []
+      spaceIds = [...new Set([...spaceIds, ...userSpaceIds])]
+    } catch (error) {
+      console.error('Failed to get user spaces for resources:', error)
+      // Fall back to default space only
     }
 
     // Fetch resources from all user's spaces

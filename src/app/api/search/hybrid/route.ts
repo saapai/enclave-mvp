@@ -29,16 +29,22 @@ export async function GET(request: NextRequest) {
     // Get user's spaces to search across all of them
     let spaceIds = ['00000000-0000-0000-0000-000000000000']
     if (userId) {
-      const clerkUser = await (await import('@clerk/nextjs/server')).clerkClient().users.getUser(userId)
-      const userEmail = clerkUser.emailAddresses[0]?.emailAddress
+      try {
+        const { clerkClient } = await import('@clerk/nextjs/server')
+        const clerkUser = await clerkClient().users.getUser(userId)
+        const userEmail = clerkUser.emailAddresses[0]?.emailAddress
 
-      const { data: userSpaces } = await supabase
-        .from('app_user')
-        .select('space_id')
-        .eq('email', userEmail)
+        const { data: userSpaces } = await supabase
+          .from('app_user')
+          .select('space_id')
+          .eq('email', userEmail)
 
-      const userSpaceIds = userSpaces?.map(u => u.space_id) || []
-      spaceIds = [...new Set([...spaceIds, ...userSpaceIds])]
+        const userSpaceIds = userSpaces?.map(u => u.space_id) || []
+        spaceIds = [...new Set([...spaceIds, ...userSpaceIds])]
+      } catch (error) {
+        console.error('Failed to get user spaces for search:', error)
+        // Fall back to default space only
+      }
     }
 
     // Search across all user spaces
