@@ -2,13 +2,14 @@
 
 import { useRef, useState, useEffect } from 'react'
 import { useUser } from '@clerk/nextjs'
-import { Search, Plus, Filter, Clock, MapPin, Calendar, ExternalLink, Sparkles, MessageSquare, Hash, Users, Settings, Menu, X, DollarSign, FileText, Send, Paperclip, Link, Loader2, RefreshCw } from 'lucide-react'
+import { Search, Plus, Filter, Clock, MapPin, Calendar, ExternalLink, Sparkles, MessageSquare, Hash, Users, Settings, Menu, X, DollarSign, FileText, Send, Paperclip, Link, Loader2, RefreshCw, ChevronDown } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from '@/components/ui/dropdown-menu'
 import { SearchFilters, searchResources, logQuery } from '@/lib/search'
 import { ResourceWithTags } from '@/lib/database.types'
 import { UploadDialog } from '@/components/upload-dialog'
@@ -34,6 +35,7 @@ export default function HomePage() {
   const [autoRefreshing, setAutoRefreshing] = useState(false)
   const [showGroups, setShowGroups] = useState(false)
   const [showSlack, setShowSlack] = useState(false)
+  const [showAddMenu, setShowAddMenu] = useState(false)
   const [spaces, setSpaces] = useState<any[]>([])
   const [selectedSpaceIds, setSelectedSpaceIds] = useState<string[]>(['00000000-0000-0000-0000-000000000000'])
 
@@ -213,8 +215,10 @@ export default function HomePage() {
 
     setLoading(true)
     try {
-      // CRITICAL: Check Google Docs for updates BEFORE processing the search query
-      console.log('[Search] Checking Google Docs for updates BEFORE search...')
+      // CRITICAL: Check Google Docs AND Slack for updates BEFORE processing the search query
+      console.log('[Search] Checking Google Docs and Slack for updates BEFORE search...')
+      
+      // Check Google Docs
       try {
         const listResponse = await fetch('/api/google/docs/list')
         if (listResponse.ok) {
@@ -246,6 +250,40 @@ export default function HomePage() {
         }
       } catch (error) {
         console.error('[Search] Failed to check Google Docs before search:', error)
+      }
+
+      // Check Slack channels for new messages
+      try {
+        const channelsResponse = await fetch('/api/slack/channels')
+        if (channelsResponse.ok) {
+          const { channels } = await channelsResponse.json()
+          
+          if (channels && channels.length > 0) {
+            console.log(`[Search] Syncing ${channels.length} Slack channel(s) before search...`)
+            
+            // Sync each channel (this will only fetch new messages since last sync)
+            for (const channel of channels) {
+              try {
+                const syncResponse = await fetch('/api/slack/sync', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ channelId: channel.id })
+                })
+                
+                if (syncResponse.ok) {
+                  const result = await syncResponse.json()
+                  if (result.messageCount > 0) {
+                    console.log(`[Search] ✓ Synced ${result.messageCount} new messages from #${channel.channel_name}`)
+                  }
+                }
+              } catch (error) {
+                console.error(`[Search] Failed to sync Slack channel ${channel.id}:`, error)
+              }
+            }
+          }
+        }
+      } catch (error) {
+        console.error('[Search] Failed to check Slack channels before search:', error)
       }
 
       // Now execute the search with potentially updated Google Doc content
@@ -535,56 +573,57 @@ export default function HomePage() {
                 variant="secondary"
                 onClick={() => setShowGroups(true)}
               >
-                <Users className="h-4 w-4" />
-                +Group
+                <Users className="h-4 w-4 mr-2" />
+                Groups
               </Button>
               <Button
                 variant="secondary"
                 onClick={() => window.location.href = '/resources'}
               >
-                <FileText className="h-4 w-4" />
+                <FileText className="h-4 w-4 mr-2" />
                 View Resources
               </Button>
-              <Button
-                variant="secondary"
-                onClick={() => setShowUpload(true)}
-              >
-                <Plus className="h-4 w-4" />
-                Add Resource
-              </Button>
-              <Button
-                onClick={() => setShowConnectDoc(true)}
-                className="bg-gradient-to-r from-blue-600 to-red-600 hover:from-blue-700 hover:to-red-700 text-white border-0"
-              >
-                <Link className="h-4 w-4" />
-                Connect Live Doc
-              </Button>
-              <Button
-                onClick={handleRefreshGoogleDocs}
-                disabled={refreshingDocs}
-                variant="outline"
-                className="border-blue-600 text-blue-600 hover:bg-blue-50"
-              >
-                {refreshingDocs ? (
-                  <>
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                    Refreshing...
-                  </>
-                ) : (
-                  <>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button className="bg-gradient-to-r from-blue-600 to-red-600 hover:from-blue-700 hover:to-red-700 text-white border-0">
+                    <Plus className="h-4 w-4 mr-2" />
+                    Add
+                    <ChevronDown className="h-4 w-4 ml-1" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-56 bg-panel border-line">
+                  <DropdownMenuItem onClick={() => setShowUpload(true)} className="cursor-pointer">
+                    <FileText className="h-4 w-4 mr-2" />
+                    Add Resource
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setShowConnectDoc(true)} className="cursor-pointer">
                     <Link className="h-4 w-4 mr-2" />
-                    Refresh Docs
-                  </>
-                )}
-              </Button>
-              <Button
-                onClick={() => setShowSlack(true)}
-                variant="outline"
-                className="border-purple-600 text-purple-600 hover:bg-purple-50"
-              >
-                <MessageSquare className="h-4 w-4 mr-2" />
-                Slack
-              </Button>
+                    Add Live Google Doc
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setShowSlack(true)} className="cursor-pointer">
+                    <MessageSquare className="h-4 w-4 mr-2" />
+                    Connect Slack
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem 
+                    onClick={handleRefreshGoogleDocs} 
+                    disabled={refreshingDocs}
+                    className="cursor-pointer"
+                  >
+                    {refreshingDocs ? (
+                      <>
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                        Refreshing...
+                      </>
+                    ) : (
+                      <>
+                        <RefreshCw className="h-4 w-4 mr-2" />
+                        Refresh All Docs
+                      </>
+                    )}
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
               <div className="flex items-center space-x-3">
                 <div className="w-8 h-8 bg-panel rounded-full flex items-center justify-center text-primary text-sm font-medium">
                   {user?.firstName?.[0]}{user?.lastName?.[0]}

@@ -16,7 +16,9 @@ import {
   Eye,
   RefreshCw,
   Plus,
-  Filter
+  Filter,
+  MessageSquare,
+  Hash
 } from 'lucide-react'
 import Link from 'next/link'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -44,10 +46,22 @@ interface Space {
   domain?: string
 }
 
+interface SlackChannel {
+  id: string
+  channel_name: string
+  channel_type: string
+  is_member: boolean
+  message_count: number
+  last_indexed_at?: string
+  space_id: string
+}
+
 export default function ResourcesPage() {
   const { user, isLoaded } = useUser()
   const [resources, setResources] = useState<ResourceWithTags[]>([])
   const [allResources, setAllResources] = useState<ResourceWithTags[]>([])
+  const [slackChannels, setSlackChannels] = useState<SlackChannel[]>([])
+  const [allSlackChannels, setAllSlackChannels] = useState<SlackChannel[]>([])
   const [spaces, setSpaces] = useState<Space[]>([])
   const [selectedSpaceFilter, setSelectedSpaceFilter] = useState<string>('all')
   const [loading, setLoading] = useState(true)
@@ -58,17 +72,20 @@ export default function ResourcesPage() {
     if (isLoaded && user) {
       fetchResources()
       fetchSpaces()
+      fetchSlackChannels()
     }
   }, [isLoaded, user])
 
   useEffect(() => {
-    // Filter resources by selected space
+    // Filter resources and Slack channels by selected space
     if (selectedSpaceFilter === 'all') {
       setResources(allResources)
+      setSlackChannels(allSlackChannels)
     } else {
       setResources(allResources.filter(r => r.space_id === selectedSpaceFilter))
+      setSlackChannels(allSlackChannels.filter(c => c.space_id === selectedSpaceFilter))
     }
-  }, [selectedSpaceFilter, allResources])
+  }, [selectedSpaceFilter, allResources, allSlackChannels])
 
   const fetchResources = async () => {
     try {
@@ -94,6 +111,19 @@ export default function ResourcesPage() {
       }
     } catch (error) {
       console.error('Failed to fetch spaces:', error)
+    }
+  }
+
+  const fetchSlackChannels = async () => {
+    try {
+      const response = await fetch('/api/slack/channels')
+      if (response.ok) {
+        const data = await response.json()
+        setAllSlackChannels(data.channels || [])
+        setSlackChannels(data.channels || [])
+      }
+    } catch (error) {
+      console.error('Failed to fetch Slack channels:', error)
     }
   }
 
@@ -402,6 +432,52 @@ export default function ResourcesPage() {
                 </CardContent>
               </Card>
             ))}
+            
+            {/* Slack Channels */}
+            {slackChannels.length > 0 && (
+              <>
+                <div className="mt-8 mb-4">
+                  <h2 className="text-xl font-semibold text-primary flex items-center gap-2">
+                    <MessageSquare className="h-5 w-5 text-purple-400" />
+                    Slack Channels
+                  </h2>
+                </div>
+                {slackChannels.map((channel) => (
+                  <Card key={channel.id} className="bg-panel border border-line rounded-xl hover:bg-panel-2 transition-colors">
+                    <CardContent className="p-6">
+                      <div className="flex items-start justify-between">
+                        <div className="flex-1">
+                          <div className="flex items-center space-x-2 mb-3 flex-wrap gap-y-2">
+                            <Badge variant="outline" className="border-purple-500/40 text-purple-400 text-xs bg-purple-500/10 flex items-center gap-1">
+                              <Hash className="h-3 w-3" />
+                              {channel.channel_type === 'private_channel' ? 'Private' : 'Public'} Channel
+                            </Badge>
+                            <Badge variant="outline" className="border-purple-500/40 text-purple-400 text-xs bg-purple-500/10">
+                              {getSpaceName(channel.space_id)}
+                            </Badge>
+                            <Badge variant="outline" className="border-green-500/40 text-green-400 text-xs bg-green-500/10 flex items-center gap-1">
+                              <MessageSquare className="h-3 w-3" />
+                              {channel.message_count} messages
+                            </Badge>
+                          </div>
+                          <h3 className="text-lg font-semibold text-primary mb-2 flex items-center gap-2">
+                            <Hash className="h-5 w-5 text-purple-400" />
+                            {channel.channel_name}
+                          </h3>
+                          <div className="flex items-center justify-between">
+                            <div className="text-xs text-subtle">
+                              {channel.last_indexed_at 
+                                ? `Last synced ${formatDate(channel.last_indexed_at)}` 
+                                : 'Not synced yet'} • slack
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))}
+              </>
+            )}
           </div>
         )}
       </div>
