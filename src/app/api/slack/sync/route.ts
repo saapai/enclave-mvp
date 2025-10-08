@@ -45,9 +45,10 @@ export async function POST(request: NextRequest) {
     console.log(`[Sync] Using bot token: ${slackAccount.bot_token?.substring(0, 20)}...`)
 
     // Index the channel (fetch messages and create embeddings)
+    // IMPORTANT: Use the Slack channel ID, not the database UUID!
     const result = await indexSlackChannel(
       slackAccount.id,
-      channelId,
+      channel.slack_channel_id,  // Use Slack's channel ID (e.g., CH1N9B44C)
       slackAccount.space_id,
       slackAccount.bot_token,
       channel.channel_name,
