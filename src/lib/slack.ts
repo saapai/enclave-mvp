@@ -134,23 +134,54 @@ export async function storeSlackAccount(
     ? new Date(Date.now() + expiresIn * 1000)
     : undefined
 
-  const { data, error } = await supabase
-    .from('slack_accounts')
-    .upsert({
-      user_id: userId,
-      space_id: spaceId,
-      bot_token: botToken,
-      user_token: userToken,
-      refresh_token: refreshToken,
-      token_expiry: tokenExpiry?.toISOString(),
-      team_id: teamId,
-      team_name: teamName,
-      bot_user_id: botUserId
-    }, {
-      onConflict: 'user_id,team_id'
-    })
-    .select()
-    .single()
+  // Try the new schema first (dual tokens), fall back to old schema if needed
+  let data, error
+  
+  try {
+    // Attempt to insert with new dual token schema
+    const result = await supabase
+      .from('slack_accounts')
+      .upsert({
+        user_id: userId,
+        space_id: spaceId,
+        bot_token: botToken,
+        user_token: userToken,
+        refresh_token: refreshToken,
+        token_expiry: tokenExpiry?.toISOString(),
+        team_id: teamId,
+        team_name: teamName,
+        bot_user_id: botUserId
+      }, {
+        onConflict: 'user_id,team_id'
+      })
+      .select()
+      .single()
+    
+    data = result.data
+    error = result.error
+  } catch (schemaError) {
+    // If new schema fails, try old schema (backward compatibility)
+    console.log('New schema failed, trying old schema:', schemaError)
+    const result = await supabase
+      .from('slack_accounts')
+      .upsert({
+        user_id: userId,
+        space_id: spaceId,
+        access_token: botToken, // Use bot token as access token in old schema
+        refresh_token: refreshToken,
+        token_expiry: tokenExpiry?.toISOString(),
+        team_id: teamId,
+        team_name: teamName,
+        bot_user_id: botUserId
+      }, {
+        onConflict: 'user_id,team_id'
+      })
+      .select()
+      .single()
+    
+    data = result.data
+    error = result.error
+  }
 
   if (error) throw error
   return data as SlackAccount
@@ -169,6 +200,17 @@ export async function getSlackAccount(userId: string): Promise<SlackAccount | nu
   if (error) {
     if (error.code === 'PGRST116') return null // Not found
     throw error
+  }
+
+  // Handle backward compatibility: if we have old schema with access_token,
+  // map it to both bot_token and user_token
+  const account = data as any
+  if (account.access_token && !account.bot_token) {
+    return {
+      ...account,
+      bot_token: account.access_token,
+      user_token: account.access_token // Temporary: same token for both
+    } as SlackAccount
   }
 
   return data as SlackAccount
