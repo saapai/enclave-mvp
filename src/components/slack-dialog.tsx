@@ -35,6 +35,7 @@ export function SlackDialog({ open, onOpenChange }: SlackDialogProps) {
   const [slackAccount, setSlackAccount] = useState<SlackAccount | null>(null)
   const [channels, setChannels] = useState<SlackChannel[]>([])
   const [syncing, setSyncing] = useState<Record<string, boolean>>({})
+  const [disconnecting, setDisconnecting] = useState(false)
 
   useEffect(() => {
     if (open) {
@@ -88,6 +89,28 @@ export function SlackDialog({ open, onOpenChange }: SlackDialogProps) {
       toast.error(`Failed to sync #${channelName}`)
     } finally {
       setSyncing({ ...syncing, [channelId]: false })
+    }
+  }
+
+  const handleDisconnectSlack = async () => {
+    setDisconnecting(true)
+    try {
+      const response = await fetch('/api/slack/disconnect', {
+        method: 'POST'
+      })
+
+      if (response.ok) {
+        toast.success('Slack disconnected successfully')
+        setSlackAccount(null)
+        setChannels([])
+      } else {
+        const error = await response.json()
+        toast.error(error.message || 'Failed to disconnect Slack')
+      }
+    } catch (error) {
+      toast.error('Failed to disconnect Slack')
+    } finally {
+      setDisconnecting(false)
     }
   }
 
@@ -165,10 +188,19 @@ export function SlackDialog({ open, onOpenChange }: SlackDialogProps) {
                       {channels.length} channels connected
                     </p>
                   </div>
-                  <Badge variant="outline" className="border-green-500 text-green-400 bg-green-500/20">
-                    <Check className="h-3 w-3 mr-1" />
-                    Connected
-                  </Badge>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleDisconnectSlack}
+                    disabled={disconnecting}
+                    className="border-red-600 text-red-600 hover:bg-red-600 hover:text-white"
+                  >
+                    {disconnecting ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      'Disconnect'
+                    )}
+                  </Button>
                 </div>
               </div>
 
