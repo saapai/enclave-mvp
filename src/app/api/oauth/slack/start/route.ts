@@ -21,7 +21,8 @@ export async function GET(request: NextRequest) {
     const redirectUri = `${appUrl}/api/oauth/slack/callback`
 
     // Slack OAuth scopes needed for reading messages
-    const scopes = [
+    // Using user scopes for OAuth to get channels user is in
+    const userScopes = [
       'channels:history',
       'channels:read',
       'groups:history',
@@ -31,13 +32,14 @@ export async function GET(request: NextRequest) {
       'mpim:history',
       'mpim:read',
       'users:read',
-      'team:read'
+      'search:read'  // Needed for comprehensive search
     ].join(',')
 
-    // Build Slack OAuth URL
+    // Build Slack OAuth URL with user scopes
+    // Note: user_scope parameter is for user tokens, scope is for bot tokens
     const slackAuthUrl = new URL('https://slack.com/oauth/v2/authorize')
     slackAuthUrl.searchParams.set('client_id', clientId)
-    slackAuthUrl.searchParams.set('scope', scopes)
+    slackAuthUrl.searchParams.set('user_scope', userScopes)  // User scopes for accessing user's channels
     slackAuthUrl.searchParams.set('redirect_uri', redirectUri)
     slackAuthUrl.searchParams.set('state', userId) // Pass user ID in state
 

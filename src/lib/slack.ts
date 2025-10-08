@@ -89,9 +89,18 @@ export async function exchangeSlackCode(code: string, redirectUri: string) {
     throw new Error(`Slack OAuth error: ${data.error}`)
   }
 
+  // When using user_scope, Slack returns the user token in authed_user
+  // When using scope (bot), it's in access_token
+  const accessToken = data.authed_user?.access_token || data.access_token
+  const refreshToken = data.authed_user?.refresh_token || data.refresh_token
+  
+  if (!accessToken) {
+    throw new Error('No access token received from Slack')
+  }
+
   return {
-    accessToken: data.access_token,
-    refreshToken: data.refresh_token,
+    accessToken,
+    refreshToken,
     teamId: data.team.id,
     teamName: data.team.name,
     botUserId: data.bot_user_id,
