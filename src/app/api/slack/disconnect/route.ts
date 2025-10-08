@@ -9,37 +9,35 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    // Delete all Slack-related data for this user
+    // First, get the slack account IDs for this user
+    const { data: slackAccounts, error: fetchError } = await supabase
+      .from('slack_accounts')
+      .select('id')
+      .eq('user_id', userId)
+
+    if (fetchError) {
+      console.error('Error fetching Slack accounts:', fetchError)
+      return NextResponse.json({ error: 'Failed to fetch accounts' }, { status: 500 })
+    }
+
+    if (!slackAccounts || slackAccounts.length === 0) {
+      return NextResponse.json({ message: 'No Slack accounts to disconnect' })
+    }
+
+    const accountIds = slackAccounts.map(acc => acc.id)
+
+    // Delete channels (this will cascade delete messages and chunks via ON DELETE CASCADE)
     const { error: channelsError } = await supabase
       .from('slack_channels')
       .delete()
-      .eq('user_id', userId)
+      .in('slack_account_id', accountIds)
 
     if (channelsError) {
       console.error('Error deleting Slack channels:', channelsError)
       return NextResponse.json({ error: 'Failed to delete channels' }, { status: 500 })
     }
 
-    const { error: messagesError } = await supabase
-      .from('slack_messages')
-      .delete()
-      .eq('user_id', userId)
-
-    if (messagesError) {
-      console.error('Error deleting Slack messages:', messagesError)
-      return NextResponse.json({ error: 'Failed to delete messages' }, { status: 500 })
-    }
-
-    const { error: messageChunksError } = await supabase
-      .from('slack_message_chunks')
-      .delete()
-      .eq('user_id', userId)
-
-    if (messageChunksError) {
-      console.error('Error deleting Slack message chunks:', messageChunksError)
-      return NextResponse.json({ error: 'Failed to delete message chunks' }, { status: 500 })
-    }
-
+    // Delete the slack accounts (should already be clean due to CASCADE, but being explicit)
     const { error: accountsError } = await supabase
       .from('slack_accounts')
       .delete()
@@ -50,7 +48,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Failed to delete account' }, { status: 500 })
     }
 
-    console.log(`Slack disconnected for user ${userId}`)
+    console.log(`Slack disconnected for user ${userId} (deleted ${accountIds.length} account(s))`)
 
     return NextResponse.json({ message: 'Slack disconnected successfully' })
   } catch (error) {
