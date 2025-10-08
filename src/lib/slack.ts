@@ -519,16 +519,19 @@ async function storeSlackMessageChunk(
  */
 export async function indexSlackChannel(
   slackAccountId: string,
-  channelId: string,
+  dbChannelId: string,        // Database UUID for storing
+  slackChannelId: string,     // Slack channel ID for API calls
   spaceId: string,
   accessToken: string,
   channelName: string,
   lastMessageTs?: string
 ): Promise<{ messageCount: number; lastTs: string }> {
   console.log(`[Index] Starting to index channel: ${channelName}`)
+  console.log(`[Index] DB Channel ID: ${dbChannelId}, Slack Channel ID: ${slackChannelId}`)
   
   // Fetch ALL messages at once - fetchSlackMessages now handles pagination internally
-  const allMessages = await fetchSlackMessages(accessToken, channelId, lastMessageTs)
+  // Use the Slack channel ID for API calls
+  const allMessages = await fetchSlackMessages(accessToken, slackChannelId, lastMessageTs)
   
   console.log(`[Index] Fetched ${allMessages.length} messages from ${channelName}`)
 
@@ -543,14 +546,15 @@ export async function indexSlackChannel(
     if (message.thread_ts && message.thread_ts !== message.ts) {
       const threadMessages = await fetchSlackThreadReplies(
         accessToken,
-        channelId,
+        slackChannelId,  // Use Slack channel ID for API calls
         message.thread_ts
       )
       threadContext = await generateThreadSummary(threadMessages)
     }
 
+    // Use database channel ID for storing
     await storeSlackMessage(
-      channelId,
+      dbChannelId,      // Database UUID
       spaceId,
       message,
       channelName,
