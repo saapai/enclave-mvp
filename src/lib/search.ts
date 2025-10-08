@@ -1,6 +1,7 @@
 import { supabase } from './supabase'
 import { ResourceWithTags, SearchResult } from './database.types'
 import { embedText } from './embeddings'
+import { searchSlackMessages } from './slack'
 
 export interface SearchFilters {
   type?: string
@@ -14,7 +15,7 @@ export interface SearchOptions {
   offset?: number
 }
 
-// Hybrid search that includes both regular resources and Google Docs
+// Hybrid search that includes regular resources, Google Docs, and Slack messages
 export async function searchResourcesHybrid(
   query: string,
   spaceId: string,
@@ -48,6 +49,13 @@ export async function searchResourcesHybrid(
       console.error('Google Docs search error:', gdError)
     }
 
+    // Search Slack messages
+    const slackResults = await searchSlackMessages(
+      queryEmbedding,
+      spaceId,
+      limit * 2
+    )
+
     // Convert Google Docs results to SearchResult format
     const googleDocsSearchResults: SearchResult[] = (googleDocsResults || []).map((chunk: any) => ({
       id: `google_doc_${chunk.source_id}_${chunk.id}`,
@@ -69,8 +77,30 @@ export async function searchResourcesHybrid(
       }
     }))
 
-    // Combine and rank results
-    const allResults = [...regularResults, ...googleDocsSearchResults]
+    // Convert Slack results to SearchResult format
+    const slackSearchResults: SearchResult[] = (slackResults || []).map((msg: any) => ({
+      id: `slack_message_${msg.slack_message_id}`,
+      title: msg.channel_context || 'Slack Message',
+      body: msg.text,
+      type: 'slack',
+      url: null, // TODO: Build Slack message permalink
+      space_id: spaceId,
+      created_at: msg.created_at,
+      updated_at: msg.created_at,
+      created_by: null,
+      tags: [],
+      rank: msg.similarity || 0,
+      score: msg.similarity || 0,
+      metadata: {
+        slack_message_id: msg.slack_message_id,
+        slack_channel_id: msg.slack_channel_id,
+        thread_context: msg.thread_context,
+        channel_context: msg.channel_context
+      }
+    }))
+
+    // Combine and rank results from all sources
+    const allResults = [...regularResults, ...googleDocsSearchResults, ...slackSearchResults]
     
     // Sort by score/rank
     allResults.sort((a, b) => (b.score || 0) - (a.score || 0))

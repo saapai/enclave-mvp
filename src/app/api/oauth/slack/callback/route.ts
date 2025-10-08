@@ -1,0 +1,90 @@
+import { NextRequest, NextResponse } from 'next/server'
+import { auth } from '@clerk/nextjs/server'
+import { exchangeSlackCode, storeSlackAccount, fetchSlackChannels, storeSlackChannel } from '@/lib/slack'
+
+const DEFAULT_SPACE_ID = '00000000-0000-0000-0000-000000000000'
+
+export async function GET(request: NextRequest) {
+  try {
+    const { userId } = await auth()
+    if (!userId) {
+      return NextResponse.redirect(new URL('/sign-in', request.url))
+    }
+
+    const searchParams = request.nextUrl.searchParams
+    const code = searchParams.get('code')
+    const error = searchParams.get('error')
+    const state = searchParams.get('state')
+
+    if (error) {
+      console.error('Slack OAuth error:', error)
+      return NextResponse.redirect(
+        new URL(`/?error=slack_oauth_${error}`, request.url)
+      )
+    }
+
+    if (!code) {
+      return NextResponse.redirect(
+        new URL('/?error=slack_no_code', request.url)
+      )
+    }
+
+    // Verify state matches user ID
+    if (state !== userId) {
+      return NextResponse.redirect(
+        new URL('/?error=slack_state_mismatch', request.url)
+      )
+    }
+
+    // Exchange code for access token
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'
+    const redirectUri = `${appUrl}/api/oauth/slack/callback`
+
+    const slackAuth = await exchangeSlackCode(code, redirectUri)
+
+    // Store Slack account
+    const slackAccount = await storeSlackAccount(
+      userId,
+      DEFAULT_SPACE_ID, // For now, store in default space
+      slackAuth.accessToken,
+      slackAuth.teamId,
+      slackAuth.teamName,
+      slackAuth.botUserId,
+      slackAuth.refreshToken,
+      slackAuth.expiresIn
+    )
+
+    console.log(`Slack workspace connected: ${slackAuth.teamName} for user ${userId}`)
+
+    // Fetch and store channels
+    const channels = await fetchSlackChannels(slackAuth.accessToken)
+    
+    for (const channel of channels) {
+      // Only store channels the user is a member of
+      if (!channel.is_member) continue
+      
+      await storeSlackChannel(
+        slackAccount.id,
+        DEFAULT_SPACE_ID,
+        channel.id,
+        channel.name,
+        channel.is_private ? 'private_channel' : 'public_channel',
+        channel.is_archived || false,
+        channel.is_member || false
+      )
+    }
+
+    console.log(`Stored ${channels.filter((c: any) => c.is_member).length} Slack channels`)
+
+    // Redirect back to home page with success message
+    return NextResponse.redirect(
+      new URL('/?slack_connected=true', request.url)
+    )
+  } catch (error) {
+    console.error('Slack OAuth callback error:', error)
+    return NextResponse.redirect(
+      new URL('/?error=slack_callback_failed', request.url)
+    )
+  }
+}
+

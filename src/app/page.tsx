@@ -15,6 +15,7 @@ import { UploadDialog } from '@/components/upload-dialog'
 import { AIResponse } from '@/components/ai-response'
 import { PromptCard } from '@/components/prompt-card'
 import { GroupsDialog } from '@/components/groups-dialog'
+import { SlackDialog } from '@/components/slack-dialog'
 
 export default function HomePage() {
   const { user, isLoaded } = useUser()
@@ -32,6 +33,7 @@ export default function HomePage() {
   const [aiAnswer, setAiAnswer] = useState('')
   const [autoRefreshing, setAutoRefreshing] = useState(false)
   const [showGroups, setShowGroups] = useState(false)
+  const [showSlack, setShowSlack] = useState(false)
   const [spaces, setSpaces] = useState<any[]>([])
   const [selectedSpaceIds, setSelectedSpaceIds] = useState<string[]>(['00000000-0000-0000-0000-000000000000'])
 
@@ -575,6 +577,14 @@ export default function HomePage() {
                   </>
                 )}
               </Button>
+              <Button
+                onClick={() => setShowSlack(true)}
+                variant="outline"
+                className="border-purple-600 text-purple-600 hover:bg-purple-50"
+              >
+                <MessageSquare className="h-4 w-4 mr-2" />
+                Slack
+              </Button>
               <div className="flex items-center space-x-3">
                 <div className="w-8 h-8 bg-panel rounded-full flex items-center justify-center text-primary text-sm font-medium">
                   {user?.firstName?.[0]}{user?.lastName?.[0]}
@@ -790,6 +800,9 @@ export default function HomePage() {
 
       {/* Groups Dialog */}
       <GroupsDialog open={showGroups} onOpenChange={setShowGroups} />
+
+      {/* Slack Dialog */}
+      <SlackDialog open={showSlack} onOpenChange={setShowSlack} />
 
       {/* Connect Google Doc Modal */}
       {showConnectDoc && (
