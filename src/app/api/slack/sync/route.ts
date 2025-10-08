@@ -41,7 +41,7 @@ export async function POST(request: NextRequest) {
       slackAccount.id,
       channelId,
       slackAccount.space_id,
-      slackAccount.access_token,
+      slackAccount.bot_token,
       channel.channel_name,
       channel.last_message_ts
     )

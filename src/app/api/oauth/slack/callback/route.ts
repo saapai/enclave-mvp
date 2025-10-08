@@ -46,7 +46,8 @@ export async function GET(request: NextRequest) {
     const slackAccount = await storeSlackAccount(
       userId,
       DEFAULT_SPACE_ID, // For now, store in default space
-      slackAuth.accessToken,
+      slackAuth.botToken,
+      slackAuth.userToken,
       slackAuth.teamId,
       slackAuth.teamName,
       slackAuth.botUserId,
@@ -56,9 +57,9 @@ export async function GET(request: NextRequest) {
 
     console.log(`Slack workspace connected: ${slackAuth.teamName} for user ${userId}`)
 
-    // Fetch and store channels
+    // Fetch and store channels using user token
     console.log('Fetching Slack channels...')
-    const channels = await fetchSlackChannels(slackAuth.accessToken)
+    const channels = await fetchSlackChannels(slackAuth.userToken)
     console.log(`Fetched ${channels.length} total channels from Slack`)
     
     let storedCount = 0
@@ -98,12 +99,12 @@ export async function GET(request: NextRequest) {
           .single()
 
         if (storedChannel) {
-          // Import the sync function
-          const { fetchSlackMessages, storeSlackMessages } = await import('@/lib/slack')
-          
-          // Fetch and store messages from this channel
-          console.log(`Syncing messages from #${channel.name}...`)
-          const messages = await fetchSlackMessages(slackAuth.accessToken, channel.id)
+        // Import the sync function
+        const { fetchSlackMessages, storeSlackMessages } = await import('@/lib/slack')
+        
+        // Fetch and store messages from this channel using bot token
+        console.log(`Syncing messages from #${channel.name}...`)
+        const messages = await fetchSlackMessages(slackAuth.botToken, channel.id)
           
           if (messages.length > 0) {
             await storeSlackMessages(

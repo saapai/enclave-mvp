@@ -8,7 +8,8 @@ CREATE TABLE IF NOT EXISTS slack_accounts (
   space_id UUID NOT NULL REFERENCES space(id) ON DELETE CASCADE,
   
   -- Slack OAuth tokens
-  access_token TEXT NOT NULL,
+  bot_token TEXT NOT NULL,  -- Bot token for reading messages
+  user_token TEXT NOT NULL, -- User token for listing channels
   refresh_token TEXT,
   token_expiry TIMESTAMPTZ,
   

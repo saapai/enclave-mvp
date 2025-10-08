@@ -5,7 +5,8 @@ export interface SlackAccount {
   id: string
   user_id: string
   space_id: string
-  access_token: string
+  bot_token: string
+  user_token: string
   refresh_token?: string
   token_expiry?: Date
   team_id: string
@@ -89,17 +90,24 @@ export async function exchangeSlackCode(code: string, redirectUri: string) {
     throw new Error(`Slack OAuth error: ${data.error}`)
   }
 
-  // When using user_scope, Slack returns the user token in authed_user
-  // When using scope (bot), it's in access_token
-  const accessToken = data.authed_user?.access_token || data.access_token
-  const refreshToken = data.authed_user?.refresh_token || data.refresh_token
+  // When using both user_scope and scope, Slack returns both tokens
+  // Bot token (for reading messages): data.access_token
+  // User token (for listing channels): data.authed_user.access_token
+  const botToken = data.access_token
+  const userToken = data.authed_user?.access_token
+  const refreshToken = data.refresh_token || data.authed_user?.refresh_token
   
-  if (!accessToken) {
-    throw new Error('No access token received from Slack')
+  if (!botToken) {
+    throw new Error('No bot access token received from Slack')
+  }
+  
+  if (!userToken) {
+    throw new Error('No user access token received from Slack')
   }
 
   return {
-    accessToken,
+    botToken,
+    userToken,
     refreshToken,
     teamId: data.team.id,
     teamName: data.team.name,
@@ -114,7 +122,8 @@ export async function exchangeSlackCode(code: string, redirectUri: string) {
 export async function storeSlackAccount(
   userId: string,
   spaceId: string,
-  accessToken: string,
+  botToken: string,
+  userToken: string,
   teamId: string,
   teamName: string,
   botUserId?: string,
@@ -130,7 +139,8 @@ export async function storeSlackAccount(
     .upsert({
       user_id: userId,
       space_id: spaceId,
-      access_token: accessToken,
+      bot_token: botToken,
+      user_token: userToken,
       refresh_token: refreshToken,
       token_expiry: tokenExpiry?.toISOString(),
       team_id: teamId,
