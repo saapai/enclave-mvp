@@ -34,7 +34,15 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Channel not found' }, { status: 404 })
     }
 
-    console.log(`Starting Slack channel sync: ${channel.channel_name}`)
+    console.log(`[Sync] Starting Slack channel sync: ${channel.channel_name}`)
+    console.log(`[Sync] Channel details:`, {
+      channelId: channel.slack_channel_id,
+      channelName: channel.channel_name,
+      isPrivate: channel.channel_type === 'private_channel',
+      isMember: channel.is_member,
+      lastMessageTs: channel.last_message_ts
+    })
+    console.log(`[Sync] Using bot token: ${slackAccount.bot_token?.substring(0, 20)}...`)
 
     // Index the channel (fetch messages and create embeddings)
     const result = await indexSlackChannel(
@@ -46,7 +54,7 @@ export async function POST(request: NextRequest) {
       channel.last_message_ts
     )
 
-    console.log(`Slack sync complete: ${result.messageCount} messages indexed`)
+    console.log(`[Sync] ✓ Slack sync complete: ${result.messageCount} messages indexed for ${channel.channel_name}`)
 
     return NextResponse.json({
       success: true,

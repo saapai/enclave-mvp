@@ -307,46 +307,89 @@ export async function storeSlackChannel(
 }
 
 /**
- * Fetch messages from a Slack channel
+ * Fetch messages from a Slack channel with full pagination support
+ * Fetches ALL messages from the channel, handling Slack's pagination automatically
  */
 export async function fetchSlackMessages(
   accessToken: string,
   channelId: string,
   oldest?: string,
-  limit: number = 100
+  limit: number = 1000 // Slack's max limit per request
 ): Promise<any[]> {
-  const params = new URLSearchParams({
-    channel: channelId,
-    limit: limit.toString()
-  })
+  let allMessages: any[] = []
+  let cursor: string | undefined = undefined
+  let hasMore = true
+  let pageCount = 0
 
-  if (oldest) {
-    params.append('oldest', oldest)
-  }
+  console.log(`[Slack] Fetching messages from channel ${channelId}...`)
 
-  const response = await fetch(
-    `${SLACK_API_BASE}/conversations.history?${params}`,
-    {
-      headers: {
-        'Authorization': `Bearer ${accessToken}`,
-        'Content-Type': 'application/json'
+  while (hasMore) {
+    pageCount++
+    const params = new URLSearchParams({
+      channel: channelId,
+      limit: limit.toString()
+    })
+
+    if (oldest) {
+      params.append('oldest', oldest)
+    }
+
+    if (cursor) {
+      params.append('cursor', cursor)
+    }
+
+    console.log(`[Slack] Fetching page ${pageCount} for channel ${channelId}${cursor ? ` (cursor: ${cursor.substring(0, 20)}...)` : ''}`)
+
+    const response = await fetch(
+      `${SLACK_API_BASE}/conversations.history?${params}`,
+      {
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json'
+        }
       }
-    }
-  )
+    )
 
-  const data = await response.json()
+    const data = await response.json()
 
-  if (!data.ok) {
-    // If channel_not_found or not_in_channel, the bot isn't in the channel
-    // This is expected for channels the bot hasn't been added to
-    if (data.error === 'channel_not_found' || data.error === 'not_in_channel') {
-      console.log(`Bot not in channel ${channelId}, skipping message fetch`)
-      return []
+    // Log full response for debugging
+    console.log(`[Slack] API Response for ${channelId}:`, {
+      ok: data.ok,
+      error: data.error,
+      messageCount: data.messages?.length || 0,
+      hasMore: data.has_more,
+      hasCursor: !!data.response_metadata?.next_cursor
+    })
+
+    if (!data.ok) {
+      // If channel_not_found or not_in_channel, the bot isn't in the channel
+      // This is expected for channels the bot hasn't been added to
+      if (data.error === 'channel_not_found' || data.error === 'not_in_channel') {
+        console.log(`[Slack] Bot not in channel ${channelId}, skipping message fetch`)
+        return []
+      }
+      console.error(`[Slack] API Error for channel ${channelId}:`, data.error)
+      throw new Error(`Slack API error: ${data.error}`)
     }
-    throw new Error(`Slack API error: ${data.error}`)
+
+    const messages = data.messages || []
+    allMessages = allMessages.concat(messages)
+    
+    console.log(`[Slack] Page ${pageCount}: Fetched ${messages.length} messages (total: ${allMessages.length})`)
+
+    // Check if there are more pages
+    cursor = data.response_metadata?.next_cursor
+    hasMore = !!cursor && cursor.length > 0
+    
+    // Safety limit to prevent infinite loops
+    if (pageCount >= 100) {
+      console.warn(`[Slack] Reached safety limit of 100 pages for channel ${channelId}`)
+      break
+    }
   }
 
-  return data.messages || []
+  console.log(`[Slack] ✓ Completed fetching ${allMessages.length} total messages from channel ${channelId} in ${pageCount} pages`)
+  return allMessages
 }
 
 /**
@@ -482,23 +525,12 @@ export async function indexSlackChannel(
   channelName: string,
   lastMessageTs?: string
 ): Promise<{ messageCount: number; lastTs: string }> {
-  let allMessages: any[] = []
-  let oldest = lastMessageTs
-  let hasMore = true
-
-  // Fetch all messages (with pagination)
-  while (hasMore) {
-    const messages = await fetchSlackMessages(accessToken, channelId, oldest, 100)
-    
-    if (messages.length === 0) {
-      hasMore = false
-      break
-    }
-
-    allMessages = [...allMessages, ...messages]
-    oldest = messages[messages.length - 1].ts
-    hasMore = messages.length === 100 // If we got 100, there might be more
-  }
+  console.log(`[Index] Starting to index channel: ${channelName}`)
+  
+  // Fetch ALL messages at once - fetchSlackMessages now handles pagination internally
+  const allMessages = await fetchSlackMessages(accessToken, channelId, lastMessageTs)
+  
+  console.log(`[Index] Fetched ${allMessages.length} messages from ${channelName}`)
 
   // Store messages and create embeddings
   for (const message of allMessages) {
