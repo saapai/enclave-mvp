@@ -83,6 +83,46 @@ export async function GET(request: NextRequest) {
 
     console.log(`Stored ${storedCount} Slack channels (${channels.filter((c: any) => c.is_member).length} member channels)`)
 
+    // Automatically sync messages from all member channels
+    const memberChannels = channels.filter((c: any) => c.is_member)
+    console.log(`Auto-syncing messages from ${memberChannels.length} member channels...`)
+    
+    for (const channel of memberChannels) {
+      try {
+        // Find the stored channel in database
+        const { data: storedChannel } = await supabase
+          .from('slack_channels')
+          .select('id')
+          .eq('slack_channel_id', channel.id)
+          .eq('slack_account_id', slackAccount.id)
+          .single()
+
+        if (storedChannel) {
+          // Import the sync function
+          const { fetchSlackMessages, storeSlackMessages } = await import('@/lib/slack')
+          
+          // Fetch and store messages from this channel
+          console.log(`Syncing messages from #${channel.name}...`)
+          const messages = await fetchSlackMessages(slackAuth.accessToken, channel.id)
+          
+          if (messages.length > 0) {
+            await storeSlackMessages(
+              storedChannel.id,
+              DEFAULT_SPACE_ID,
+              messages,
+              slackAuth.accessToken
+            )
+            console.log(`Synced ${messages.length} messages from #${channel.name}`)
+          }
+        }
+      } catch (error) {
+        console.error(`Failed to sync messages from channel ${channel.name}:`, error)
+        // Continue with other channels even if one fails
+      }
+    }
+
+    console.log('Slack connection and message sync completed')
+
     // Redirect back to home page with success message
     return NextResponse.redirect(
       new URL('/?slack_connected=true', request.url)
