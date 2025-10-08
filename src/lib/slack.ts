@@ -159,20 +159,47 @@ export async function getSlackAccount(userId: string): Promise<SlackAccount | nu
  * Fetch channels from Slack API
  */
 export async function fetchSlackChannels(accessToken: string): Promise<any[]> {
-  const response = await fetch(`${SLACK_API_BASE}/conversations.list`, {
-    headers: {
-      'Authorization': `Bearer ${accessToken}`,
-      'Content-Type': 'application/json'
+  let allChannels: any[] = []
+  let cursor: string | undefined = undefined
+  let hasMore = true
+
+  while (hasMore) {
+    const params = new URLSearchParams({
+      exclude_archived: 'false',
+      types: 'public_channel,private_channel',
+      limit: '200'
+    })
+
+    if (cursor) {
+      params.append('cursor', cursor)
     }
-  })
 
-  const data = await response.json()
+    const response = await fetch(
+      `${SLACK_API_BASE}/conversations.list?${params}`,
+      {
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json'
+        }
+      }
+    )
 
-  if (!data.ok) {
-    throw new Error(`Slack API error: ${data.error}`)
+    const data = await response.json()
+
+    if (!data.ok) {
+      console.error('Slack API error:', data.error)
+      throw new Error(`Slack API error: ${data.error}`)
+    }
+
+    allChannels = allChannels.concat(data.channels || [])
+    
+    // Check if there are more pages
+    cursor = data.response_metadata?.next_cursor
+    hasMore = !!cursor
   }
 
-  return data.channels || []
+  console.log(`Fetched ${allChannels.length} channels from Slack`)
+  return allChannels
 }
 
 /**

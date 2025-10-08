@@ -57,24 +57,31 @@ export async function GET(request: NextRequest) {
     console.log(`Slack workspace connected: ${slackAuth.teamName} for user ${userId}`)
 
     // Fetch and store channels
+    console.log('Fetching Slack channels...')
     const channels = await fetchSlackChannels(slackAuth.accessToken)
+    console.log(`Fetched ${channels.length} total channels from Slack`)
     
+    let storedCount = 0
     for (const channel of channels) {
-      // Only store channels the user is a member of
-      if (!channel.is_member) continue
-      
-      await storeSlackChannel(
-        slackAccount.id,
-        DEFAULT_SPACE_ID,
-        channel.id,
-        channel.name,
-        channel.is_private ? 'private_channel' : 'public_channel',
-        channel.is_archived || false,
-        channel.is_member || false
-      )
+      try {
+        // Store all channels (member and non-member)
+        // The is_member field will help us know which ones to sync
+        await storeSlackChannel(
+          slackAccount.id,
+          DEFAULT_SPACE_ID,
+          channel.id,
+          channel.name,
+          channel.is_private ? 'private_channel' : 'public_channel',
+          channel.is_archived || false,
+          channel.is_member || false
+        )
+        storedCount++
+      } catch (error) {
+        console.error(`Failed to store channel ${channel.name}:`, error)
+      }
     }
 
-    console.log(`Stored ${channels.filter((c: any) => c.is_member).length} Slack channels`)
+    console.log(`Stored ${storedCount} Slack channels (${channels.filter((c: any) => c.is_member).length} member channels)`)
 
     // Redirect back to home page with success message
     return NextResponse.redirect(

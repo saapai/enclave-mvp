@@ -155,17 +155,17 @@ export function SlackDialog({ open, onOpenChange }: SlackDialogProps) {
           ) : (
             <div className="space-y-4">
               {/* Workspace Info */}
-              <div className="bg-panel border border-line rounded-lg p-4">
+              <div className="bg-[#1a1a1a] border border-gray-700 rounded-lg p-4">
                 <div className="flex items-center justify-between">
                   <div>
-                    <h3 className="font-semibold text-primary">
+                    <h3 className="font-semibold text-white">
                       {slackAccount.teamName}
                     </h3>
-                    <p className="text-sm text-muted">
+                    <p className="text-sm text-gray-400">
                       {channels.length} channels connected
                     </p>
                   </div>
-                  <Badge variant="outline" className="border-green-500/40 text-green-400 bg-green-500/10">
+                  <Badge variant="outline" className="border-green-500 text-green-400 bg-green-500/20">
                     <Check className="h-3 w-3 mr-1" />
                     Connected
                   </Badge>
@@ -184,12 +184,12 @@ export function SlackDialog({ open, onOpenChange }: SlackDialogProps) {
                       <p className="text-sm">No channels found</p>
                     </div>
                   ) : (
-                    channels
+                      channels
                       .filter(channel => !channel.is_archived)
                       .map((channel) => (
                         <div
                           key={channel.id}
-                          className="bg-panel border border-line rounded-lg p-3 flex items-center justify-between"
+                          className="bg-[#1a1a1a] border border-gray-700 rounded-lg p-3 flex items-center justify-between hover:bg-[#222222] transition-colors"
                         >
                           <div className="flex items-center gap-3 flex-1">
                             <div className="text-muted">
@@ -273,9 +273,9 @@ export function SlackDialog({ open, onOpenChange }: SlackDialogProps) {
               )}
 
               {/* Info Box */}
-              <div className="bg-blue-500/10 border border-blue-500/40 rounded-lg p-3 text-sm">
+              <div className="bg-blue-500/20 border border-blue-500 rounded-lg p-3 text-sm">
                 <p className="text-blue-400 font-medium mb-1">💡 Tip</p>
-                <p className="text-muted">
+                <p className="text-gray-300">
                   Sync channels to make their messages searchable in Enclave. 
                   Messages are indexed with thread context and channel awareness for better search results.
                 </p>
