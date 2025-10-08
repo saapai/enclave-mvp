@@ -51,7 +51,7 @@ team:read            - View workspace information
 2. Under **"Redirect URLs"**, click **"Add New Redirect URL"**
 3. Add your callback URLs:
    - **Development**: `http://localhost:3000/api/oauth/slack/callback`
-   - **Production**: `https://your-domain.com/api/oauth/slack/callback`
+   - **Production**: `https://tryenclave.com/api/oauth/slack/callback`
 4. Click **"Add"** and then **"Save URLs"**
 
 ### 1.4 Get Your Credentials
