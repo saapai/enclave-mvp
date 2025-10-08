@@ -562,7 +562,7 @@ export async function indexSlackChannel(
     )
   }
 
-  // Update channel metadata
+  // Update channel metadata (use database channel ID)
   await supabase
     .from('slack_channels')
     .update({
@@ -570,7 +570,9 @@ export async function indexSlackChannel(
       last_message_ts: allMessages[0]?.ts,
       message_count: allMessages.length
     })
-    .eq('id', channelId)
+    .eq('id', dbChannelId)  // Use database UUID
+
+  console.log(`[Index] ✓ Updated channel metadata for ${channelName}`)
 
   return {
     messageCount: allMessages.length,
