@@ -163,6 +163,8 @@ export async function fetchSlackChannels(accessToken: string): Promise<any[]> {
   let cursor: string | undefined = undefined
   let hasMore = true
 
+  // Use users.conversations to get only channels the user is a member of
+  // This automatically filters to member channels and includes private channels
   while (hasMore) {
     const params = new URLSearchParams({
       exclude_archived: 'false',
@@ -174,8 +176,10 @@ export async function fetchSlackChannels(accessToken: string): Promise<any[]> {
       params.append('cursor', cursor)
     }
 
+    // Changed from conversations.list to users.conversations
+    // This returns only channels where the user is a member
     const response = await fetch(
-      `${SLACK_API_BASE}/conversations.list?${params}`,
+      `${SLACK_API_BASE}/users.conversations?${params}`,
       {
         headers: {
           'Authorization': `Bearer ${accessToken}`,
@@ -191,14 +195,20 @@ export async function fetchSlackChannels(accessToken: string): Promise<any[]> {
       throw new Error(`Slack API error: ${data.error}`)
     }
 
-    allChannels = allChannels.concat(data.channels || [])
+    // Mark all returned channels as member channels since users.conversations only returns member channels
+    const memberChannels = (data.channels || []).map((channel: any) => ({
+      ...channel,
+      is_member: true // Force is_member to true since this API only returns member channels
+    }))
+
+    allChannels = allChannels.concat(memberChannels)
     
     // Check if there are more pages
     cursor = data.response_metadata?.next_cursor
     hasMore = !!cursor
   }
 
-  console.log(`Fetched ${allChannels.length} channels from Slack`)
+  console.log(`Fetched ${allChannels.length} channels from Slack (all are member channels)`)
   return allChannels
 }
 
