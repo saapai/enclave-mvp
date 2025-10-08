@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@clerk/nextjs/server'
 import { exchangeSlackCode, storeSlackAccount, fetchSlackChannels, storeSlackChannel } from '@/lib/slack'
+import { supabase } from '@/lib/supabase'
 
 const DEFAULT_SPACE_ID = '00000000-0000-0000-0000-000000000000'
 
@@ -99,21 +100,23 @@ export async function GET(request: NextRequest) {
           .single()
 
         if (storedChannel) {
-        // Import the sync function
-        const { fetchSlackMessages, storeSlackMessages } = await import('@/lib/slack')
-        
-        // Fetch and store messages from this channel using bot token
-        console.log(`Syncing messages from #${channel.name}...`)
-        const messages = await fetchSlackMessages(slackAuth.botToken, channel.id)
+          // Import the sync function
+          const { fetchSlackMessages, storeSlackMessages } = await import('@/lib/slack')
+          
+          // Fetch and store messages from this channel using bot token
+          console.log(`Syncing messages from #${channel.name}...`)
+          const messages = await fetchSlackMessages(slackAuth.botToken, channel.id)
           
           if (messages.length > 0) {
             await storeSlackMessages(
               storedChannel.id,
               DEFAULT_SPACE_ID,
               messages,
-              slackAuth.accessToken
+              slackAuth.botToken  // Use bot token for fetching user info
             )
             console.log(`Synced ${messages.length} messages from #${channel.name}`)
+          } else {
+            console.log(`No messages found in #${channel.name} (bot may not be in channel)`)
           }
         }
       } catch (error) {

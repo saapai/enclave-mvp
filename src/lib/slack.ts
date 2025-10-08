@@ -337,6 +337,12 @@ export async function fetchSlackMessages(
   const data = await response.json()
 
   if (!data.ok) {
+    // If channel_not_found or not_in_channel, the bot isn't in the channel
+    // This is expected for channels the bot hasn't been added to
+    if (data.error === 'channel_not_found' || data.error === 'not_in_channel') {
+      console.log(`Bot not in channel ${channelId}, skipping message fetch`)
+      return []
+    }
     throw new Error(`Slack API error: ${data.error}`)
   }
 
