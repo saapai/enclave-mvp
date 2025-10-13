@@ -72,7 +72,10 @@ export async function POST(request: NextRequest) {
     }
 
     const data = await response.json()
-    const aiResponse = data.choices?.[0]?.message?.content || 'No response generated'
+    let aiResponse = data.choices?.[0]?.message?.content || 'No response generated'
+    
+    // Remove asterisks used for markdown formatting
+    aiResponse = aiResponse.replace(/\*\*/g, '').replace(/\*/g, '')
 
     return NextResponse.json({ 
       response: aiResponse,
