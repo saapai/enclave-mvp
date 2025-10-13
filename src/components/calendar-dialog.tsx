@@ -181,7 +181,7 @@ export function CalendarDialog({ open, onOpenChange }: CalendarDialogProps) {
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="bg-panel border border-line max-w-2xl max-h-[80vh] overflow-y-auto">
+      <DialogContent className="bg-[rgba(20,20,24,0.98)] backdrop-blur-xl border border-line max-w-2xl max-h-[80vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="text-primary flex items-center gap-2">
             <Calendar className="h-5 w-5" />

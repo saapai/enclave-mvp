@@ -127,7 +127,7 @@ export async function POST(request: NextRequest) {
     const resources = []
     
     for (const spaceId of spaceIds) {
-      const { data: resource, error: resourceError } = await supabase
+      const { data: resource, error: resourceError} = await supabase
         .from('resource')
         .insert({
           space_id: spaceId,
@@ -137,7 +137,7 @@ export async function POST(request: NextRequest) {
           url: docUrl,
           source: 'gdoc',
           visibility: 'space',
-          created_by: null
+          created_by: userId
         })
         .select()
         .single()

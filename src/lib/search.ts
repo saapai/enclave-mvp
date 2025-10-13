@@ -36,7 +36,7 @@ export async function searchResourcesHybrid(
     // Search regular resources
     const regularResults = await searchResources(query, spaceId, filters, { limit: limit * 2, offset: 0 })
     
-    // Search Google Docs chunks
+    // Search Google Docs chunks (filtered by user through RLS)
     const { data: googleDocsResults, error: gdError } = await supabase
       .rpc('search_google_docs_vector', {
         query_embedding: queryEmbedding,

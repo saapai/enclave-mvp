@@ -661,7 +661,7 @@ export default function HomePage() {
                     <ChevronDown className="h-4 w-4 ml-1" />
                   </Button>
                 </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="w-56 bg-panel border-line">
+                <DropdownMenuContent align="end" className="w-56 bg-[rgba(20,20,24,0.95)] backdrop-blur-xl border-line">
                   <DropdownMenuItem onClick={() => setShowUpload(true)} className="cursor-pointer">
                     <FileText className="h-4 w-4 mr-2" />
                     Add Resource
@@ -721,26 +721,30 @@ export default function HomePage() {
               {/* Conversation Messages */}
               <div className="space-y-6">
                 {messages.map((message) => (
-                  <div key={message.id} className={`flex gap-4 ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                    {message.role === 'assistant' && (
-                      <div className="w-10 h-10 bg-[rgba(59,130,246,0.15)] text-blue-400 rounded-full flex items-center justify-center flex-shrink-0">
-                        <Sparkles className="h-5 w-5" />
-                      </div>
-                    )}
-                    <div className={`flex-1 max-w-3xl ${message.role === 'user' ? 'flex justify-end' : ''}`}>
-                      <div className={`${
-                        message.role === 'user'
-                          ? 'bg-gradient-to-r from-blue-600 to-red-600 text-white'
-                          : 'bg-panel border border-line'
-                      } rounded-xl p-4`}>
-                        <p className={`${message.role === 'user' ? 'text-white' : 'text-primary'} leading-relaxed whitespace-pre-wrap`}>
+                  <div key={message.id} className="space-y-4">
+                    {/* User Message */}
+                    {message.role === 'user' && (
+                      <div className="flex justify-end">
+                        <p className="text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-red-400 font-medium text-lg">
                           {message.content}
                         </p>
                       </div>
+                    )}
+                    
+                    {/* Assistant Message */}
+                    {message.role === 'assistant' && (
+                      <div className="flex gap-4">
+                        <div className="w-8 h-8 bg-[rgba(59,130,246,0.15)] text-blue-400 rounded-full flex items-center justify-center flex-shrink-0">
+                          <Sparkles className="h-4 w-4" />
+                        </div>
+                        <div className="flex-1 max-w-3xl space-y-4">
+                          <p className="text-primary/90 leading-relaxed whitespace-pre-wrap">
+                            {message.content}
+                          </p>
                       
                       {/* Results for assistant messages */}
-                      {message.role === 'assistant' && message.results && message.results.length > 0 && (
-                        <div className="space-y-4 mt-4">
+                      {message.results && message.results.length > 0 && (
+                        <div className="space-y-4">
                           {message.results.map((resource) => (
                   <Card key={resource.id} className="bg-panel border border-line rounded-xl shadow-[0_0_0_1px_rgba(255,255,255,0.02)]">
                     <CardContent className="p-6">
@@ -814,10 +818,7 @@ export default function HomePage() {
                         ))}
                         </div>
                       )}
-                    </div>
-                    {message.role === 'user' && (
-                      <div className="w-10 h-10 bg-panel rounded-full flex items-center justify-center flex-shrink-0 text-primary text-sm font-medium">
-                        {user?.firstName?.[0]}{user?.lastName?.[0]}
+                        </div>
                       </div>
                     )}
                   </div>

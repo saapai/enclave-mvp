@@ -27,6 +27,7 @@ export async function GET(request: NextRequest) {
         refresh_token: googleAccount.refresh_token,
         expiry_date: new Date(googleAccount.token_expiry).getTime()
       })
+      console.log('Tokens refreshed successfully for calendar list')
     } catch (tokenError) {
       console.error('Token refresh failed:', tokenError)
       return NextResponse.json({ 
@@ -36,7 +37,9 @@ export async function GET(request: NextRequest) {
     }
 
     // List calendars
+    console.log('Fetching calendar list for user:', userId)
     const calendars = await listCalendars(tokens)
+    console.log('Found calendars:', calendars.length)
 
     return NextResponse.json({
       success: true,

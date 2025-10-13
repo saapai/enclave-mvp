@@ -15,9 +15,12 @@ export async function listCalendars(tokens: any) {
   const calendar = createCalendarClient(tokens)
   
   const response = await calendar.calendarList.list({
-    minAccessRole: 'reader'
+    minAccessRole: 'reader',
+    showHidden: false,
+    showDeleted: false
   })
 
+  console.log('Calendar list response:', response.data.items?.length || 0, 'calendars')
   return response.data.items || []
 }
 

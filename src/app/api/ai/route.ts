@@ -28,13 +28,13 @@ export async function POST(request: NextRequest) {
     let userPrompt = ''
 
     if (type === 'summary') {
-      systemPrompt = `You are a helpful assistant for a fraternity/sorority chapter. You provide concise, accurate summaries of information based on the context provided. When users ask for links, always include the actual URLs from the context. Keep responses under 200 words and focus on the most important details.`
+      systemPrompt = `You are a helpful AI assistant. You provide concise, accurate summaries of information based on the context provided. When users ask for links, always include the actual URLs from the context. Keep responses under 200 words and focus on the most important details.`
       userPrompt = `Context: ${safeContext}\n\nQuery: ${safeQuery || 'Summarize the context above.'}\n\nProvide a helpful summary or answer based on the context above. If the user is asking for a link or URL, make sure to include the actual URL from the context.`
     } else if (type === 'response') {
-      systemPrompt = `You are a helpful assistant for a fraternity/sorority chapter. You provide direct, helpful answers to questions about chapter information, events, and procedures. Be friendly but professional.`
+      systemPrompt = `You are a helpful AI assistant. You provide direct, helpful answers to questions about information, events, and procedures. Be friendly but professional.`
       userPrompt = `Context: ${safeContext}\n\nQuestion: ${safeQuery || 'Provide key takeaways from the context.'}\n\nAnswer this question based on the context provided.`
     } else if (type === 'general') {
-      systemPrompt = `You are Enclave, a helpful AI assistant for fraternity/sorority chapters. You help members find information, understand chapter procedures, and get answers about events and resources. You're knowledgeable about Greek life and can provide general guidance even when specific context isn't available.`
+      systemPrompt = `You are Enclave, a helpful AI assistant for teams and organizations. You help find information, understand procedures, and get answers about events and resources. You provide general guidance even when specific context isn't available.`
       userPrompt = `User query: ${safeQuery}\n\nContext available: ${safeContext || 'No specific context available'}\n\nRespond helpfully to the user's query. If you have relevant context, use it. If not, provide general helpful information about what you can do or suggest how they might find what they're looking for.`
     }
 
