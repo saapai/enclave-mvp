@@ -55,7 +55,7 @@ ALTER TABLE calendar_events ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "Users can access google calendars in their spaces" ON sources_google_calendar
   FOR ALL USING (
     space_id = '00000000-0000-0000-0000-000000000000' OR
-    added_by = auth.uid()
+    added_by = auth.uid()::text
   );
 
 -- Calendar events: users can access events in their spaces
@@ -63,7 +63,7 @@ CREATE POLICY "Users can access calendar events in their spaces" ON calendar_eve
   FOR ALL USING (
     space_id = '00000000-0000-0000-0000-000000000000' OR
     source_id IN (
-      SELECT id FROM sources_google_calendar WHERE added_by = auth.uid()
+      SELECT id FROM sources_google_calendar WHERE added_by = auth.uid()::text
     )
   );
 

@@ -19,6 +19,14 @@ import { GroupsDialog } from '@/components/groups-dialog'
 import { SlackDialog } from '@/components/slack-dialog'
 import { CalendarDialog } from '@/components/calendar-dialog'
 
+interface Message {
+  id: string
+  role: 'user' | 'assistant'
+  content: string
+  results?: ResourceWithTags[]
+  timestamp: Date
+}
+
 export default function HomePage() {
   const { user, isLoaded } = useUser()
   const [query, setQuery] = useState('')
@@ -40,13 +48,46 @@ export default function HomePage() {
   const [showAddMenu, setShowAddMenu] = useState(false)
   const [spaces, setSpaces] = useState<any[]>([])
   const [selectedSpaceIds, setSelectedSpaceIds] = useState<string[]>(['00000000-0000-0000-0000-000000000000'])
+  const [messages, setMessages] = useState<Message[]>([])
+  const messagesEndRef = useRef<HTMLDivElement>(null)
 
   // Fetch spaces when user loads
   useEffect(() => {
     if (user) {
       fetchSpaces()
+      loadConversationHistory()
     }
   }, [user])
+
+  // Load conversation history from localStorage
+  const loadConversationHistory = () => {
+    try {
+      const saved = localStorage.getItem(`conversation_${user?.id}`)
+      if (saved) {
+        const parsed = JSON.parse(saved)
+        setMessages(parsed.map((m: any) => ({
+          ...m,
+          timestamp: new Date(m.timestamp)
+        })))
+      }
+    } catch (error) {
+      console.error('Failed to load conversation history:', error)
+    }
+  }
+
+  // Save conversation history to localStorage
+  const saveConversationHistory = (msgs: Message[]) => {
+    try {
+      localStorage.setItem(`conversation_${user?.id}`, JSON.stringify(msgs))
+    } catch (error) {
+      console.error('Failed to save conversation history:', error)
+    }
+  }
+
+  // Scroll to bottom when messages change
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [messages])
 
   const fetchSpaces = async () => {
     try {
@@ -215,7 +256,21 @@ export default function HomePage() {
   const handleSearch = async () => {
     if (!query.trim() || !user) return
 
+    const userMessage: Message = {
+      id: Date.now().toString(),
+      role: 'user',
+      content: query,
+      timestamp: new Date()
+    }
+
+    // Add user message to conversation
+    const updatedMessages = [...messages, userMessage]
+    setMessages(updatedMessages)
+
     setLoading(true)
+    const currentQuery = query
+    setQuery('') // Clear input immediately
+
     try {
       // CRITICAL: Check Google Docs AND Slack for updates BEFORE processing the search query
       console.log('[Search] Checking Google Docs and Slack for updates BEFORE search...')
@@ -289,7 +344,7 @@ export default function HomePage() {
       }
 
       // Now execute the search with potentially updated Google Doc content
-      const res = await fetch(`/api/search/hybrid?q=${encodeURIComponent(query)}&limit=20`)
+      const res = await fetch(`/api/search/hybrid?q=${encodeURIComponent(currentQuery)}&limit=20`)
       if (!res.ok) throw new Error('Search API failed')
       const data = await res.json()
       const searchResults = (data.results || []) as ResourceWithTags[]
@@ -314,7 +369,7 @@ export default function HomePage() {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              query,
+              query: currentQuery,
               context,
               type: 'summary'
             })
@@ -329,7 +384,7 @@ export default function HomePage() {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              query,
+              query: currentQuery,
               context: '',
               type: 'general'
             })
@@ -340,12 +395,25 @@ export default function HomePage() {
           }
         }
         setAiAnswer(aiResponse)
+
+        // Add assistant message to conversation
+        const assistantMessage: Message = {
+          id: (Date.now() + 1).toString(),
+          role: 'assistant',
+          content: aiResponse,
+          results: searchResults,
+          timestamp: new Date()
+        }
+
+        const finalMessages = [...updatedMessages, assistantMessage]
+        setMessages(finalMessages)
+        saveConversationHistory(finalMessages)
       } catch {
         setAiAnswer('')
       }
       
       // Log the query
-      await logQuery('00000000-0000-0000-0000-000000000000', user.id, query, searchResults.length)
+      await logQuery('00000000-0000-0000-0000-000000000000', user.id, currentQuery, searchResults.length)
     } catch (error) {
       console.error('Search error:', error)
     } finally {
@@ -532,7 +600,7 @@ export default function HomePage() {
               <div className="text-2xl font-bold">E</div>
             </div>
             <h1 className="text-4xl font-bold text-primary mb-3 tracking-tight">Welcome to Enclave</h1>
-            <p className="text-lg text-white/65 leading-relaxed max-w-sm mx-auto mb-8">The answer layer for your chapter. Please sign in to continue.</p>
+            <p className="text-lg text-white/65 leading-relaxed max-w-sm mx-auto mb-8">Your AI-powered knowledge assistant. Please sign in to continue.</p>
             
             {/* Custom Sign In Button */}
             <button 
@@ -647,31 +715,33 @@ export default function HomePage() {
 
       {/* Main Content */}
       <main className="flex-1 flex flex-col">
-        {(results.length > 0 || aiAnswer) ? (
+        {messages.length > 0 ? (
           <div className="flex-1 overflow-y-auto">
             <div className="max-w-4xl mx-auto px-4 py-8">
-              {/* AI Response */}
-              {aiAnswer && (
-                <div className="bg-panel border border-line rounded-xl p-6 mb-6">
-                  <div className="flex items-center gap-3 mb-4">
-                    <div className="w-10 h-10 bg-[rgba(59,130,246,0.15)] text-blue-400 rounded-full flex items-center justify-center">
-                      <Sparkles className="h-5 w-5" />
-                    </div>
-                    <div>
-                      <h3 className="text-lg font-semibold text-primary tracking-tight">AI Assistant</h3>
-                      <p className="text-xs text-muted">Powered by Mistral AI</p>
-                    </div>
-                  </div>
-                  <div className="bg-panel-2 p-4 rounded-lg border border-line">
-                    <p className="text-primary/90 leading-relaxed">{aiAnswer}</p>
-                  </div>
-                </div>
-              )}
-              
-              {/* Results */}
-              {results.length > 0 && (
-                <div className="space-y-4 mt-6">
-                {results.map((resource) => (
+              {/* Conversation Messages */}
+              <div className="space-y-6">
+                {messages.map((message) => (
+                  <div key={message.id} className={`flex gap-4 ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                    {message.role === 'assistant' && (
+                      <div className="w-10 h-10 bg-[rgba(59,130,246,0.15)] text-blue-400 rounded-full flex items-center justify-center flex-shrink-0">
+                        <Sparkles className="h-5 w-5" />
+                      </div>
+                    )}
+                    <div className={`flex-1 max-w-3xl ${message.role === 'user' ? 'flex justify-end' : ''}`}>
+                      <div className={`${
+                        message.role === 'user'
+                          ? 'bg-gradient-to-r from-blue-600 to-red-600 text-white'
+                          : 'bg-panel border border-line'
+                      } rounded-xl p-4`}>
+                        <p className={`${message.role === 'user' ? 'text-white' : 'text-primary'} leading-relaxed whitespace-pre-wrap`}>
+                          {message.content}
+                        </p>
+                      </div>
+                      
+                      {/* Results for assistant messages */}
+                      {message.role === 'assistant' && message.results && message.results.length > 0 && (
+                        <div className="space-y-4 mt-4">
+                          {message.results.map((resource) => (
                   <Card key={resource.id} className="bg-panel border border-line rounded-xl shadow-[0_0_0_1px_rgba(255,255,255,0.02)]">
                     <CardContent className="p-6">
                       <div className="flex items-start justify-between mb-4">
@@ -739,11 +809,21 @@ export default function HomePage() {
                         <span>Updated {formatDate(resource.updated_at)}</span>
                         <span>• {resource.source}</span>
                       </div>
-                    </CardContent>
-                  </Card>
+                            </CardContent>
+                          </Card>
+                        ))}
+                        </div>
+                      )}
+                    </div>
+                    {message.role === 'user' && (
+                      <div className="w-10 h-10 bg-panel rounded-full flex items-center justify-center flex-shrink-0 text-primary text-sm font-medium">
+                        {user?.firstName?.[0]}{user?.lastName?.[0]}
+                      </div>
+                    )}
+                  </div>
                 ))}
-                </div>
-              )}
+                <div ref={messagesEndRef} />
+              </div>
             </div>
           </div>
         ) : (
@@ -763,27 +843,27 @@ export default function HomePage() {
               <div className="grid gap-4 md:grid-cols-2 mb-16">
                 <PromptCard
                   icon={<Calendar className="w-5 h-5" />}
-                  onClick={() => setQuery("When is the next formal event?")}
+                  onClick={() => setQuery("What events are coming up?")}
                 >
-                  When is the next formal event?
-                </PromptCard>
-                <PromptCard
-                  icon={<DollarSign className="w-5 h-5" />}
-                  onClick={() => setQuery("How do I pay my chapter dues?")}
-                >
-                  How do I pay my chapter dues?
-                </PromptCard>
-                <PromptCard
-                  icon={<Users className="w-5 h-5" />}
-                  onClick={() => setQuery("What rush events are happening this week?")}
-                >
-                  What rush events are happening this week?
+                  What events are coming up?
                 </PromptCard>
                 <PromptCard
                   icon={<FileText className="w-5 h-5" />}
-                  onClick={() => setQuery("Where can I find the chapter bylaws?")}
+                  onClick={() => setQuery("Find meeting notes from last week")}
                 >
-                  Where can I find the chapter bylaws?
+                  Find meeting notes from last week
+                </PromptCard>
+                <PromptCard
+                  icon={<Users className="w-5 h-5" />}
+                  onClick={() => setQuery("Show me team documents")}
+                >
+                  Show me team documents
+                </PromptCard>
+                <PromptCard
+                  icon={<Search className="w-5 h-5" />}
+                  onClick={() => setQuery("What's in our knowledge base?")}
+                >
+                  What's in our knowledge base?
                 </PromptCard>
               </div>
             </div>
@@ -797,7 +877,7 @@ export default function HomePage() {
               <div className="rounded-2xl border border-line bg-panel flex items-center gap-2 px-3">
                 <Input
                   type="text"
-                  placeholder="Ask about dues, events, or upload a resource..."
+                  placeholder="Ask me anything about your documents, events, and resources..."
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
                   onKeyPress={handleKeyPress}
