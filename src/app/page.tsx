@@ -379,14 +379,14 @@ export default function HomePage() {
             aiResponse = ai.response || ''
           }
         } else {
-          // Generate general response for queries with no results
+          // Generate response prompting to add resources for queries with no results
           const aiRes = await fetch('/api/ai', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               query: currentQuery,
               context: '',
-              type: 'general'
+              type: 'no_results'
             })
           })
           if (aiRes.ok) {

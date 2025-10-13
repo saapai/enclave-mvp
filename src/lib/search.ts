@@ -51,6 +51,19 @@ export async function searchResourcesHybrid(
       console.error('Google Docs search error:', gdError)
     }
 
+    // Search Calendar Events
+    const { data: calendarResults, error: calError } = await supabase
+      .rpc('search_calendar_events_vector', {
+        query_embedding: queryEmbedding,
+        target_space_id: spaceId,
+        limit_count: limit * 2,
+        offset_count: 0
+      })
+
+    if (calError) {
+      console.error('Calendar search error:', calError)
+    }
+
     // Search Slack messages
     const slackResults = await searchSlackMessages(
       queryEmbedding,
@@ -79,6 +92,30 @@ export async function searchResourcesHybrid(
       }
     }))
 
+    // Convert Calendar results to SearchResult format
+    const calendarSearchResults: SearchResult[] = (calendarResults || []).map((event: any) => ({
+      id: `calendar_event_${event.google_event_id}`,
+      title: event.title || 'Calendar Event',
+      body: `${event.description || ''}\n\nWhen: ${new Date(event.start_time).toLocaleString()} - ${new Date(event.end_time).toLocaleString()}${event.location ? `\nWhere: ${event.location}` : ''}`,
+      type: 'event',
+      url: event.html_link,
+      space_id: spaceId,
+      created_at: event.created_at,
+      updated_at: event.updated_at,
+      created_by: event.added_by,
+      tags: [],
+      rank: event.similarity || 0,
+      score: event.similarity || 0,
+      metadata: {
+        google_event_id: event.google_event_id,
+        start_time: event.start_time,
+        end_time: event.end_time,
+        location: event.location,
+        attendees: event.attendees,
+        calendar_source_id: event.source_id
+      }
+    }))
+
     // Convert Slack results to SearchResult format
     const slackSearchResults: SearchResult[] = (slackResults || []).map((msg: any) => ({
       id: `slack_message_${msg.slack_message_id}`,
@@ -102,7 +139,7 @@ export async function searchResourcesHybrid(
     }))
 
     // Combine and rank results from all sources
-    const allResults = [...regularResults, ...googleDocsSearchResults, ...slackSearchResults]
+    const allResults = [...regularResults, ...googleDocsSearchResults, ...calendarSearchResults, ...slackSearchResults]
     
     // Sort by score/rank
     allResults.sort((a, b) => (b.score || 0) - (a.score || 0))
