@@ -13,12 +13,12 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    // Check cache first
+    // Check cache first (disabled temporarily for debugging)
     const cacheKey = `${CACHE_KEYS.RESOURCES}_${userId}`
-    const cached = apiCache.get(cacheKey)
-    if (cached) {
-      return NextResponse.json({ resources: cached })
-    }
+    // const cached = apiCache.get(cacheKey)
+    // if (cached) {
+    //   return NextResponse.json({ resources: cached })
+    // }
 
     // Get user's email to find their spaces
     let spaceIds = [DEFAULT_SPACE_ID]
@@ -42,7 +42,6 @@ export async function GET(request: NextRequest) {
     }
 
     // Fetch resources from all user's spaces
-    // Only show resources created by this user
     const { data: resources, error } = await supabase
       .from('resource')
       .select(`
@@ -54,7 +53,6 @@ export async function GET(request: NextRequest) {
         created_by_user:app_user(*)
       `)
       .in('space_id', spaceIds)
-      .or(`created_by.is.null,created_by.eq.${userId}`)
       .order('updated_at', { ascending: false })
 
     if (error) {
@@ -66,6 +64,9 @@ export async function GET(request: NextRequest) {
       ...r,
       tags: (r?.tags || []).map((rt: any) => rt.tag).filter(Boolean) || []
     }))
+
+    console.log(`[Resources API] User ${userId}: Found ${transformed.length} resources`)
+    console.log(`[Resources API] Resource types:`, transformed.map(r => `${r.source}:${r.type}`))
 
     // Cache the result for 2 minutes (per user)
     apiCache.set(cacheKey, transformed, 2 * 60 * 1000)

@@ -724,10 +724,13 @@ export default function HomePage() {
                   <div key={message.id} className="space-y-4">
                     {/* User Message */}
                     {message.role === 'user' && (
-                      <div className="flex justify-end">
+                      <div className="flex justify-end items-start gap-4">
                         <p className="text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-red-400 font-medium text-lg">
                           {message.content}
                         </p>
+                        <div className="w-8 h-8 bg-panel rounded-full flex items-center justify-center flex-shrink-0 text-primary text-sm font-medium">
+                          {user?.firstName?.[0]}{user?.lastName?.[0]}
+                        </div>
                       </div>
                     )}
                     
