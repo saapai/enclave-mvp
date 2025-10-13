@@ -51,14 +51,24 @@ export function CalendarDialog({ open, onOpenChange }: CalendarDialogProps) {
       const response = await fetch('/api/google/calendar/list')
       const data = await response.json()
 
-      if (data.needsOAuth) {
+      console.log('Calendar dialog response:', data)
+
+      if (data.needsOAuth || data.needsReauth) {
         setNeedsOAuth(true)
       } else if (data.success) {
         setCalendars(data.calendars || [])
         setNeedsOAuth(false)
+        
+        if ((data.calendars || []).length === 0) {
+          console.warn('No calendars found - user may need to reconnect Google account')
+        }
+      } else if (data.error) {
+        console.error('Calendar list error:', data.error, data.details)
+        alert(`Failed to load calendars: ${data.details || data.error}`)
       }
     } catch (error) {
       console.error('Failed to load calendars:', error)
+      alert('Failed to connect to calendar service. Please try again.')
     } finally {
       setLoading(false)
     }
@@ -270,8 +280,18 @@ export function CalendarDialog({ open, onOpenChange }: CalendarDialogProps) {
                   <Loader2 className="h-8 w-8 animate-spin text-blue-400" />
                 </div>
               ) : calendars.length === 0 ? (
-                <div className="bg-[rgba(255,255,255,0.08)] p-6 rounded-lg border border-line text-center">
+                <div className="bg-[rgba(255,255,255,0.08)] p-6 rounded-lg border border-line text-center space-y-4">
                   <p className="text-muted">No calendars found</p>
+                  <p className="text-sm text-subtle">
+                    This might mean you need to reconnect your Google account with Calendar permissions.
+                  </p>
+                  <Button
+                    onClick={handleConnectGoogle}
+                    variant="outline"
+                    size="sm"
+                  >
+                    Reconnect Google Account
+                  </Button>
                 </div>
               ) : (
                 <div className="space-y-2">

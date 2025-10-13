@@ -12,16 +12,32 @@ export function createCalendarClient(tokens: any) {
 
 // Fetch calendar list
 export async function listCalendars(tokens: any) {
-  const calendar = createCalendarClient(tokens)
-  
-  const response = await calendar.calendarList.list({
-    minAccessRole: 'reader',
-    showHidden: false,
-    showDeleted: false
-  })
+  try {
+    const calendar = createCalendarClient(tokens)
+    
+    console.log('Making calendar list API call...')
+    const response = await calendar.calendarList.list({
+      minAccessRole: 'reader',
+      showHidden: false,
+      showDeleted: false
+    })
 
-  console.log('Calendar list response:', response.data.items?.length || 0, 'calendars')
-  return response.data.items || []
+    console.log('Calendar list response:', response.data.items?.length || 0, 'calendars')
+    
+    if (response.data.items && response.data.items.length > 0) {
+      console.log('Sample calendar:', response.data.items[0].summary)
+    } else {
+      console.warn('No calendars in response - check OAuth scopes')
+    }
+    
+    return response.data.items || []
+  } catch (error: any) {
+    console.error('Calendar list API error:', error.message)
+    if (error.code === 403) {
+      console.error('Permission denied - Calendar API may not be enabled or scope not granted')
+    }
+    throw error
+  }
 }
 
 // Fetch events from a calendar

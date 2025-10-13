@@ -38,21 +38,34 @@ export async function GET(request: NextRequest) {
 
     // List calendars
     console.log('Fetching calendar list for user:', userId)
-    const calendars = await listCalendars(tokens)
-    console.log('Found calendars:', calendars.length)
+    try {
+      const calendars = await listCalendars(tokens)
+      console.log('Found calendars:', calendars.length)
+      
+      if (calendars.length === 0) {
+        console.warn('No calendars returned - possible scope issue')
+      }
 
-    return NextResponse.json({
-      success: true,
-      calendars: calendars.map(cal => ({
-        id: cal.id,
-        summary: cal.summary,
-        description: cal.description,
-        primary: cal.primary,
-        accessRole: cal.accessRole,
-        backgroundColor: cal.backgroundColor,
-        foregroundColor: cal.foregroundColor
-      }))
-    })
+      return NextResponse.json({
+        success: true,
+        calendars: calendars.map(cal => ({
+          id: cal.id,
+          summary: cal.summary,
+          description: cal.description,
+          primary: cal.primary,
+          accessRole: cal.accessRole,
+          backgroundColor: cal.backgroundColor,
+          foregroundColor: cal.foregroundColor
+        }))
+      })
+    } catch (calendarError: any) {
+      console.error('Calendar list fetch error:', calendarError)
+      return NextResponse.json({ 
+        error: 'Failed to fetch calendars',
+        details: calendarError.message,
+        needsReauth: calendarError.code === 403 || calendarError.code === 401
+      }, { status: 500 })
+    }
 
   } catch (error: any) {
     console.error('Calendar list error:', error)
