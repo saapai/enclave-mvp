@@ -20,6 +20,8 @@ export async function GET(request: NextRequest) {
         'https://www.googleapis.com/auth/drive.readonly',
         'https://www.googleapis.com/auth/documents.readonly',
         'https://www.googleapis.com/auth/drive.metadata.readonly',
+        'https://www.googleapis.com/auth/calendar.readonly',
+        'https://www.googleapis.com/auth/calendar.events.readonly',
         'openid',
         'email',
         'profile'
@@ -34,4 +36,6 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
 }
+
+
 

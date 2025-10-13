@@ -163,3 +163,4 @@ Coming soon:
 - You control which channels the bot can access
 - Add bot → Sync → Search! 🚀
 
+

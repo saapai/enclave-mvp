@@ -17,6 +17,7 @@ import { AIResponse } from '@/components/ai-response'
 import { PromptCard } from '@/components/prompt-card'
 import { GroupsDialog } from '@/components/groups-dialog'
 import { SlackDialog } from '@/components/slack-dialog'
+import { CalendarDialog } from '@/components/calendar-dialog'
 
 export default function HomePage() {
   const { user, isLoaded } = useUser()
@@ -35,6 +36,7 @@ export default function HomePage() {
   const [autoRefreshing, setAutoRefreshing] = useState(false)
   const [showGroups, setShowGroups] = useState(false)
   const [showSlack, setShowSlack] = useState(false)
+  const [showCalendar, setShowCalendar] = useState(false)
   const [showAddMenu, setShowAddMenu] = useState(false)
   const [spaces, setSpaces] = useState<any[]>([])
   const [selectedSpaceIds, setSelectedSpaceIds] = useState<string[]>(['00000000-0000-0000-0000-000000000000'])
@@ -604,6 +606,10 @@ export default function HomePage() {
                     <MessageSquare className="h-4 w-4 mr-2" />
                     Connect Slack
                   </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setShowCalendar(true)} className="cursor-pointer">
+                    <Calendar className="h-4 w-4 mr-2" />
+                    Connect Google Calendar
+                  </DropdownMenuItem>
                   <DropdownMenuSeparator />
                   <DropdownMenuItem 
                     onClick={handleRefreshGoogleDocs} 
@@ -842,6 +848,9 @@ export default function HomePage() {
 
       {/* Slack Dialog */}
       <SlackDialog open={showSlack} onOpenChange={setShowSlack} />
+
+      {/* Calendar Dialog */}
+      <CalendarDialog open={showCalendar} onOpenChange={setShowCalendar} />
 
       {/* Connect Google Doc Modal */}
       {showConnectDoc && (

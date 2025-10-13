@@ -166,3 +166,4 @@ const isModified = revisionChanged || timeChanged
 3. **Member Management**: Add UI to remove members from groups
 4. **Group Settings**: Edit group name, transfer ownership
 5. **Notifications**: Notify users when Google Docs are updated
+

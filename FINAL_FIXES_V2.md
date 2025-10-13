@@ -162,3 +162,4 @@ Both issues are now resolved:
 2. **✅ Google Doc Polling**: Changes appear immediately when searching, with aggressive polling after every query
 
 The system is now much more responsive and user-friendly!
+

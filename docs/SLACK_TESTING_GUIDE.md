@@ -180,3 +180,4 @@ If you're still having issues:
 ✅ Search returns results from Slack messages  
 ✅ New messages appear after re-sync  
 
+

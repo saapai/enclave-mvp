@@ -259,3 +259,4 @@ All reported issues have been resolved:
 - ✅ Space selector when adding resources
 
 The application now has proper multi-space support with automatic Google Doc updates!
+
