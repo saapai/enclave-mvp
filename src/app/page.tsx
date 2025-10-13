@@ -272,76 +272,67 @@ export default function HomePage() {
     setQuery('') // Clear input immediately
 
     try {
-      // CRITICAL: Check Google Docs AND Slack for updates BEFORE processing the search query
-      console.log('[Search] Checking Google Docs and Slack for updates BEFORE search...')
-      
-      // Check Google Docs
-      try {
-        const listResponse = await fetch('/api/google/docs/list')
-        if (listResponse.ok) {
-          const { googleDocs } = await listResponse.json()
-          
-          if (googleDocs && googleDocs.length > 0) {
-            console.log(`[Search] Checking ${googleDocs.length} Google Doc(s) for updates before search...`)
-            
-            // Check each Google Doc for updates BEFORE searching
-            for (const doc of googleDocs) {
-              try {
-                const response = await fetch('/api/google/docs/refresh', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ sourceId: doc.id })
-                })
-                
-                if (response.ok) {
-                  const result = await response.json()
-                  if (result.isModified) {
-                    console.log(`[Search] ✓ Updated Google Doc before search: ${doc.title}`)
-                  }
-                }
-              } catch (error) {
-                console.error(`[Search] Failed to check doc ${doc.id}:`, error)
+      // CRITICAL: Auto-sync all sources in parallel for faster response
+      console.log('[Search] Auto-syncing all sources (parallel)...')
+      const syncPromises = []
+
+      // Auto-sync Google Calendars
+      syncPromises.push(
+        fetch('/api/google/calendar/auto-sync', { method: 'POST' })
+          .then(res => res.ok ? res.json() : null)
+          .then(data => data && console.log(`[Search] ✓ Auto-synced ${data.totalEvents || 0} calendar events`))
+          .catch(err => console.error('[Search] Calendar auto-sync failed:', err))
+      )
+
+      // Check Google Docs for updates
+      syncPromises.push(
+        fetch('/api/google/docs/list')
+          .then(async (docsResponse) => {
+            if (docsResponse.ok) {
+              const { googleDocs } = await docsResponse.json()
+              if (googleDocs && googleDocs.length > 0) {
+                const refreshPromises = googleDocs.map((doc: any) =>
+                  fetch('/api/google/docs/refresh', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ sourceId: doc.id })
+                  }).catch(err => console.error(`Doc ${doc.id} refresh failed:`, err))
+                )
+                await Promise.all(refreshPromises)
+                console.log(`[Search] ✓ Checked ${googleDocs.length} Google Doc(s)`)
               }
             }
-          }
-        }
-      } catch (error) {
-        console.error('[Search] Failed to check Google Docs before search:', error)
-      }
+          })
+          .catch(err => console.error('[Search] Google Docs sync failed:', err))
+      )
 
       // Check Slack channels for new messages
-      try {
-        const channelsResponse = await fetch('/api/slack/channels')
-        if (channelsResponse.ok) {
-          const { channels } = await channelsResponse.json()
-          
-          if (channels && channels.length > 0) {
-            console.log(`[Search] Syncing ${channels.length} Slack channel(s) before search...`)
-            
-            // Sync each channel (this will only fetch new messages since last sync)
-            for (const channel of channels) {
-              try {
-                const syncResponse = await fetch('/api/slack/sync', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ channelId: channel.id })
-                })
-                
-                if (syncResponse.ok) {
-                  const result = await syncResponse.json()
-                  if (result.messageCount > 0) {
-                    console.log(`[Search] ✓ Synced ${result.messageCount} new messages from #${channel.channel_name}`)
-                  }
-                }
-              } catch (error) {
-                console.error(`[Search] Failed to sync Slack channel ${channel.id}:`, error)
+      syncPromises.push(
+        fetch('/api/slack/channels')
+          .then(async (channelsResponse) => {
+            if (channelsResponse.ok) {
+              const { channels } = await channelsResponse.json()
+              if (channels && channels.length > 0) {
+                const slackSyncPromises = channels.map((channel: any) =>
+                  fetch('/api/slack/sync', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ channelId: channel.id })
+                  }).catch(err => console.error(`Slack ${channel.id} sync failed:`, err))
+                )
+                await Promise.all(slackSyncPromises)
+                console.log(`[Search] ✓ Synced ${channels.length} Slack channel(s)`)
               }
             }
-          }
-        }
-      } catch (error) {
-        console.error('[Search] Failed to check Slack channels before search:', error)
-      }
+          })
+          .catch(err => console.error('[Search] Slack sync failed:', err))
+      )
+
+      // Wait for all syncs to complete (with timeout for speed)
+      await Promise.race([
+        Promise.all(syncPromises),
+        new Promise(resolve => setTimeout(resolve, 3000)) // Max 3s wait for syncs
+      ])
 
       // Now execute the search with potentially updated Google Doc content
       const res = await fetch(`/api/search/hybrid?q=${encodeURIComponent(currentQuery)}&limit=20`)
