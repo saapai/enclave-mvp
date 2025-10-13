@@ -128,6 +128,17 @@ export async function storeCalendarSource(
   return data
 }
 
+// Delete events for a calendar source
+export async function deleteEventsForSource(spaceId: string, sourceId: string) {
+  const { error } = await supabase
+    .from('calendar_events')
+    .delete()
+    .eq('space_id', spaceId)
+    .eq('source_id', sourceId)
+
+  if (error) throw error
+}
+
 // Store calendar events with embeddings
 export async function storeCalendarEvents(
   spaceId: string,
@@ -135,10 +146,7 @@ export async function storeCalendarEvents(
   events: any[]
 ) {
   // Delete old events for this source
-  await supabase
-    .from('calendar_events')
-    .delete()
-    .eq('source_id', sourceId)
+  await deleteEventsForSource(spaceId, sourceId)
 
   if (events.length === 0) return
 
