@@ -111,7 +111,7 @@ export async function storeCalendarSource(
     .from('sources_google_calendar')
     .upsert({
       space_id: spaceId,
-      calendar_id: calendarId,
+      google_calendar_id: calendarId,
       calendar_name: calendarName,
       calendar_description: calendarDescription,
       is_primary: isPrimary,
@@ -119,7 +119,7 @@ export async function storeCalendarSource(
       last_synced: new Date().toISOString(),
       updated_at: new Date().toISOString()
     }, {
-      onConflict: 'space_id,calendar_id'
+      onConflict: 'space_id,google_calendar_id'
     })
     .select()
     .single()
