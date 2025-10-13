@@ -13,14 +13,12 @@ DROP POLICY IF EXISTS "Users can update their own resources" ON resource;
 DROP POLICY IF EXISTS "Users can delete their own resources" ON resource;
 DROP POLICY IF EXISTS "Service role can manage resources" ON resource;
 
--- Resource policies: Users can only see resources they created
+-- Resource policies: Users can see all resources in their spaces
 -- Since we're using Clerk and auth.uid() returns the Clerk user ID as text
-CREATE POLICY "Users can view their own resources" ON resource
+CREATE POLICY "Users can view resources in their spaces" ON resource
   FOR SELECT
   USING (
-    created_by IS NULL OR -- Allow viewing resources without creator (system resources)
-    created_by::text = auth.uid()::text OR -- User's own resources
-    space_id = '00000000-0000-0000-0000-000000000000' -- Default space is public
+    space_id = '00000000-0000-0000-0000-000000000000' -- Default space is public to all
   );
 
 CREATE POLICY "Users can create resources" ON resource
