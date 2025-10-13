@@ -79,7 +79,7 @@ export async function POST(request: NextRequest) {
         future.setDate(future.getDate() + 90) // Next 90 days
 
         // Fetch latest events from Google Calendar
-        const events = await fetchCalendarEvents(tokens, source.google_calendar_id, now, future)
+        const events = await fetchCalendarEvents(tokens, source.calendar_id, now, future)
 
         // Format events
         const formattedEvents = events.map(event => 
@@ -95,7 +95,7 @@ export async function POST(request: NextRequest) {
         totalEventsSynced += formattedEvents.length
 
         syncResults.push({
-          calendarId: source.google_calendar_id,
+          calendarId: source.calendar_id,
           calendarName: source.calendar_name,
           eventsCount: formattedEvents.length
         })

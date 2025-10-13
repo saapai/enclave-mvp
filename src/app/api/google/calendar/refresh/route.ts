@@ -57,7 +57,7 @@ export async function POST(request: NextRequest) {
     const future = new Date()
     future.setDate(future.getDate() + daysAhead)
 
-    const events = await fetchCalendarEvents(tokens, source.google_calendar_id, now, future)
+    const events = await fetchCalendarEvents(tokens, source.calendar_id, now, future)
 
     // Format events
     const formattedEvents = events.map(event => 
