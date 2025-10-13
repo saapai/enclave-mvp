@@ -42,6 +42,7 @@ export async function GET(request: NextRequest) {
     }
 
     // Fetch resources from all user's spaces
+    // Note: RLS policies ensure users only see their own resources
     const { data: resources, error } = await supabase
       .from('resource')
       .select(`
@@ -53,6 +54,7 @@ export async function GET(request: NextRequest) {
         created_by_user:app_user(*)
       `)
       .in('space_id', spaceIds)
+      .eq('created_by', userId)  // CRITICAL: Only get user's own resources
       .order('updated_at', { ascending: false })
 
     if (error) {

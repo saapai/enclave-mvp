@@ -6,8 +6,10 @@ export async function GET(request: NextRequest) {
   try {
     const { userId } = await auth()
     
-    // For testing, allow requests without authentication
-    const testUserId = userId || '00000000-0000-0000-0000-000000000000'
+    // Require authentication for search
+    if (!userId) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
 
     const { searchParams } = new URL(request.url)
     const query = searchParams.get('q') || ''
@@ -25,17 +27,19 @@ export async function GET(request: NextRequest) {
       to
     }
 
+    // Pass userId to ensure user-specific filtering
     const results = await searchResourcesHybrid(
       query,
       '00000000-0000-0000-0000-000000000000', // Default space for MVP
       filters,
-      { limit, offset }
+      { limit, offset },
+      userId  // CRITICAL: Pass userId for filtering
     )
 
     // Log the query
     await logQuery(
       '00000000-0000-0000-0000-000000000000',
-      testUserId,
+      userId,
       query,
       results.length
     )

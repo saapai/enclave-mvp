@@ -20,23 +20,25 @@ export async function searchResourcesHybrid(
   query: string,
   spaceId: string,
   filters: SearchFilters = {},
-  options: SearchOptions = {}
+  options: SearchOptions = {},
+  userId?: string
 ): Promise<SearchResult[]> {
   const { limit = 20, offset = 0 } = options
   
   if (!query.trim()) {
     // Return regular resources only for empty queries
-    return searchResources(query, spaceId, filters, options)
+    return searchResources(query, spaceId, filters, options, userId)
   }
 
   try {
     // Generate embedding for vector search
     const queryEmbedding = await embedText(query)
     
-    // Search regular resources
-    const regularResults = await searchResources(query, spaceId, filters, { limit: limit * 2, offset: 0 })
+    // Search regular resources (with user filtering)
+    const regularResults = await searchResources(query, spaceId, filters, { limit: limit * 2, offset: 0 }, userId)
     
     // Search Google Docs chunks (filtered by user through RLS)
+    // Note: RLS in the function ensures users only see their own docs
     const { data: googleDocsResults, error: gdError } = await supabase
       .rpc('search_google_docs_vector', {
         query_embedding: queryEmbedding,
@@ -110,8 +112,8 @@ export async function searchResourcesHybrid(
     
   } catch (error) {
     console.error('Hybrid search error:', error)
-    // Fallback to regular search
-    return searchResources(query, spaceId, filters, options)
+    // Fallback to regular search (with user filtering)
+    return searchResources(query, spaceId, filters, options, userId)
   }
 }
 
@@ -136,6 +138,11 @@ export async function searchResources(
       created_by_user:app_user(*)
     `)
     .eq('space_id', spaceId)
+  
+  // Filter by user if provided (RLS will also enforce this)
+  if (userId) {
+    supabaseQuery = supabaseQuery.eq('created_by', userId)
+  }
 
   // Apply type filter
   if (filters.type) {
