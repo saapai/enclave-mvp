@@ -20,6 +20,11 @@ DROP POLICY IF EXISTS "Users can create resources" ON resource;
 DROP POLICY IF EXISTS "Users can update their own resources" ON resource;
 DROP POLICY IF EXISTS "Users can delete their own resources" ON resource;
 DROP POLICY IF EXISTS "Service role can manage resources" ON resource;
+DROP POLICY IF EXISTS "Users can view own resources" ON resource;
+DROP POLICY IF EXISTS "Users can create own resources" ON resource;
+DROP POLICY IF EXISTS "Users can update own resources" ON resource;
+DROP POLICY IF EXISTS "Users can delete own resources" ON resource;
+DROP POLICY IF EXISTS "Service role full access" ON resource;
 
 -- New policy: Users can ONLY see their own resources
 CREATE POLICY "Users can view own resources" ON resource
@@ -56,6 +61,8 @@ CREATE POLICY "Service role full access" ON resource
 -- STEP 2: Update Google Docs RLS to be user-specific
 DROP POLICY IF EXISTS "Users can access google docs in their spaces" ON sources_google_docs;
 DROP POLICY IF EXISTS "Users can access google doc chunks in their spaces" ON google_doc_chunks;
+DROP POLICY IF EXISTS "Users can access own google docs" ON sources_google_docs;
+DROP POLICY IF EXISTS "Users can access own google doc chunks" ON google_doc_chunks;
 
 CREATE POLICY "Users can access own google docs" ON sources_google_docs
   FOR ALL 
