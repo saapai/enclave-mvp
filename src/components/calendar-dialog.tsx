@@ -194,7 +194,7 @@ export function CalendarDialog({ open, onOpenChange }: CalendarDialogProps) {
 
         {needsOAuth ? (
           <div className="space-y-4 py-6">
-            <div className="bg-panel-2 p-6 rounded-lg border border-line text-center">
+                <div className="bg-[rgba(255,255,255,0.08)] p-6 rounded-lg border border-line text-center">
               <Calendar className="h-12 w-12 text-blue-400 mx-auto mb-4" />
               <p className="text-primary mb-2 font-medium">Connect Your Google Account</p>
               <p className="text-muted text-sm mb-4">
@@ -218,7 +218,7 @@ export function CalendarDialog({ open, onOpenChange }: CalendarDialogProps) {
                   {connectedCalendars.map(source => (
                     <div
                       key={source.id}
-                      className="bg-panel-2 p-4 rounded-lg border border-line flex items-center justify-between"
+                      className="bg-[rgba(255,255,255,0.1)] p-4 rounded-lg border border-line flex items-center justify-between"
                     >
                       <div className="flex items-center gap-3">
                         <CheckCircle className="h-5 w-5 text-green-400" />
@@ -270,7 +270,7 @@ export function CalendarDialog({ open, onOpenChange }: CalendarDialogProps) {
                   <Loader2 className="h-8 w-8 animate-spin text-blue-400" />
                 </div>
               ) : calendars.length === 0 ? (
-                <div className="bg-panel-2 p-6 rounded-lg border border-line text-center">
+                <div className="bg-[rgba(255,255,255,0.08)] p-6 rounded-lg border border-line text-center">
                   <p className="text-muted">No calendars found</p>
                 </div>
               ) : (
@@ -278,10 +278,10 @@ export function CalendarDialog({ open, onOpenChange }: CalendarDialogProps) {
                   {calendars.map(calendar => {
                     const connected = isCalendarConnected(calendar.id)
                     return (
-                      <div
-                        key={calendar.id}
-                        className="bg-panel-2 p-4 rounded-lg border border-line flex items-center justify-between"
-                      >
+                  <div
+                    key={calendar.id}
+                    className="bg-[rgba(255,255,255,0.1)] p-4 rounded-lg border border-line flex items-center justify-between"
+                  >
                         <div className="flex items-center gap-3">
                           <div
                             className="w-4 h-4 rounded"

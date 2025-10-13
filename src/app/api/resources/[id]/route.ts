@@ -42,8 +42,11 @@ export async function DELETE(
       return NextResponse.json({ error: 'Failed to delete resource' }, { status: 500 })
     }
 
-    // Clear cache after deletion
+    // Clear cache after deletion (both generic and user-specific)
     apiCache.delete(CACHE_KEYS.RESOURCES)
+    if (userId) {
+      apiCache.delete(`${CACHE_KEYS.RESOURCES}_${userId}`)
+    }
 
     return NextResponse.json({ success: true })
   } catch (error) {

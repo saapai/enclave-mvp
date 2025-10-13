@@ -42,6 +42,7 @@ export async function GET(request: NextRequest) {
     }
 
     // Fetch resources from all user's spaces
+    // Only show resources created by this user
     const { data: resources, error } = await supabase
       .from('resource')
       .select(`
@@ -53,6 +54,7 @@ export async function GET(request: NextRequest) {
         created_by_user:app_user(*)
       `)
       .in('space_id', spaceIds)
+      .or(`created_by.is.null,created_by.eq.${userId}`)
       .order('updated_at', { ascending: false })
 
     if (error) {

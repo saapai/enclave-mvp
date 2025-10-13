@@ -119,7 +119,8 @@ export async function searchResources(
   query: string,
   spaceId: string,
   filters: SearchFilters = {},
-  options: SearchOptions = {}
+  options: SearchOptions = {},
+  userId?: string
 ): Promise<SearchResult[]> {
   const { limit = 20, offset = 0 } = options
 
@@ -135,6 +136,11 @@ export async function searchResources(
       created_by_user:app_user(*)
     `)
     .eq('space_id', spaceId)
+  
+  // Filter by user if provided (for personal spaces)
+  if (userId) {
+    supabaseQuery = supabaseQuery.or(`created_by.is.null,created_by.eq.${userId}`)
+  }
 
   // Apply type filter
   if (filters.type) {
