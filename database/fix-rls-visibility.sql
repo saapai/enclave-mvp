@@ -8,7 +8,9 @@ ALTER TABLE space ENABLE ROW LEVEL SECURITY;
 
 -- Drop existing policies if any
 DROP POLICY IF EXISTS "Users can view resources in their spaces" ON resource;
+DROP POLICY IF EXISTS "Users can view their own resources" ON resource;
 DROP POLICY IF EXISTS "Users can create resources in their spaces" ON resource;
+DROP POLICY IF EXISTS "Users can create resources" ON resource;
 DROP POLICY IF EXISTS "Users can update their own resources" ON resource;
 DROP POLICY IF EXISTS "Users can delete their own resources" ON resource;
 DROP POLICY IF EXISTS "Service role can manage resources" ON resource;
