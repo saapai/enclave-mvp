@@ -336,7 +336,7 @@ export default function HomePage() {
       ])
 
       // Now execute the search with potentially updated Google Doc content
-      const res = await fetch(`/api/search/hybrid?q=${encodeURIComponent(currentQuery)}&limit=20`)
+      const res = await fetch(`/api/search/hybrid?q=${encodeURIComponent(currentQuery)}&limit=3`)
       if (!res.ok) throw new Error('Search API failed')
       const data = await res.json()
       const searchResults = (data.results || []) as ResourceWithTags[]
@@ -346,8 +346,9 @@ export default function HomePage() {
       try {
         let aiResponse = ''
         if (searchResults.length > 0) {
-          // Generate summary from search results
-          const context = searchResults.map(r => {
+          // Generate summary from top 3 search results only
+          const topResults = searchResults.slice(0, 3)
+          const context = topResults.map(r => {
             let content = `${r.title}: ${r.body || ''}`
             if (r.url) {
               content += `\nURL: ${r.url}`
