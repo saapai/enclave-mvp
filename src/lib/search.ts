@@ -1,7 +1,11 @@
-import { supabase } from './supabase'
+import { supabase, supabaseAdmin } from './supabase'
 import { ResourceWithTags, SearchResult } from './database.types'
 import { embedText } from './embeddings'
 import { searchSlackMessages } from './slack'
+
+// Use admin client for vector searches to bypass RLS (user auth validated at API level)
+// Regular client used for standard queries with user context
+const searchClient = supabaseAdmin!
 
 export interface SearchFilters {
   type?: string
@@ -37,9 +41,9 @@ export async function searchResourcesHybrid(
     // Search regular resources (with user filtering)
     const regularResults = await searchResources(query, spaceId, filters, { limit: limit * 2, offset: 0 }, userId)
     
-    // Search Google Docs chunks (filtered by user through RLS)
-    // Note: RLS in the function ensures users only see their own docs
-    const { data: googleDocsResults, error: gdError } = await supabase
+    // Search Google Docs chunks using admin client (user filtering by userId parameter)
+    // Note: We filter by userId manually after fetching results
+    const { data: googleDocsResults, error: gdError } = await searchClient
       .rpc('search_google_docs_vector', {
         query_embedding: queryEmbedding,
         target_space_id: spaceId,
@@ -51,8 +55,8 @@ export async function searchResourcesHybrid(
       console.error('Google Docs search error:', gdError)
     }
 
-    // Search Calendar Events
-    const { data: calendarResults, error: calError } = await supabase
+    // Search Calendar Events using admin client (user filtering by userId parameter)
+    const { data: calendarResults, error: calError } = await searchClient
       .rpc('search_calendar_events_vector', {
         query_embedding: queryEmbedding,
         target_space_id: spaceId,
@@ -71,8 +75,13 @@ export async function searchResourcesHybrid(
       limit * 2
     )
 
+    // Filter Google Docs by userId (since we bypassed RLS with admin client)
+    const userFilteredGoogleDocs = userId 
+      ? (googleDocsResults || []).filter((chunk: any) => chunk.added_by === userId)
+      : (googleDocsResults || [])
+
     // Convert Google Docs results to SearchResult format
-    const googleDocsSearchResults: SearchResult[] = (googleDocsResults || []).map((chunk: any) => ({
+    const googleDocsSearchResults: SearchResult[] = userFilteredGoogleDocs.map((chunk: any) => ({
       id: `google_doc_${chunk.source_id}_${chunk.id}`,
       title: `Google Doc Chunk`,
       body: chunk.text,
@@ -92,8 +101,13 @@ export async function searchResourcesHybrid(
       }
     }))
 
+    // Filter Calendar results by userId (since we bypassed RLS with admin client)
+    const userFilteredCalendar = userId
+      ? (calendarResults || []).filter((event: any) => event.added_by === userId)
+      : (calendarResults || [])
+
     // Convert Calendar results to SearchResult format
-    const calendarSearchResults: SearchResult[] = (calendarResults || []).map((event: any) => ({
+    const calendarSearchResults: SearchResult[] = userFilteredCalendar.map((event: any) => ({
       id: `calendar_event_${event.google_event_id}`,
       title: event.title || 'Calendar Event',
       body: `${event.description || ''}\n\nWhen: ${new Date(event.start_time).toLocaleString()} - ${new Date(event.end_time).toLocaleString()}${event.location ? `\nWhere: ${event.location}` : ''}`,
