@@ -113,6 +113,8 @@ export function CalendarDialog({ open, onOpenChange }: CalendarDialogProps) {
       })
 
       const data = await response.json()
+      console.log('[Calendar Sync] Server response:', data)
+      console.log('[Calendar Sync] Response status:', response.status)
 
       if (data.success) {
         alert(`Successfully synced ${calendar.summary}! Imported ${data.source.eventsCount} events.`)
@@ -120,11 +122,14 @@ export function CalendarDialog({ open, onOpenChange }: CalendarDialogProps) {
       } else if (data.isAlreadyConnected) {
         alert('This calendar is already connected!')
       } else {
-        throw new Error(data.error || 'Failed to sync calendar')
+        console.error('[Calendar Sync] Server error:', data)
+        throw new Error(data.details || data.error || 'Failed to sync calendar')
       }
-    } catch (error) {
-      console.error('Failed to sync calendar:', error)
-      alert(`Failed to sync calendar: ${error instanceof Error ? error.message : 'Unknown error'}`)
+    } catch (error: any) {
+      console.error('[Calendar Sync] Failed to sync calendar:', error)
+      console.error('[Calendar Sync] Error message:', error.message)
+      console.error('[Calendar Sync] Full error:', error)
+      alert(`Failed to sync calendar: ${error.message || 'Unknown error'}`)
     } finally {
       setSyncing(null)
     }
