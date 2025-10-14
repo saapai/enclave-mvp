@@ -87,11 +87,18 @@ export function formatCalendarEvent(event: any, calendarName: string) {
 
   // Log for debugging timezone issues
   if (event.summary?.toLowerCase().includes('run')) {
+    console.log(`[Calendar Format] ========== RUN EVENT DEBUG ==========`)
     console.log(`[Calendar Format] Event: ${event.summary}`)
-    console.log(`[Calendar Format] Raw start: ${start}`)
-    console.log(`[Calendar Format] Raw end: ${end}`)
-    console.log(`[Calendar Format] Parsed start: ${new Date(start).toISOString()}`)
-    console.log(`[Calendar Format] Parsed end: ${new Date(end).toISOString()}`)
+    console.log(`[Calendar Format] Event ID: ${event.id}`)
+    console.log(`[Calendar Format] Raw event.start:`, JSON.stringify(event.start))
+    console.log(`[Calendar Format] Raw event.end:`, JSON.stringify(event.end))
+    console.log(`[Calendar Format] Extracted start: ${start}`)
+    console.log(`[Calendar Format] Extracted end: ${end}`)
+    console.log(`[Calendar Format] Parsed Date(start): ${new Date(start)}`)
+    console.log(`[Calendar Format] toISOString: ${new Date(start).toISOString()}`)
+    console.log(`[Calendar Format] toLocaleString: ${new Date(start).toLocaleString()}`)
+    console.log(`[Calendar Format] Timezone offset: ${new Date().getTimezoneOffset()} minutes`)
+    console.log(`[Calendar Format] =====================================`)
   }
 
   // Build a rich description for embedding
