@@ -63,12 +63,15 @@ export async function POST(request: NextRequest) {
     const future = new Date()
     future.setDate(future.getDate() + daysAhead)
 
+    console.log('[Calendar Sync] Fetching events for calendar:', calendarId)
     const events = await fetchCalendarEvents(tokens, calendarId, now, future)
+    console.log('[Calendar Sync] Fetched events count:', events.length)
 
     // Format events
     const formattedEvents = events.map(event => 
       formatCalendarEvent(event, calendarName || calendarId)
     )
+    console.log('[Calendar Sync] Formatted events count:', formattedEvents.length)
 
     // Store calendar source and events for each space
     const sources = []
@@ -110,7 +113,10 @@ export async function POST(request: NextRequest) {
     })
 
   } catch (error: any) {
-    console.error('Calendar sync error:', error)
+    console.error('[Calendar Sync] Full error:', error)
+    console.error('[Calendar Sync] Error message:', error.message)
+    console.error('[Calendar Sync] Error code:', error.code)
+    console.error('[Calendar Sync] Error stack:', error.stack)
     
     // Check for duplicate key error
     if (error?.code === '23505' && error?.message?.includes('duplicate key')) {
@@ -123,7 +129,9 @@ export async function POST(request: NextRequest) {
     
     return NextResponse.json({ 
       error: 'Failed to sync calendar',
-      details: error.message
+      details: error.message,
+      errorCode: error.code,
+      errorName: error.name
     }, { status: 500 })
   }
 }

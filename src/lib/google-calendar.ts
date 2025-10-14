@@ -48,18 +48,32 @@ export async function fetchCalendarEvents(
   timeMax?: Date,
   maxResults = 250
 ) {
-  const calendar = createCalendarClient(tokens)
-  
-  const response = await calendar.events.list({
-    calendarId,
-    timeMin: (timeMin || new Date()).toISOString(),
-    timeMax: timeMax?.toISOString(),
-    maxResults,
-    singleEvents: true,
-    orderBy: 'startTime'
-  })
+  try {
+    const calendar = createCalendarClient(tokens)
+    
+    console.log('[Calendar Events] Fetching from calendar:', calendarId)
+    console.log('[Calendar Events] Time range:', timeMin?.toISOString(), '-', timeMax?.toISOString())
+    
+    const response = await calendar.events.list({
+      calendarId,
+      timeMin: (timeMin || new Date()).toISOString(),
+      timeMax: timeMax?.toISOString(),
+      maxResults,
+      singleEvents: true,
+      orderBy: 'startTime'
+    })
 
-  return response.data.items || []
+    console.log('[Calendar Events] Fetched items:', response.data.items?.length || 0)
+    return response.data.items || []
+  } catch (error: any) {
+    console.error('[Calendar Events] Error fetching events:', error)
+    console.error('[Calendar Events] Error details:', {
+      message: error.message,
+      code: error.code,
+      errors: error.errors
+    })
+    throw error
+  }
 }
 
 // Format calendar event for storage
