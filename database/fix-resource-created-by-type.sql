@@ -1,7 +1,15 @@
 -- Fix created_by column type to support Clerk user IDs (text)
 -- This aligns with how we handle user IDs in Google Docs/Calendar integrations
 
--- Drop foreign key constraint first
+-- FIRST: Drop ALL existing RLS policies that depend on created_by column
+DROP POLICY IF EXISTS "Users can view own resources" ON resource;
+DROP POLICY IF EXISTS "Users can create resources" ON resource;
+DROP POLICY IF EXISTS "Users can update own resources" ON resource;
+DROP POLICY IF EXISTS "Users can delete own resources" ON resource;
+DROP POLICY IF EXISTS "Users can view resources in their spaces" ON resource;
+DROP POLICY IF EXISTS "Users can access resources in their spaces" ON resource;
+
+-- Drop foreign key constraint
 ALTER TABLE resource 
 DROP CONSTRAINT IF EXISTS resource_created_by_fkey;
 
@@ -11,12 +19,6 @@ ALTER COLUMN created_by TYPE TEXT USING created_by::TEXT;
 
 -- Add index for performance
 CREATE INDEX IF NOT EXISTS idx_resource_created_by ON resource(created_by);
-
--- Update RLS policies to use TEXT comparison
-DROP POLICY IF EXISTS "Users can view own resources" ON resource;
-DROP POLICY IF EXISTS "Users can create resources" ON resource;
-DROP POLICY IF EXISTS "Users can update own resources" ON resource;
-DROP POLICY IF EXISTS "Users can delete own resources" ON resource;
 
 CREATE POLICY "Users can view own resources" ON resource
   FOR SELECT
