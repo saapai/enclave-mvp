@@ -50,7 +50,9 @@ CREATE POLICY "Users can delete own resources" ON resource
   USING (created_by::text = auth.uid()::text);
 
 -- Update search_resources_fts function to return TEXT for created_by
+-- Remove auth.uid() filtering since we use Clerk (not Supabase Auth)
 DROP FUNCTION IF EXISTS search_resources_fts(text, uuid, integer, integer);
+DROP FUNCTION IF EXISTS search_resources_fts(text, uuid, integer, integer, text);
 
 CREATE OR REPLACE FUNCTION search_resources_fts(
   search_query TEXT,
@@ -90,7 +92,7 @@ BEGIN
   WHERE r.space_id = target_space_id
     AND to_tsvector('english', coalesce(r.title, '') || ' ' || coalesce(r.body, ''))
         @@ plainto_tsquery('english', search_query)
-    AND (r.created_by::text = auth.uid()::text)  -- Filter by current user
+    -- No user filtering here - handled at application level with Clerk auth
   ORDER BY rank DESC, r.created_at DESC
   LIMIT limit_count
   OFFSET offset_count;

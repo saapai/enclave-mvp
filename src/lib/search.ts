@@ -207,20 +207,22 @@ export async function searchResources(
 ): Promise<SearchResult[]> {
   const { limit = 20, offset = 0 } = options
 
+  // Use admin client to bypass RLS (auth validated at API level)
+  const dbClient = supabaseAdmin || supabase
+
   // Build the base query (used only for non-search listing)
-  let supabaseQuery = supabase
+  let supabaseQuery = dbClient
     .from('resource')
     .select(`
       *,
       tags:resource_tag(
         tag:tag(*)
       ),
-      event_meta(*),
-      created_by_user:app_user(*)
+      event_meta(*)
     `)
     .eq('space_id', spaceId)
   
-  // Filter by user if provided (RLS will also enforce this)
+  // Filter by user if provided
   if (userId) {
     supabaseQuery = supabaseQuery.eq('created_by', userId)
   }
@@ -241,8 +243,9 @@ export async function searchResources(
   // TODO: Implement proper tag filtering
 
   if (query.trim()) {
-    // Use Postgres full-text search function for ranked results (client-side)
-    const { data: hits, error: rpcError } = await (supabase as any).rpc('search_resources', {
+    // Use Postgres full-text search function for ranked results
+    // Use admin client and filter by userId manually since auth.uid() doesn't work with Clerk
+    const { data: hits, error: rpcError } = await (dbClient as any).rpc('search_resources_fts', {
       search_query: query,
       target_space_id: spaceId,
       limit_count: limit,
@@ -269,19 +272,24 @@ export async function searchResources(
       })) as SearchResult[]
     }
 
-    const ids = (hits || []).map((h: any) => h.id as string)
+    // Filter by userId at application level (since auth.uid() doesn't work with Clerk)
+    let filteredHits = hits || []
+    if (userId) {
+      filteredHits = filteredHits.filter((hit: any) => hit.created_by === userId)
+    }
+
+    const ids = filteredHits.map((h: any) => h.id as string)
     if (ids.length === 0) return []
 
-    // Fetch relationship-expanded records
-    const { data: resources, error } = await supabase
+    // Fetch relationship-expanded records using admin client
+    const { data: resources, error } = await dbClient
       .from('resource')
       .select(`
         *,
         tags:resource_tag(
           tag:tag(*)
         ),
-        event_meta(*),
-        created_by_user:app_user(*)
+        event_meta(*)
       `)
       .in('id', ids)
 

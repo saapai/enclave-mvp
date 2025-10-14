@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@clerk/nextjs/server'
-import { supabase } from '@/lib/supabase'
+import { supabase, supabaseAdmin } from '@/lib/supabase'
 import { apiCache, CACHE_KEYS } from '@/lib/cache'
 
 const DEFAULT_SPACE_ID = '00000000-0000-0000-0000-000000000000'
@@ -42,16 +42,16 @@ export async function GET(request: NextRequest) {
     }
 
     // Fetch resources from all user's spaces
-    // Note: RLS policies ensure users only see their own resources
-    const { data: resources, error } = await supabase
+    // Use admin client to bypass RLS (auth is validated at route level with Clerk)
+    const dbClient = supabaseAdmin || supabase
+    const { data: resources, error } = await dbClient
       .from('resource')
       .select(`
         *,
         tags:resource_tag(
           tag:tag(*)
         ),
-        event_meta(*),
-        created_by_user:app_user(*)
+        event_meta(*)
       `)
       .in('space_id', spaceIds)
       .eq('created_by', userId)  // CRITICAL: Only get user's own resources
