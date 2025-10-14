@@ -76,13 +76,15 @@ export async function POST(request: NextRequest) {
       }, { status: 400 })
     }
 
-    // Fetch calendar events
-    const now = new Date()
+    // Fetch calendar events (include past 7 days to capture recent events)
+    const past = new Date()
+    past.setDate(past.getDate() - 7) // Include events from 7 days ago
     const future = new Date()
     future.setDate(future.getDate() + daysAhead)
 
     console.log('[Calendar Sync] Fetching events for calendar:', calendarId)
-    const events = await fetchCalendarEvents(tokens, calendarId, now, future)
+    console.log('[Calendar Sync] Time range:', past.toISOString(), 'to', future.toISOString())
+    const events = await fetchCalendarEvents(tokens, calendarId, past, future)
     console.log('[Calendar Sync] Fetched events count:', events.length)
 
     // Format events

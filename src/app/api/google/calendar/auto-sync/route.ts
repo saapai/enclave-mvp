@@ -74,12 +74,13 @@ export async function POST(request: NextRequest) {
     // Sync each calendar
     for (const source of sources) {
       try {
-        const now = new Date()
+        const past = new Date()
+        past.setDate(past.getDate() - 7) // Include events from 7 days ago
         const future = new Date()
         future.setDate(future.getDate() + 90) // Next 90 days
 
         // Fetch latest events from Google Calendar
-        const events = await fetchCalendarEvents(tokens, source.calendar_id, now, future)
+        const events = await fetchCalendarEvents(tokens, source.calendar_id, past, future)
 
         // Format events
         const formattedEvents = events.map(event => 

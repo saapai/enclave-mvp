@@ -52,12 +52,13 @@ export async function POST(request: NextRequest) {
       }, { status: 400 })
     }
 
-    // Fetch latest calendar events
-    const now = new Date()
+    // Fetch latest calendar events (include past 7 days)
+    const past = new Date()
+    past.setDate(past.getDate() - 7) // Include events from 7 days ago
     const future = new Date()
     future.setDate(future.getDate() + daysAhead)
 
-    const events = await fetchCalendarEvents(tokens, source.calendar_id, now, future)
+    const events = await fetchCalendarEvents(tokens, source.calendar_id, past, future)
 
     // Format events
     const formattedEvents = events.map(event => 
