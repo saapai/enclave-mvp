@@ -6,8 +6,8 @@ import { ThemeProvider } from '@/components/theme-provider'
 import './globals.css'
 
 export const metadata: Metadata = {
-  title: 'Enclave - Answer Layer for the Chapter',
-  description: 'Find answers to chapter questions instantly',
+  title: 'Enclave - Memory Layer for your Data',
+  description: 'Your AI-powered knowledge assistant',
 }
 
 export const viewport = {
