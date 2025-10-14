@@ -1,24 +1,36 @@
 -- Fix created_by column type to support Clerk user IDs (text)
 -- This aligns with how we handle user IDs in Google Docs/Calendar integrations
 
--- FIRST: Drop ALL existing RLS policies that depend on created_by column
-DROP POLICY IF EXISTS "Users can view own resources" ON resource;
-DROP POLICY IF EXISTS "Users can create resources" ON resource;
-DROP POLICY IF EXISTS "Users can update own resources" ON resource;
-DROP POLICY IF EXISTS "Users can delete own resources" ON resource;
-DROP POLICY IF EXISTS "Users can view resources in their spaces" ON resource;
-DROP POLICY IF EXISTS "Users can access resources in their spaces" ON resource;
+-- STEP 1: Temporarily disable RLS to allow column type change
+ALTER TABLE resource DISABLE ROW LEVEL SECURITY;
 
--- Drop foreign key constraint
+-- STEP 2: Drop ALL existing RLS policies (now that RLS is disabled, this should work)
+DO $$ 
+DECLARE
+    pol record;
+BEGIN
+    FOR pol IN 
+        SELECT policyname 
+        FROM pg_policies 
+        WHERE tablename = 'resource'
+    LOOP
+        EXECUTE format('DROP POLICY IF EXISTS %I ON resource', pol.policyname);
+    END LOOP;
+END $$;
+
+-- STEP 3: Drop foreign key constraint
 ALTER TABLE resource 
 DROP CONSTRAINT IF EXISTS resource_created_by_fkey;
 
--- Change created_by from UUID to TEXT
+-- STEP 4: Change created_by from UUID to TEXT
 ALTER TABLE resource 
 ALTER COLUMN created_by TYPE TEXT USING created_by::TEXT;
 
--- Add index for performance
+-- STEP 5: Add index for performance
 CREATE INDEX IF NOT EXISTS idx_resource_created_by ON resource(created_by);
+
+-- STEP 6: Re-enable RLS
+ALTER TABLE resource ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY "Users can view own resources" ON resource
   FOR SELECT
