@@ -166,9 +166,6 @@ export async function storeCalendarEvents(
         is_all_day: event.isAllDay,
         attendees: event.attendees,
         html_link: event.htmlLink,
-        status: event.status,
-        organizer: event.organizer,
-        recurring_event_id: event.recurringEventId,
         embedding: embedding
       }
     })
