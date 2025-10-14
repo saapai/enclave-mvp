@@ -22,7 +22,7 @@ CREATE OR REPLACE FUNCTION search_calendar_events_vector(
   offset_count INTEGER DEFAULT 0
 )
 RETURNS TABLE (
-  id BIGINT,
+  id UUID,
   google_event_id TEXT,
   source_id UUID,
   title TEXT,
@@ -41,9 +41,9 @@ BEGIN
   RETURN QUERY
   SELECT 
     ce.id,
-    ce.google_event_id,
+    ce.event_id AS google_event_id,
     ce.source_id,
-    ce.title,
+    ce.summary AS title,
     ce.description,
     ce.location,
     ce.start_time,
