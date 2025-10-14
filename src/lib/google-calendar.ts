@@ -1,7 +1,10 @@
 import { google } from 'googleapis'
-import { supabase } from '@/lib/supabase'
+import { supabaseAdmin } from '@/lib/supabase'
 import { embedText } from '@/lib/embeddings'
 import { createOAuthClient } from '@/lib/google-docs'
+
+// Use admin client to bypass RLS since user auth is validated at API route level
+const supabase = supabaseAdmin!
 
 // Create authenticated Google Calendar client
 export function createCalendarClient(tokens: any) {
