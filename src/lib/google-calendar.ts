@@ -85,6 +85,15 @@ export function formatCalendarEvent(event: any, calendarName: string) {
   const end = event.end?.dateTime || event.end?.date
   const isAllDay = !event.start?.dateTime
 
+  // Log for debugging timezone issues
+  if (event.summary?.toLowerCase().includes('run')) {
+    console.log(`[Calendar Format] Event: ${event.summary}`)
+    console.log(`[Calendar Format] Raw start: ${start}`)
+    console.log(`[Calendar Format] Raw end: ${end}`)
+    console.log(`[Calendar Format] Parsed start: ${new Date(start).toISOString()}`)
+    console.log(`[Calendar Format] Parsed end: ${new Date(end).toISOString()}`)
+  }
+
   // Build a rich description for embedding
   const parts = [
     `Event: ${event.summary || 'Untitled Event'}`,
