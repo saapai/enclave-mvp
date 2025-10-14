@@ -2,6 +2,7 @@
 
 import { useRef, useState, useEffect } from 'react'
 import { useUser } from '@clerk/nextjs'
+import NextLink from 'next/link'
 import { Search, Plus, Filter, Clock, MapPin, Calendar, ExternalLink, Sparkles, MessageSquare, Hash, Users, Settings, Menu, X, DollarSign, FileText, Send, Paperclip, Link, Loader2, RefreshCw, ChevronDown } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
