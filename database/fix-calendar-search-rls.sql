@@ -7,6 +7,7 @@ DROP POLICY IF EXISTS "Users can access own calendar events" ON calendar_events;
 DROP POLICY IF EXISTS "Users can insert own calendar events" ON calendar_events;
 DROP POLICY IF EXISTS "Users can view own calendar events" ON calendar_events;
 DROP POLICY IF EXISTS "Users can modify own calendar events" ON calendar_events;
+DROP POLICY IF EXISTS "Users can delete own calendar events" ON calendar_events;
 
 -- Separate policies for different operations
 CREATE POLICY "Users can view own calendar events" ON calendar_events
