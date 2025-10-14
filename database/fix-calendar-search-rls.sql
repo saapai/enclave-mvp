@@ -3,6 +3,7 @@
 
 -- Update calendar events RLS
 DROP POLICY IF EXISTS "Users can access calendar events in their spaces" ON calendar_events;
+DROP POLICY IF EXISTS "Users can access own calendar events" ON calendar_events;
 
 CREATE POLICY "Users can access own calendar events" ON calendar_events
   FOR ALL 
@@ -11,6 +12,14 @@ CREATE POLICY "Users can access own calendar events" ON calendar_events
       SELECT id FROM sources_google_calendar WHERE added_by::text = auth.uid()::text
     )
   );
+
+-- Update sources_google_calendar RLS
+DROP POLICY IF EXISTS "Users can access calendars in their spaces" ON sources_google_calendar;
+DROP POLICY IF EXISTS "Users can access own calendar sources" ON sources_google_calendar;
+
+CREATE POLICY "Users can access own calendar sources" ON sources_google_calendar
+  FOR ALL 
+  USING (added_by::text = auth.uid()::text);
 
 -- Update search_calendar_events_vector function to filter by user
 DROP FUNCTION IF EXISTS search_calendar_events_vector(vector, uuid, integer, integer);
