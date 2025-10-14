@@ -238,8 +238,11 @@ export async function POST(request: NextRequest) {
     console.log('Inserting resources into database for spaces:', spaceIds)
     const insertedResources = []
     
+    // Use admin client to bypass RLS (auth is validated at route level with Clerk)
+    const dbClient = supabaseAdmin || supabase
+    
     for (const spaceId of spaceIds) {
-      const { data: inserted, error: insertError } = await supabase
+      const { data: inserted, error: insertError } = await dbClient
         .from('resource')
         .insert({
           space_id: spaceId,
@@ -290,7 +293,7 @@ export async function POST(request: NextRequest) {
         if (publicUrl) {
           // Update URL for all resources
           for (const resource of insertedResources) {
-            await supabase
+            await dbClient
               .from('resource')
               .update({ url: publicUrl })
               .eq('id', (resource as any).id)
@@ -377,15 +380,14 @@ export async function POST(request: NextRequest) {
     } catch (_e) { /* ignore embedding failures */ }
 
     // Return the first created resource including tags and event_meta
-    const { data: resource, error: fetchError } = await supabase
+    const { data: resource, error: fetchError } = await dbClient
       .from('resource')
       .select(`
         *,
         tags:resource_tag(
           tag:tag(*)
         ),
-        event_meta(*),
-        created_by_user:app_user(*)
+        event_meta(*)
       `)
       .eq('id', primaryResourceId)
       .single()
