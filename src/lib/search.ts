@@ -87,6 +87,7 @@ export async function searchResourcesHybrid(
       title: `Google Doc Chunk`,
       body: chunk.text,
       type: 'google_doc',
+      source: 'gdoc',  // Add source for logging
       url: `https://docs.google.com/document/d/${chunk.source_id}/edit`,
       space_id: spaceId,
       created_at: chunk.created_at,
@@ -100,7 +101,7 @@ export async function searchResourcesHybrid(
         heading_path: chunk.heading_path,
         chunk_id: chunk.id
       }
-    }))
+    } as SearchResult))
 
     // Filter Calendar results by userId (since we bypassed RLS with admin client)
     const userFilteredCalendar = userId
@@ -139,6 +140,7 @@ export async function searchResourcesHybrid(
         title: event.title || 'Calendar Event',
         body: `${event.description || ''}\n\nWhen: ${startFormatted} - ${endFormatted}${event.location ? `\nWhere: ${event.location}` : ''}`,
         type: 'event',
+        source: 'gcal',  // Add source for logging
         url: event.html_link,
         space_id: spaceId,
         created_at: event.created_at,
@@ -157,7 +159,7 @@ export async function searchResourcesHybrid(
           attendees: event.attendees,
           calendar_source_id: event.source_id
         }
-      }
+      } as SearchResult
     })
 
     // Convert Slack results to SearchResult format
@@ -166,6 +168,7 @@ export async function searchResourcesHybrid(
       title: msg.channel_context || 'Slack Message',
       body: msg.text,
       type: 'slack',
+      source: 'slack',  // Add source for logging
       url: null, // TODO: Build Slack message permalink
       space_id: spaceId,
       created_at: msg.created_at,
@@ -180,7 +183,7 @@ export async function searchResourcesHybrid(
         thread_context: msg.thread_context,
         channel_context: msg.channel_context
       }
-    }))
+    } as SearchResult))
 
     // Combine and rank results from all sources
     console.log(`[Hybrid Search] Result counts - Regular: ${regularResults.length}, GDocs: ${googleDocsSearchResults.length}, Calendar: ${calendarSearchResults.length}, Slack: ${slackSearchResults.length}`)
@@ -321,7 +324,12 @@ export async function searchResources(
     const idToRank: Record<string, { rank: number; score: number; order: number }> = {}
     ids.forEach((id: string, idx: number) => {
       const hit = (hits as any[]).find((h) => h.id === id)
-      idToRank[id] = { rank: (hit?.rank as number) || 0, score: (hit?.score as number) || 0, order: idx }
+      // Boost FTS scores to be competitive with vector similarity scores (typically 0.5-0.8)
+      // FTS rank is usually 0-0.1, so multiply by 10 to get 0-1 range, then add 0.3 base boost
+      const rawRank = (hit?.rank as number) || 0
+      const boostedScore = Math.min(1.0, (rawRank * 10) + 0.3)
+      idToRank[id] = { rank: rawRank, score: boostedScore, order: idx }
+      console.log(`[FTS Scoring] Resource "${hit?.title}" - raw rank: ${rawRank.toFixed(4)}, boosted score: ${boostedScore.toFixed(3)}`)
     })
 
     const mapped = (resources || []).map((resource: Record<string, unknown>) => ({

@@ -55,7 +55,8 @@ export async function GET(request: NextRequest) {
         query,
         spaceId,
         filters,
-        { limit, offset }
+        { limit, offset },
+        userId  // CRITICAL: Pass userId for proper filtering
       )
       allResults.push(...results)
     }
