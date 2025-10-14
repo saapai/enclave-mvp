@@ -4,9 +4,42 @@
 -- Update calendar events RLS
 DROP POLICY IF EXISTS "Users can access calendar events in their spaces" ON calendar_events;
 DROP POLICY IF EXISTS "Users can access own calendar events" ON calendar_events;
+DROP POLICY IF EXISTS "Users can insert own calendar events" ON calendar_events;
+DROP POLICY IF EXISTS "Users can view own calendar events" ON calendar_events;
+DROP POLICY IF EXISTS "Users can modify own calendar events" ON calendar_events;
 
-CREATE POLICY "Users can access own calendar events" ON calendar_events
-  FOR ALL 
+-- Separate policies for different operations
+CREATE POLICY "Users can view own calendar events" ON calendar_events
+  FOR SELECT
+  USING (
+    source_id IN (
+      SELECT id FROM sources_google_calendar WHERE added_by::text = auth.uid()::text
+    )
+  );
+
+CREATE POLICY "Users can insert own calendar events" ON calendar_events
+  FOR INSERT
+  WITH CHECK (
+    source_id IN (
+      SELECT id FROM sources_google_calendar WHERE added_by::text = auth.uid()::text
+    )
+  );
+
+CREATE POLICY "Users can modify own calendar events" ON calendar_events
+  FOR UPDATE
+  USING (
+    source_id IN (
+      SELECT id FROM sources_google_calendar WHERE added_by::text = auth.uid()::text
+    )
+  )
+  WITH CHECK (
+    source_id IN (
+      SELECT id FROM sources_google_calendar WHERE added_by::text = auth.uid()::text
+    )
+  );
+
+CREATE POLICY "Users can delete own calendar events" ON calendar_events
+  FOR DELETE
   USING (
     source_id IN (
       SELECT id FROM sources_google_calendar WHERE added_by::text = auth.uid()::text
@@ -16,9 +49,27 @@ CREATE POLICY "Users can access own calendar events" ON calendar_events
 -- Update sources_google_calendar RLS
 DROP POLICY IF EXISTS "Users can access calendars in their spaces" ON sources_google_calendar;
 DROP POLICY IF EXISTS "Users can access own calendar sources" ON sources_google_calendar;
+DROP POLICY IF EXISTS "Users can view own calendar sources" ON sources_google_calendar;
+DROP POLICY IF EXISTS "Users can insert own calendar sources" ON sources_google_calendar;
+DROP POLICY IF EXISTS "Users can modify own calendar sources" ON sources_google_calendar;
+DROP POLICY IF EXISTS "Users can delete own calendar sources" ON sources_google_calendar;
 
-CREATE POLICY "Users can access own calendar sources" ON sources_google_calendar
-  FOR ALL 
+-- Separate policies for different operations
+CREATE POLICY "Users can view own calendar sources" ON sources_google_calendar
+  FOR SELECT
+  USING (added_by::text = auth.uid()::text);
+
+CREATE POLICY "Users can insert own calendar sources" ON sources_google_calendar
+  FOR INSERT
+  WITH CHECK (added_by::text = auth.uid()::text);
+
+CREATE POLICY "Users can modify own calendar sources" ON sources_google_calendar
+  FOR UPDATE
+  USING (added_by::text = auth.uid()::text)
+  WITH CHECK (added_by::text = auth.uid()::text);
+
+CREATE POLICY "Users can delete own calendar sources" ON sources_google_calendar
+  FOR DELETE
   USING (added_by::text = auth.uid()::text);
 
 -- Update search_calendar_events_vector function to filter by user
