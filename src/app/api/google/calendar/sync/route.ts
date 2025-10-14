@@ -43,6 +43,9 @@ export async function POST(request: NextRequest) {
     }
 
     // Refresh tokens if needed
+    console.log('[Calendar Sync] Token expiry:', googleAccount.token_expiry)
+    console.log('[Calendar Sync] Current time:', new Date().toISOString())
+    
     let tokens
     try {
       tokens = await refreshTokensIfNeeded({
@@ -50,11 +53,26 @@ export async function POST(request: NextRequest) {
         refresh_token: googleAccount.refresh_token,
         expiry_date: new Date(googleAccount.token_expiry).getTime()
       })
+      console.log('[Calendar Sync] Tokens refreshed successfully')
+      
+      // Update tokens in database if they were refreshed
+      if (tokens.access_token !== googleAccount.access_token) {
+        console.log('[Calendar Sync] New access token obtained, updating in database')
+        await supabase
+          .from('google_accounts')
+          .update({
+            access_token: tokens.access_token,
+            token_expiry: new Date(tokens.expiry_date!).toISOString(),
+            updated_at: new Date().toISOString()
+          })
+          .eq('user_id', userId)
+      }
     } catch (tokenError) {
-      console.error('Token refresh failed:', tokenError)
+      console.error('[Calendar Sync] Token refresh failed:', tokenError)
       return NextResponse.json({ 
         error: 'Google account needs re-authentication',
-        needsOAuth: true
+        needsOAuth: true,
+        details: 'Your Google session has expired. Please reconnect your Google account.'
       }, { status: 400 })
     }
 

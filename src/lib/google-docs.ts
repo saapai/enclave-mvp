@@ -251,11 +251,34 @@ export async function refreshTokensIfNeeded(tokens: any) {
   const auth = createOAuthClient()
   auth.setCredentials(tokens)
   
+  console.log('[Token Refresh] Checking if refresh needed...')
+  console.log('[Token Refresh] Token expiry:', tokens.expiry_date ? new Date(tokens.expiry_date).toISOString() : 'N/A')
+  console.log('[Token Refresh] Current time:', new Date().toISOString())
+  
+  // Check if token is expired or about to expire (within 5 minutes)
+  const now = Date.now()
+  const expiryTime = tokens.expiry_date || 0
+  const fiveMinutes = 5 * 60 * 1000
+  
+  if (expiryTime > now + fiveMinutes) {
+    console.log('[Token Refresh] Token still valid, no refresh needed')
+    return tokens
+  }
+  
+  console.log('[Token Refresh] Token expired or expiring soon, refreshing...')
+  
   try {
     const { credentials } = await auth.refreshAccessToken()
+    console.log('[Token Refresh] Successfully refreshed tokens')
+    console.log('[Token Refresh] New expiry:', credentials.expiry_date ? new Date(credentials.expiry_date).toISOString() : 'N/A')
     return credentials
-  } catch (error) {
-    console.error('Token refresh failed:', error)
+  } catch (error: any) {
+    console.error('[Token Refresh] Failed to refresh:', error)
+    console.error('[Token Refresh] Error details:', {
+      message: error.message,
+      code: error.code,
+      status: error.status
+    })
     throw error
   }
 }
