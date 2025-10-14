@@ -37,7 +37,7 @@ export default function LandingPage() {
               <span className="hidden sm:inline">Contact</span>
             </a>
             <Link href="/">
-              <Button className="bg-gradient-to-r from-blue-500 to-red-500 hover:from-blue-600 hover:to-red-600">
+              <Button className="bg-gradient-to-r from-blue-500 to-red-500 hover:from-blue-600 hover:to-red-600 border-0">
                 Sign In
               </Button>
             </Link>
@@ -62,7 +62,7 @@ export default function LandingPage() {
 
           <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
             <Link href="/">
-              <Button size="lg" className="bg-gradient-to-r from-blue-500 to-red-500 hover:from-blue-600 hover:to-red-600 text-lg px-8 py-6">
+              <Button size="lg" className="bg-gradient-to-r from-blue-500 to-red-500 hover:from-blue-600 hover:to-red-600 text-lg px-8 py-6 border-0">
                 Start Free <ArrowRight className="ml-2 w-5 h-5" />
               </Button>
             </Link>
@@ -89,7 +89,7 @@ export default function LandingPage() {
                 </span>
               </h3>
               <p className="text-lg text-muted mb-6">
-                Business leaders spend <span className="text-primary font-semibold">30% of their time</span> searching for information they already have.
+                People spend <span className="text-primary font-semibold">30% of their time</span> searching for information they already have.
               </p>
               <ul className="space-y-4">
                 <li className="flex items-start gap-3">
@@ -117,11 +117,11 @@ export default function LandingPage() {
                   <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-500 to-red-500"></div>
                 </div>
                 <div>
-                  <p className="text-sm text-muted">Business Owner Thoughts</p>
+                  <p className="text-sm text-muted">User Thoughts</p>
                 </div>
               </div>
               <blockquote className="text-2xl italic text-primary">
-                "I spend more time looking for documents than using them."
+                "I spend more time searching for information than actually using it."
               </blockquote>
             </Card>
           </div>
@@ -150,7 +150,7 @@ export default function LandingPage() {
               </div>
               <h4 className="text-xl font-semibold mb-2 text-primary">Smart Document Processing</h4>
               <p className="text-muted">
-                Upload PDFs, Word docs, and text files. Connect Google Docs. Our AI extracts and indexes everything.
+                Upload PDFs, Word docs, and text files. Connect live Google Docs that auto-sync. Our AI extracts and indexes everything.
               </p>
             </Card>
 
@@ -168,9 +168,9 @@ export default function LandingPage() {
               <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-orange-500/20 to-orange-500/10 flex items-center justify-center mb-4">
                 <Users className="w-6 h-6 text-orange-400" />
               </div>
-              <h4 className="text-xl font-semibold mb-2 text-primary">Team Collaboration</h4>
+              <h4 className="text-xl font-semibold mb-2 text-primary">Personal & Team Workspaces</h4>
               <p className="text-muted">
-                Share workspaces, insights, and discoveries with your team seamlessly.
+                Create private personal workspaces or collaborative team spaces. Share insights and discoveries seamlessly.
               </p>
             </Card>
 
@@ -178,9 +178,9 @@ export default function LandingPage() {
               <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-green-500/20 to-green-500/10 flex items-center justify-center mb-4">
                 <Calendar className="w-6 h-6 text-green-400" />
               </div>
-              <h4 className="text-xl font-semibold mb-2 text-primary">Calendar Integration</h4>
+              <h4 className="text-xl font-semibold mb-2 text-primary">Calendar & Slack Integration</h4>
               <p className="text-muted">
-                Connect Google Calendar to make events and schedules instantly searchable.
+                Connect Google Calendar and Slack to make all events, messages, and conversations instantly searchable.
               </p>
             </Card>
 
@@ -219,8 +219,8 @@ export default function LandingPage() {
               <div className="w-16 h-16 rounded-full bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center mx-auto mb-4 text-2xl font-bold">
                 1
               </div>
-              <h4 className="text-lg font-semibold mb-2 text-primary">Upload</h4>
-              <p className="text-muted text-sm">Add documents, connect Google Docs & Calendar</p>
+              <h4 className="text-lg font-semibold mb-2 text-primary">Connect</h4>
+              <p className="text-muted text-sm">Upload docs, connect Google Docs, Calendar & Slack</p>
             </div>
 
             <div className="text-center">
@@ -265,7 +265,7 @@ export default function LandingPage() {
 
           <div className="flex flex-col items-center gap-6">
             <Link href="/">
-              <Button size="lg" className="bg-gradient-to-r from-blue-500 to-red-500 hover:from-blue-600 hover:to-red-600 text-lg px-12 py-6">
+              <Button size="lg" className="bg-gradient-to-r from-blue-500 to-red-500 hover:from-blue-600 hover:to-red-600 text-lg px-12 py-6 border-0">
                 Start Free Today <ArrowRight className="ml-2 w-5 h-5" />
               </Button>
             </Link>
