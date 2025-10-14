@@ -22,10 +22,10 @@ export async function DELETE(
     // Use admin client to bypass RLS (auth is validated at route level with Clerk)
     const dbClient = supabaseAdmin || supabase
 
-    // First verify the user owns this resource
+    // First verify the user owns this resource and get full details
     const { data: resource, error: fetchError } = await dbClient
       .from('resource')
-      .select('created_by')
+      .select('*')
       .eq('id', resourceId)
       .single()
 
@@ -37,7 +37,43 @@ export async function DELETE(
       return NextResponse.json({ error: 'Unauthorized to delete this resource' }, { status: 403 })
     }
 
-    // Delete associated tags first
+    // If this is a Google Doc, find and delete the source entry
+    if (resource.url?.includes('docs.google.com')) {
+      // Extract Google Doc ID from URL
+      const urlMatch = resource.url.match(/\/d\/([a-zA-Z0-9-_]+)/)
+      const googleFileId = urlMatch?.[1]
+      
+      if (googleFileId) {
+        console.log(`Deleting Google Doc source for file ID: ${googleFileId}`)
+        
+        // Delete chunks first (cascade should handle this, but be explicit)
+        const { data: sources } = await dbClient
+          .from('sources_google_docs')
+          .select('id')
+          .eq('google_file_id', googleFileId)
+          .eq('space_id', resource.space_id)
+        
+        if (sources && sources.length > 0) {
+          for (const source of sources) {
+            await dbClient
+              .from('google_doc_chunks')
+              .delete()
+              .eq('source_id', source.id)
+          }
+          
+          // Delete the source entry
+          await dbClient
+            .from('sources_google_docs')
+            .delete()
+            .eq('google_file_id', googleFileId)
+            .eq('space_id', resource.space_id)
+          
+          console.log(`✅ Deleted Google Doc source and chunks`)
+        }
+      }
+    }
+
+    // Delete associated tags
     await dbClient
       .from('resource_tag')
       .delete()
