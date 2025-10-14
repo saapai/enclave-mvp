@@ -13,7 +13,7 @@ import {
   createDriveWatch,
   storeDriveWatch
 } from '@/lib/google-docs'
-import { supabase } from '@/lib/supabase'
+import { supabase, supabaseAdmin } from '@/lib/supabase'
 import { apiCache, CACHE_KEYS } from '@/lib/cache'
 
 const DEFAULT_SPACE_ID = '00000000-0000-0000-0000-000000000000'
@@ -123,11 +123,13 @@ export async function POST(request: NextRequest) {
     }
 
     // Create resource entries for the Google Doc in each space
+    // Use admin client to bypass RLS (auth is validated at route level with Clerk)
+    const dbClient = supabaseAdmin || supabase
     const docUrl = file.webViewLink || `https://docs.google.com/document/d/${fileId}/edit`
     const resources = []
     
     for (const spaceId of spaceIds) {
-      const { data: resource, error: resourceError} = await supabase
+      const { data: resource, error: resourceError} = await dbClient
         .from('resource')
         .insert({
           space_id: spaceId,
@@ -143,15 +145,17 @@ export async function POST(request: NextRequest) {
         .single()
 
       if (resourceError) {
-        console.warn(`Failed to create resource entry for Google Doc in space ${spaceId}:`, resourceError)
+        console.error(`Failed to create resource entry for Google Doc in space ${spaceId}:`, resourceError)
         // Continue without resource entry - it's still in sources_google_docs
       } else {
+        console.log(`✅ Created resource entry for Google Doc: ${resource.id}`)
         resources.push(resource)
       }
     }
 
-    // Clear resources cache so the new Google Doc appears
-    apiCache.delete(CACHE_KEYS.RESOURCES)
+    // Clear user-specific resources cache so the new Google Doc appears
+    const cacheKey = `${CACHE_KEYS.RESOURCES}_${userId}`
+    apiCache.delete(cacheKey)
 
     return NextResponse.json({ 
       success: true, 

@@ -183,10 +183,17 @@ export async function searchResourcesHybrid(
     }))
 
     // Combine and rank results from all sources
+    console.log(`[Hybrid Search] Result counts - Regular: ${regularResults.length}, GDocs: ${googleDocsSearchResults.length}, Calendar: ${calendarSearchResults.length}, Slack: ${slackSearchResults.length}`)
+    
     const allResults = [...regularResults, ...googleDocsSearchResults, ...calendarSearchResults, ...slackSearchResults]
     
     // Sort by score/rank
     allResults.sort((a, b) => (b.score || 0) - (a.score || 0))
+    
+    console.log(`[Hybrid Search] Top 5 results:`)
+    allResults.slice(0, 5).forEach((result, i) => {
+      console.log(`  ${i+1}. [${result.type}] ${result.title} (score: ${result.score?.toFixed(3)}, source: ${(result as any).source})`)
+    })
     
     // Apply limit and offset
     return allResults.slice(offset, offset + limit)
@@ -245,6 +252,7 @@ export async function searchResources(
   if (query.trim()) {
     // Use Postgres full-text search function for ranked results
     // Use admin client and filter by userId manually since auth.uid() doesn't work with Clerk
+    console.log(`[FTS Search] Query: "${query}", Space: ${spaceId}, User: ${userId}`)
     const { data: hits, error: rpcError } = await (dbClient as any).rpc('search_resources_fts', {
       search_query: query,
       target_space_id: spaceId,
@@ -253,7 +261,7 @@ export async function searchResources(
     }) as { data: any[] | null, error: any }
 
     if (rpcError) {
-      console.error('FTS RPC error:', rpcError)
+      console.error('[FTS Search] RPC error:', rpcError)
       // Fallback: simple ilike query
       const { data: resources, error } = await supabaseQuery
         .or(`title.ilike.%${query}%,body.ilike.%${query}%`)
@@ -261,9 +269,10 @@ export async function searchResources(
         .limit(limit)
         .range(offset, offset + limit - 1)
       if (error) {
-        console.error('Client fallback search error:', error)
+        console.error('[FTS Search] Client fallback error:', error)
         return []
       }
+      console.log(`[FTS Search] Fallback found ${resources?.length || 0} resources`)
       return (resources || []).map((resource: Record<string, unknown>) => ({
         ...resource,
         tags: (resource.tags as Array<{ tag: Record<string, unknown> }>)?.map((rt) => rt.tag).filter(Boolean) || [],
@@ -272,14 +281,25 @@ export async function searchResources(
       })) as SearchResult[]
     }
 
+    console.log(`[FTS Search] Raw hits: ${hits?.length || 0}`)
+    if (hits && hits.length > 0) {
+      console.log(`[FTS Search] First hit:`, { id: hits[0].id, title: hits[0].title, created_by: hits[0].created_by })
+    }
+
     // Filter by userId at application level (since auth.uid() doesn't work with Clerk)
     let filteredHits = hits || []
     if (userId) {
+      const beforeFilter = filteredHits.length
       filteredHits = filteredHits.filter((hit: any) => hit.created_by === userId)
+      console.log(`[FTS Search] Filtered by user: ${beforeFilter} -> ${filteredHits.length}`)
     }
 
     const ids = filteredHits.map((h: any) => h.id as string)
-    if (ids.length === 0) return []
+    console.log(`[FTS Search] Final resource IDs:`, ids)
+    if (ids.length === 0) {
+      console.log(`[FTS Search] No results after user filter`)
+      return []
+    }
 
     // Fetch relationship-expanded records using admin client
     const { data: resources, error } = await dbClient
