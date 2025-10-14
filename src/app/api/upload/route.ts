@@ -361,9 +361,9 @@ export async function POST(request: NextRequest) {
         .select('resource_id')
         .limit(0)
       if (!vecCheckError) {
-        const textForEmbed = [inserted.title, extractedText || description].filter(Boolean).join('\n\n')
+        const textForEmbed = [sanitizedTitle || (file ? file.name : 'Untitled'), extractedText || sanitizedDescription].filter(Boolean).join('\n\n')
         if (textForEmbed) {
-          await upsertResourceEmbedding(resourceId, textForEmbed)
+          await upsertResourceEmbedding(primaryResourceId, textForEmbed)
         }
       }
       // Chunks
@@ -372,12 +372,15 @@ export async function POST(request: NextRequest) {
         .select('id')
         .limit(0)
       if (!chunkCheckError) {
-        const textForChunks = extractedText || description || ''
+        const textForChunks = extractedText || sanitizedDescription || ''
         if (textForChunks) {
-          await upsertResourceChunks(resourceId, textForChunks)
+          await upsertResourceChunks(primaryResourceId, textForChunks)
         }
       }
-    } catch (_e) { /* ignore embedding failures */ }
+    } catch (e) { 
+      console.error('Embedding generation failed:', e)
+      /* ignore embedding failures */ 
+    }
 
     // Return the first created resource including tags and event_meta
     const { data: resource, error: fetchError } = await dbClient
@@ -401,8 +404,9 @@ export async function POST(request: NextRequest) {
         }
       : resource
 
-    // Clear cache after successful upload
-    apiCache.delete(CACHE_KEYS.RESOURCES)
+    // Clear user-specific resource cache after successful upload
+    const cacheKey = `${CACHE_KEYS.RESOURCES}_${userId}`
+    apiCache.delete(cacheKey)
 
     return NextResponse.json({ resource: transformed })
   } catch (error) {
@@ -410,5 +414,6 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Failed to upload and ingest file' }, { status: 500 })
   }
 }
+
 
 

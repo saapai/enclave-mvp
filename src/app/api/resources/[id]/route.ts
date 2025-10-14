@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@clerk/nextjs/server'
-import { supabase } from '@/lib/supabase'
+import { supabase, supabaseAdmin } from '@/lib/supabase'
 import { apiCache, CACHE_KEYS } from '@/lib/cache'
 
 export async function DELETE(
@@ -19,20 +19,38 @@ export async function DELETE(
       return NextResponse.json({ error: 'Resource ID is required' }, { status: 400 })
     }
 
+    // Use admin client to bypass RLS (auth is validated at route level with Clerk)
+    const dbClient = supabaseAdmin || supabase
+
+    // First verify the user owns this resource
+    const { data: resource, error: fetchError } = await dbClient
+      .from('resource')
+      .select('created_by')
+      .eq('id', resourceId)
+      .single()
+
+    if (fetchError || !resource) {
+      return NextResponse.json({ error: 'Resource not found' }, { status: 404 })
+    }
+
+    if (resource.created_by !== userId) {
+      return NextResponse.json({ error: 'Unauthorized to delete this resource' }, { status: 403 })
+    }
+
     // Delete associated tags first
-    await supabase
+    await dbClient
       .from('resource_tag')
       .delete()
       .eq('resource_id', resourceId)
 
     // Delete event metadata if exists
-    await supabase
+    await dbClient
       .from('event_meta')
       .delete()
       .eq('resource_id', resourceId)
 
     // Delete the resource
-    const { error } = await supabase
+    const { error } = await dbClient
       .from('resource')
       .delete()
       .eq('id', resourceId)
