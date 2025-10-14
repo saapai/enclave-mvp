@@ -83,23 +83,16 @@ export async function fetchCalendarEvents(
 export function formatCalendarEvent(event: any, calendarName: string) {
   const start = event.start?.dateTime || event.start?.date
   const end = event.end?.dateTime || event.end?.date
+  const startTimezone = event.start?.timeZone || null
+  const endTimezone = event.end?.timeZone || null
   const isAllDay = !event.start?.dateTime
 
   // Log for debugging timezone issues
-  if (event.summary?.toLowerCase().includes('run')) {
-    console.log(`[Calendar Format] ========== RUN EVENT DEBUG ==========`)
-    console.log(`[Calendar Format] Event: ${event.summary}`)
-    console.log(`[Calendar Format] Event ID: ${event.id}`)
-    console.log(`[Calendar Format] Raw event.start:`, JSON.stringify(event.start))
-    console.log(`[Calendar Format] Raw event.end:`, JSON.stringify(event.end))
-    console.log(`[Calendar Format] Extracted start: ${start}`)
-    console.log(`[Calendar Format] Extracted end: ${end}`)
-    console.log(`[Calendar Format] Parsed Date(start): ${new Date(start)}`)
-    console.log(`[Calendar Format] toISOString: ${new Date(start).toISOString()}`)
-    console.log(`[Calendar Format] toLocaleString: ${new Date(start).toLocaleString()}`)
-    console.log(`[Calendar Format] Timezone offset: ${new Date().getTimezoneOffset()} minutes`)
-    console.log(`[Calendar Format] =====================================`)
-  }
+  console.log(`[Calendar Format] Event: ${event.summary}`)
+  console.log(`[Calendar Format] Raw event.start:`, JSON.stringify(event.start))
+  console.log(`[Calendar Format] Raw event.end:`, JSON.stringify(event.end))
+  console.log(`[Calendar Format] Extracted start: ${start}, timezone: ${startTimezone}`)
+  console.log(`[Calendar Format] Extracted end: ${end}, timezone: ${endTimezone}`)
 
   // Build a rich description for embedding
   const parts = [
@@ -121,6 +114,8 @@ export function formatCalendarEvent(event: any, calendarName: string) {
     location: event.location || '',
     start,
     end,
+    startTimezone,
+    endTimezone,
     isAllDay,
     attendees: event.attendees || [],
     embeddingText,
@@ -196,6 +191,8 @@ export async function storeCalendarEvents(
         location: event.location,
         start_time: event.start,
         end_time: event.end,
+        start_timezone: event.startTimezone,
+        end_timezone: event.endTimezone,
         is_all_day: event.isAllDay,
         attendees: event.attendees,
         html_link: event.htmlLink,

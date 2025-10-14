@@ -107,29 +107,58 @@ export async function searchResourcesHybrid(
       ? (calendarResults || []).filter((event: any) => event.added_by === userId)
       : (calendarResults || [])
 
-    // Convert Calendar results to SearchResult format
-    const calendarSearchResults: SearchResult[] = userFilteredCalendar.map((event: any) => ({
-      id: `calendar_event_${event.google_event_id}`,
-      title: event.title || 'Calendar Event',
-      body: `${event.description || ''}\n\nWhen: ${new Date(event.start_time).toLocaleString()} - ${new Date(event.end_time).toLocaleString()}${event.location ? `\nWhere: ${event.location}` : ''}`,
-      type: 'event',
-      url: event.html_link,
-      space_id: spaceId,
-      created_at: event.created_at,
-      updated_at: event.updated_at,
-      created_by: event.added_by,
-      tags: [],
-      rank: event.similarity || 0,
-      score: event.similarity || 0,
-      metadata: {
-        google_event_id: event.google_event_id,
-        start_time: event.start_time,
-        end_time: event.end_time,
-        location: event.location,
-        attendees: event.attendees,
-        calendar_source_id: event.source_id
+    // Helper function to format dates with timezone information
+    const formatDateTime = (dateStr: string, timezone?: string) => {
+      const date = new Date(dateStr)
+      const options: Intl.DateTimeFormatOptions = {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true,
+        timeZoneName: 'short'
       }
-    }))
+      
+      // If timezone is provided, use it; otherwise use the default
+      if (timezone) {
+        options.timeZone = timezone
+      }
+      
+      return date.toLocaleString('en-US', options)
+    }
+
+    // Convert Calendar results to SearchResult format
+    const calendarSearchResults: SearchResult[] = userFilteredCalendar.map((event: any) => {
+      // Format start and end times with their respective timezones
+      const startFormatted = formatDateTime(event.start_time, event.start_timezone)
+      const endFormatted = formatDateTime(event.end_time, event.end_timezone)
+      
+      return {
+        id: `calendar_event_${event.google_event_id}`,
+        title: event.title || 'Calendar Event',
+        body: `${event.description || ''}\n\nWhen: ${startFormatted} - ${endFormatted}${event.location ? `\nWhere: ${event.location}` : ''}`,
+        type: 'event',
+        url: event.html_link,
+        space_id: spaceId,
+        created_at: event.created_at,
+        updated_at: event.updated_at,
+        created_by: event.added_by,
+        tags: [],
+        rank: event.similarity || 0,
+        score: event.similarity || 0,
+        metadata: {
+          google_event_id: event.google_event_id,
+          start_time: event.start_time,
+          end_time: event.end_time,
+          start_timezone: event.start_timezone,
+          end_timezone: event.end_timezone,
+          location: event.location,
+          attendees: event.attendees,
+          calendar_source_id: event.source_id
+        }
+      }
+    })
 
     // Convert Slack results to SearchResult format
     const slackSearchResults: SearchResult[] = (slackResults || []).map((msg: any) => ({
