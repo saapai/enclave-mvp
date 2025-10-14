@@ -55,13 +55,14 @@ export async function searchResourcesHybrid(
       console.error('Google Docs search error:', gdError)
     }
 
-    // Search Calendar Events using admin client (user filtering by userId parameter)
+    // Search Calendar Events using admin client (pass userId for filtering)
     const { data: calendarResults, error: calError } = await searchClient
       .rpc('search_calendar_events_vector', {
         query_embedding: queryEmbedding,
         target_space_id: spaceId,
         limit_count: limit * 2,
-        offset_count: 0
+        offset_count: 0,
+        target_user_id: userId || null
       })
 
     if (calError) {

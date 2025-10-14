@@ -75,12 +75,14 @@ CREATE POLICY "Users can delete own calendar sources" ON sources_google_calendar
 
 -- Update search_calendar_events_vector function to filter by user
 DROP FUNCTION IF EXISTS search_calendar_events_vector(vector, uuid, integer, integer);
+DROP FUNCTION IF EXISTS search_calendar_events_vector(vector, uuid, integer, integer, text);
 
 CREATE OR REPLACE FUNCTION search_calendar_events_vector(
   query_embedding VECTOR(1024),
   target_space_id UUID,
   limit_count INTEGER DEFAULT 10,
-  offset_count INTEGER DEFAULT 0
+  offset_count INTEGER DEFAULT 0,
+  target_user_id TEXT DEFAULT NULL
 )
 RETURNS TABLE (
   id UUID,
@@ -118,7 +120,7 @@ BEGIN
   FROM calendar_events ce
   JOIN sources_google_calendar scs ON ce.source_id = scs.id
   WHERE ce.space_id = target_space_id
-    AND scs.added_by::text = auth.uid()::text  -- CRITICAL: Filter by user
+    AND (target_user_id IS NULL OR scs.added_by::text = target_user_id)  -- Filter by user if provided
   ORDER BY ce.embedding <=> query_embedding
   LIMIT limit_count
   OFFSET offset_count;
