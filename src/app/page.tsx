@@ -624,12 +624,12 @@ export default function HomePage() {
       <header className="border-b border-line bg-[rgba(11,12,14,0.8)] backdrop-blur">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center h-16">
-            <div className="flex items-center space-x-4">
+            <NextLink href="/landing" className="flex items-center space-x-4 hover:opacity-80 transition-opacity">
               <div className="w-8 h-8 bg-[rgba(59,130,246,0.15)] text-blue-400 rounded-lg flex items-center justify-center">
                 <span className="font-bold text-sm">E</span>
               </div>
               <h1 className="text-lg font-semibold text-primary tracking-tight">Enclave</h1>
-            </div>
+            </NextLink>
             <div className="flex items-center space-x-4">
               <Button
                 variant="secondary"
