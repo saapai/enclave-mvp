@@ -266,6 +266,26 @@ export async function searchResources(
     // Use Postgres full-text search function for ranked results
     // Use admin client and filter by userId manually since auth.uid() doesn't work with Clerk
     console.log(`[FTS Search] Query: "${query}", Space: ${spaceId}, User: ${userId}`)
+    
+    // First, check what resources exist in the database
+    const { data: allResources, error: checkError } = await dbClient
+      .from('resource')
+      .select('id, title, body, created_by, source, type')
+      .eq('space_id', spaceId)
+    
+    console.log(`[FTS Search] Total resources in DB: ${allResources?.length || 0}`)
+    if (allResources && allResources.length > 0) {
+      console.log(`[FTS Search] Resources by source:`, allResources.reduce((acc: any, r: any) => {
+        acc[r.source] = (acc[r.source] || 0) + 1
+        return acc
+      }, {}))
+      const userResources = allResources.filter((r: any) => r.created_by === userId)
+      console.log(`[FTS Search] User's resources: ${userResources.length}`)
+      if (userResources.length > 0) {
+        console.log(`[FTS Search] User resource titles:`, userResources.map((r: any) => r.title))
+      }
+    }
+    
     const { data: hits, error: rpcError } = await (dbClient as any).rpc('search_resources_fts', {
       search_query: query,
       target_space_id: spaceId,
