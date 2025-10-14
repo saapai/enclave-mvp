@@ -249,7 +249,7 @@ export async function POST(request: NextRequest) {
           url: sanitizedUrl || null,
           source: 'upload',
           visibility: 'space',
-          created_by: null as any
+          created_by: userId || null as any
         } as any)
         .select()
         .single()
