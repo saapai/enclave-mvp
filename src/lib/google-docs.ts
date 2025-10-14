@@ -368,10 +368,27 @@ export async function createDriveWatch(fileId: string, tokens: any) {
     }
   })
 
+  // Parse expiration date safely
+  const expiration = watch.data.expiration
+  if (!expiration) {
+    throw new Error('Drive watch did not return an expiration date')
+  }
+  
+  // Google API returns expiration as a string timestamp in milliseconds
+  const expirationMs = parseInt(expiration, 10)
+  if (isNaN(expirationMs)) {
+    throw new Error(`Invalid expiration value: ${expiration}`)
+  }
+  
+  const expiresAt = new Date(expirationMs)
+  if (isNaN(expiresAt.getTime())) {
+    throw new Error(`Invalid expiration date: ${expirationMs}`)
+  }
+
   return {
     channelId: watch.data.id,
     resourceId: watch.data.resourceId,
-    expiresAt: new Date(watch.data.expiration!)
+    expiresAt
   }
 }
 
