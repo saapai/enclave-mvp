@@ -41,18 +41,28 @@ export async function searchResourcesHybrid(
     // Search regular resources (with user filtering)
     const regularResults = await searchResources(query, spaceId, filters, { limit: limit * 2, offset: 0 }, userId)
     
-    // Search Google Docs chunks using admin client (user filtering by userId parameter)
-    // Note: We filter by userId manually after fetching results
+    // Search Google Docs chunks using admin client (pass userId for filtering)
+    console.log(`[GDocs Search] Searching for Google Doc chunks - Space: ${spaceId}, User: ${userId}`)
     const { data: googleDocsResults, error: gdError } = await searchClient
       .rpc('search_google_docs_vector', {
         query_embedding: queryEmbedding,
         target_space_id: spaceId,
         limit_count: limit * 2,
-        offset_count: 0
+        offset_count: 0,
+        target_user_id: userId || null  // CRITICAL: Pass userId to RPC for filtering
       })
 
     if (gdError) {
-      console.error('Google Docs search error:', gdError)
+      console.error('[GDocs Search] RPC error:', gdError)
+    } else {
+      console.log(`[GDocs Search] RPC returned ${googleDocsResults?.length || 0} chunks`)
+      if (googleDocsResults && googleDocsResults.length > 0) {
+        console.log(`[GDocs Search] First chunk:`, { 
+          text_preview: googleDocsResults[0].text?.substring(0, 100), 
+          added_by: googleDocsResults[0].added_by,
+          similarity: googleDocsResults[0].similarity 
+        })
+      }
     }
 
     // Search Calendar Events using admin client (pass userId for filtering)
@@ -76,10 +86,10 @@ export async function searchResourcesHybrid(
       limit * 2
     )
 
-    // Filter Google Docs by userId (since we bypassed RLS with admin client)
-    const userFilteredGoogleDocs = userId 
-      ? (googleDocsResults || []).filter((chunk: any) => chunk.added_by === userId)
-      : (googleDocsResults || [])
+    // No need to filter by userId here - already done in RPC
+    // But keep this for backwards compatibility if RPC doesn't have target_user_id
+    const userFilteredGoogleDocs = googleDocsResults || []
+    console.log(`[GDocs Search] Final chunk count: ${userFilteredGoogleDocs.length}`)
 
     // Convert Google Docs results to SearchResult format
     const googleDocsSearchResults: SearchResult[] = userFilteredGoogleDocs.map((chunk: any) => ({
