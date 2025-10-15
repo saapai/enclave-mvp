@@ -187,32 +187,42 @@ export async function searchResourcesHybrid(
 
     // Convert Calendar results to SearchResult format
     const calendarSearchResults: SearchResult[] = userFilteredCalendar.map((event: any) => {
-      // Format start and end times with their respective timezones
-      const startFormatted = formatDateTime(event.start_time, event.start_timezone)
-      const endFormatted = formatDateTime(event.end_time, event.end_timezone)
+      // Format start and end times
+      const startDate = new Date(event.start_time)
+      const endDate = new Date(event.end_time)
+      const startFormatted = startDate.toLocaleString('en-US', {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true
+      })
+      const endFormatted = endDate.toLocaleString('en-US', {
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true
+      })
       
       return {
-        id: `calendar_event_${event.google_event_id}`,
-        title: event.title || 'Calendar Event',
+        id: `calendar_event_${event.id}`,
+        title: event.summary || 'Calendar Event',  // Fixed: use summary instead of title
         body: `${event.description || ''}\n\nWhen: ${startFormatted} - ${endFormatted}${event.location ? `\nWhere: ${event.location}` : ''}`,
         type: 'event',
         source: 'gcal',  // Add source for logging
         url: event.html_link,
         space_id: spaceId,
-        created_at: event.created_at,
-        updated_at: event.updated_at,
+        created_at: event.created_at || new Date().toISOString(),
+        updated_at: event.updated_at || new Date().toISOString(),
         created_by: event.added_by,
         tags: [],
         rank: event.similarity || 0,
         score: event.similarity || 0,
         metadata: {
-          google_event_id: event.google_event_id,
+          event_id: event.id,
           start_time: event.start_time,
           end_time: event.end_time,
-          start_timezone: event.start_timezone,
-          end_timezone: event.end_timezone,
           location: event.location,
-          attendees: event.attendees,
           calendar_source_id: event.source_id
         }
       } as SearchResult
