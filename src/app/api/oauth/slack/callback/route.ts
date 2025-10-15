@@ -5,6 +5,9 @@ import { supabase } from '@/lib/supabase'
 
 const DEFAULT_SPACE_ID = '00000000-0000-0000-0000-000000000000'
 
+// Force dynamic rendering for OAuth routes
+export const dynamic = 'force-dynamic'
+
 export async function GET(request: NextRequest) {
   try {
     const { userId } = await auth()
