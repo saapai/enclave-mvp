@@ -58,7 +58,7 @@ export async function GET(request: NextRequest) {
       spaceIds = ['00000000-0000-0000-0000-000000000000']
     }
     
-    // Verify user has access to these workspaces
+    // CRITICAL: Verify user has access to these workspaces
     if (userId) {
       try {
         const { clerkClient } = await import('@clerk/nextjs/server')
@@ -75,11 +75,24 @@ export async function GET(request: NextRequest) {
         allowedSpaceIds.push('00000000-0000-0000-0000-000000000000') // Always allow default space
         
         // Filter to only workspaces user has access to
+        const originalCount = spaceIds.length
         spaceIds = spaceIds.filter(id => allowedSpaceIds.includes(id))
-        console.log('[Hybrid Search API] Filtered to allowed workspaces:', spaceIds)
+        console.log(`[Hybrid Search API] Security check: ${originalCount} -> ${spaceIds.length} workspaces allowed`)
+        console.log('[Hybrid Search API] Allowed workspaces:', spaceIds)
+        
+        // If no workspaces allowed, return empty results
+        if (spaceIds.length === 0) {
+          console.log('[Hybrid Search API] No workspaces allowed for user, returning empty results')
+          return NextResponse.json({ results: [] })
+        }
       } catch (error) {
         console.error('Failed to verify workspace access:', error)
+        // If verification fails, return empty results for security
+        return NextResponse.json({ results: [] })
       }
+    } else {
+      // No userId, only allow default space
+      spaceIds = ['00000000-0000-0000-0000-000000000000']
     }
 
     // Search across all user spaces

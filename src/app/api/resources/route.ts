@@ -54,7 +54,7 @@ export async function GET(request: NextRequest) {
         event_meta(*)
       `)
       .in('space_id', spaceIds)
-      .eq('created_by', userId)  // CRITICAL: Only get user's own resources
+      // Remove created_by filter - users should see all resources in their workspaces
       .order('updated_at', { ascending: false })
 
     if (error) {
