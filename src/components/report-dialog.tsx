@@ -57,8 +57,8 @@ export function ReportDialog({ open, onOpenChange, userEmail }: ReportDialogProp
 
   if (submitted) {
     return (
-      <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent className="sm:max-w-md">
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-md bg-panel border-line shadow-2xl">
           <div className="text-center py-6">
             <div className="w-12 h-12 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
               <Send className="h-6 w-6 text-green-600" />
@@ -75,7 +75,7 @@ export function ReportDialog({ open, onOpenChange, userEmail }: ReportDialogProp
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="sm:max-w-md bg-panel border-line shadow-2xl">
         <DialogHeader>
           <DialogTitle>Report & Feedback</DialogTitle>
           <DialogDescription>

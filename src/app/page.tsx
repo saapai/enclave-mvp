@@ -698,7 +698,13 @@ export default function HomePage() {
                   <DropdownMenuSeparator className="bg-line" />
                   <DropdownMenuItem
                     className="cursor-pointer text-primary hover:bg-panel-2 focus:bg-panel-2"
-                    onClick={() => signOut(() => window.location.href = '/')}
+                    onSelect={() => {
+                      console.log('Logout clicked')
+                      signOut(() => {
+                        console.log('Sign out complete')
+                        window.location.href = '/'
+                      })
+                    }}
                   >
                     <LogOut className="mr-2 h-4 w-4" />
                     <span>Log out</span>
