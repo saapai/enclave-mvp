@@ -375,6 +375,12 @@ export default function HomePage() {
             
             return content
           }).join('\n\n---\n\n')
+          
+          // Log the context being sent to AI for debugging
+          console.log('[AI Context] Sending context to AI:', context.substring(0, 500) + '...')
+          console.log('[AI Context] Number of results:', topResults.length)
+          console.log('[AI Context] Result types:', topResults.map(r => r.type).join(', '))
+          
           const aiRes = await fetch('/api/ai', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
