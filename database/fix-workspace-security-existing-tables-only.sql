@@ -60,7 +60,7 @@ CREATE POLICY "resource_authenticated" ON resource FOR ALL TO authenticated
 CREATE POLICY "space_service_role" ON space FOR ALL TO service_role USING (true) WITH CHECK (true);
 CREATE POLICY "space_authenticated" ON space FOR ALL TO authenticated
   USING (
-    created_by = auth.uid()::text
+    created_by::uuid = auth.uid()
     OR EXISTS (
       SELECT 1 FROM app_user 
       WHERE app_user.space_id = space.id 
