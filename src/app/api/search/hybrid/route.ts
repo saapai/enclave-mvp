@@ -108,10 +108,12 @@ export async function GET(request: NextRequest) {
       allResults.push(...results)
     }
 
-    // Remove duplicates and sort by relevance
+    // Remove duplicates and sort by relevance (score/rank)
     const uniqueResults = Array.from(
       new Map(allResults.map(r => [r.id, r])).values()
-    ).slice(0, limit)
+    )
+    .sort((a, b) => (b.score || b.rank || 0) - (a.score || a.rank || 0))  // Sort by score descending
+    .slice(0, limit)
 
     // Log the query
     await logQuery(
