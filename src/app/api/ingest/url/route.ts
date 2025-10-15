@@ -22,9 +22,9 @@ async function fetchAndExtract(url: string): Promise<{ title: string; text: stri
     }
 
     if (contentType.includes('application/pdf') || url.toLowerCase().endsWith('.pdf')) {
-      const pdfParse = (await import('pdf-parse')).default as (data: Buffer) => Promise<{ text: string }>
-      const parsed = await pdfParse(buf)
-      return { title: url, text: parsed.text || '' }
+      const { extractText } = await import('unpdf')
+      const { text } = await extractText(new Uint8Array(buf), { mergePages: true })
+      return { title: url, text: text?.trim() || '' }
     }
 
     // Fallback: try utf-8
