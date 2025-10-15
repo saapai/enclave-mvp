@@ -48,8 +48,8 @@ DROP POLICY IF EXISTS "embedding_all_access_auth" ON resource_embedding;
 
 -- Verify RLS is disabled
 SELECT 
-  tablename,
-  relrowsecurity as rls_enabled
+  c.relname as table_name,
+  c.relrowsecurity as rls_enabled
 FROM pg_class c
 JOIN pg_namespace n ON n.oid = c.relnamespace
 WHERE n.nspname = 'public' 
