@@ -1,9 +1,9 @@
 'use client'
 
 import { useRef, useState, useEffect } from 'react'
-import { useUser } from '@clerk/nextjs'
+import { useUser, useClerk } from '@clerk/nextjs'
 import NextLink from 'next/link'
-import { Search, Plus, Filter, Clock, MapPin, Calendar, ExternalLink, Sparkles, MessageSquare, Hash, Users, Settings, Menu, X, DollarSign, FileText, Send, Paperclip, Link, Loader2, RefreshCw, ChevronDown } from 'lucide-react'
+import { Search, Plus, Filter, Clock, MapPin, Calendar, ExternalLink, Sparkles, MessageSquare, Hash, Users, Settings, Menu, X, DollarSign, FileText, Send, Paperclip, Link, Loader2, RefreshCw, ChevronDown, LogOut, Bug } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -20,6 +20,7 @@ import { GroupsDialog } from '@/components/groups-dialog'
 import { SlackDialog } from '@/components/slack-dialog'
 import { CalendarDialog } from '@/components/calendar-dialog'
 import { SimpleDropdown } from '@/components/simple-dropdown'
+import { ReportDialog } from '@/components/report-dialog'
 
 interface Message {
   id: string
@@ -31,6 +32,7 @@ interface Message {
 
 export default function HomePage() {
   const { user, isLoaded } = useUser()
+  const { signOut } = useClerk()
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<ResourceWithTags[]>([])
   const [loading, setLoading] = useState(false)
@@ -48,6 +50,7 @@ export default function HomePage() {
   const [showSlack, setShowSlack] = useState(false)
   const [showCalendar, setShowCalendar] = useState(false)
   const [showAddMenu, setShowAddMenu] = useState(false)
+  const [showReport, setShowReport] = useState(false)
   const [spaces, setSpaces] = useState<any[]>([])
   const [selectedSpaceIds, setSelectedSpaceIds] = useState<string[]>(['00000000-0000-0000-0000-000000000000'])
   const [messages, setMessages] = useState<Message[]>([])
@@ -644,6 +647,13 @@ export default function HomePage() {
               </Button>
               <Button
                 variant="secondary"
+                onClick={() => setShowReport(true)}
+              >
+                <Bug className="h-4 w-4 mr-2" />
+                Report
+              </Button>
+              <Button
+                variant="secondary"
                 onClick={() => window.location.href = '/resources'}
               >
                 <FileText className="h-4 w-4 mr-2" />
@@ -657,6 +667,35 @@ export default function HomePage() {
                 onRefresh={handleRefreshGoogleDocs}
                 refreshing={refreshingDocs}
               />
+              
+              {/* User Profile Dropdown */}
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" className="relative h-8 w-8 rounded-full">
+                    <div className="h-8 w-8 rounded-full bg-gradient-to-r from-blue-500 to-purple-500 flex items-center justify-center">
+                      <span className="text-white text-sm font-medium">
+                        {user?.firstName?.[0] || user?.emailAddresses?.[0]?.emailAddress?.[0] || 'U'}
+                      </span>
+                    </div>
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent className="w-56" align="end" forceMount>
+                  <div className="flex flex-col space-y-1 p-2">
+                    <p className="text-sm font-medium leading-none">{user?.firstName} {user?.lastName}</p>
+                    <p className="text-xs leading-none text-muted-foreground">
+                      {user?.emailAddresses?.[0]?.emailAddress}
+                    </p>
+                  </div>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem
+                    className="cursor-pointer"
+                    onClick={() => signOut(() => window.location.href = '/')}
+                  >
+                    <LogOut className="mr-2 h-4 w-4" />
+                    <span>Log out</span>
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
               <div className="flex items-center space-x-3">
                 <div className="w-8 h-8 bg-panel rounded-full flex items-center justify-center text-primary text-sm font-medium">
                   {user?.firstName?.[0]}{user?.lastName?.[0]}
@@ -895,6 +934,13 @@ export default function HomePage() {
 
       {/* Calendar Dialog */}
       <CalendarDialog open={showCalendar} onOpenChange={setShowCalendar} />
+
+      {/* Report Dialog */}
+      <ReportDialog 
+        open={showReport} 
+        onOpenChange={setShowReport}
+        userEmail={user?.emailAddresses?.[0]?.emailAddress}
+      />
 
       {/* Connect Google Doc Modal */}
       {showConnectDoc && (
