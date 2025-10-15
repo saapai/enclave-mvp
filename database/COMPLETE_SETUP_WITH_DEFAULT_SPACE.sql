@@ -23,6 +23,10 @@ DROP POLICY IF EXISTS "Authenticated users can delete profiles" ON app_user;
 ALTER TABLE app_user DISABLE ROW LEVEL SECURITY;
 ALTER TABLE app_user ENABLE ROW LEVEL SECURITY;
 
+-- Drop the new policies too in case they exist
+DROP POLICY IF EXISTS "service_role_all" ON app_user;
+DROP POLICY IF EXISTS "authenticated_all" ON app_user;
+
 -- Create simple, non-recursive policies
 CREATE POLICY "service_role_all"
   ON app_user FOR ALL TO service_role
@@ -52,6 +56,10 @@ DROP POLICY IF EXISTS "Authenticated users can delete spaces" ON space;
 -- Disable and re-enable RLS
 ALTER TABLE space DISABLE ROW LEVEL SECURITY;
 ALTER TABLE space ENABLE ROW LEVEL SECURITY;
+
+-- Drop the new policies too in case they exist
+DROP POLICY IF EXISTS "service_role_all" ON space;
+DROP POLICY IF EXISTS "authenticated_all" ON space;
 
 -- Create simple, non-recursive policies
 CREATE POLICY "service_role_all"
