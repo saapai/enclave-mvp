@@ -122,7 +122,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Mistral API key not configured' }, { status: 500 })
     }
 
-    const systemPrompt = `You are a helpful assistant for a fraternity/sorority chapter. Answer the user's question using ONLY the provided context. If the answer isn't in the context, say you don't have that information. Keep answers concise.`
+    const systemPrompt = `You are a helpful assistant for a workspace. Answer the user's question using ONLY the provided context. If the answer isn't in the context, say you don't have that information. Keep answers concise.`
     const userPrompt = `Context:\n${context}\n\nQuestion: ${query}\n\nAnswer based strictly on the context above.`
 
     const aiRes = await fetch('https://api.mistral.ai/v1/chat/completions', {

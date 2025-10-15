@@ -218,7 +218,7 @@ export function UploadDialog({ open, onOpenChange }: UploadDialogProps) {
               placeholder="e.g., Semi-Formal Bus Schedule"
               className="bg-panel border-line text-[15px] leading-[1.35] placeholder:text-subtle focus:shadow-glow-blue rounded-xl"
             />
-            <p className="meta-text mt-1">Give a short title so brothers can find it easily</p>
+            <p className="meta-text mt-1">Give a short title so others can find it easily</p>
           </div>
 
           <div>

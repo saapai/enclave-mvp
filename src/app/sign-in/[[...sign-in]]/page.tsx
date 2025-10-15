@@ -10,7 +10,7 @@ export default function SignInPage() {
             <div className="text-2xl font-bold">E</div>
           </div>
           <h1 className="text-4xl font-bold text-primary mb-3 tracking-tight">Welcome to Enclave</h1>
-          <p className="text-lg text-white/65 leading-relaxed max-w-sm mx-auto mb-8">The answer layer for your chapter. Please sign in to continue.</p>
+          <p className="text-lg text-white/65 leading-relaxed max-w-sm mx-auto mb-8">The answer layer for your workspace. Please sign in to continue.</p>
           
           {/* Custom Sign In Button */}
           <button 

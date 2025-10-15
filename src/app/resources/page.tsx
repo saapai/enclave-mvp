@@ -320,7 +320,7 @@ export default function ResourcesPage() {
         <div className="flex items-center justify-between mb-8">
           <div>
             <h1 className="text-3xl font-bold text-primary mb-2">Resources</h1>
-            <p className="text-muted">Manage your chapter's resources and information</p>
+            <p className="text-muted">Manage your workspace resources and information</p>
           </div>
           <div className="flex items-center space-x-3">
             <Select value={selectedSpaceFilter} onValueChange={setSelectedSpaceFilter}>

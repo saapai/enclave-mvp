@@ -1,6 +1,6 @@
 # Enclave MVP
 
-**The answer layer for your chapter** - An AI-powered knowledge base and search platform for fraternity/sorority chapters.
+**The answer layer for your workspace** - An AI-powered knowledge base and search platform for teams and organizations.
 
 ## 🚀 Features
 
@@ -200,8 +200,8 @@ For support, email [your-email@example.com] or create an issue on GitHub.
 - [ ] User permissions and roles
 - [ ] Mobile app
 - [ ] Analytics dashboard
-- [ ] Integration with chapter management systems
+- [ ] Integration with team management systems
 
 ---
 
-Built with ❤️ for Greek life communities
+Built with ❤️ for teams and organizations

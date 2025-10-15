@@ -1,6 +1,6 @@
 # Enclave MVP
 
-A modern knowledge management system for fraternity/sorority chapters with AI-powered search and Google Docs integration.
+A modern knowledge management system for teams and organizations with AI-powered search and Google Docs integration.
 
 ## Quick Start
 

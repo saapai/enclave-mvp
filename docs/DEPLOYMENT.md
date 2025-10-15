@@ -51,7 +51,7 @@ In your Vercel dashboard, add these environment variables:
 ### Required Tables
 
 - `app_user` - User profiles
-- `space` - Workspaces/chapters
+- `space` - Workspaces
 - `resource` - Main resource storage
 - `tag` - Tag system
 - `resource_tag` - Resource-tag relationships
