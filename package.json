@@ -39,7 +39,8 @@
     "sonner": "^1.7.1",
     "tailwind-merge": "^2.5.4",
     "unpdf": "^1.3.2",
-    "uuid": "^11.0.3"
+    "uuid": "^11.0.3",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@playwright/test": "^1.40.0",
