@@ -23,7 +23,7 @@ RETURNS TABLE (
   end_time TIMESTAMPTZ,
   html_link TEXT,
   added_by TEXT,
-  similarity REAL
+  similarity FLOAT8
 ) AS $$
 BEGIN
   RETURN QUERY
@@ -37,7 +37,7 @@ BEGIN
     ce.end_time,
     ce.html_link,
     sgc.added_by,
-    1 - (ce.embedding <=> query_embedding) AS similarity
+    (1 - (ce.embedding <=> query_embedding))::FLOAT8 AS similarity
   FROM calendar_events ce
   JOIN sources_google_calendar sgc ON ce.source_id = sgc.id
   WHERE ce.space_id = target_space_id
