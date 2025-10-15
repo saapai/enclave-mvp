@@ -20,6 +20,7 @@ import { GroupsDialog } from '@/components/groups-dialog'
 import { SlackDialog } from '@/components/slack-dialog'
 import { CalendarDialog } from '@/components/calendar-dialog'
 import { TestDropdown } from '@/components/test-dropdown'
+import { SimpleDropdown } from '@/components/simple-dropdown'
 
 interface Message {
   id: string
@@ -647,51 +648,14 @@ export default function HomePage() {
                 <FileText className="h-4 w-4 mr-2" />
                 View Resources
               </Button>
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button className="bg-gradient-to-r from-blue-600 to-red-600 hover:from-blue-700 hover:to-red-700 text-white border-0">
-                    <Plus className="h-4 w-4 mr-2" />
-                    Add
-                    <ChevronDown className="h-4 w-4 ml-1" />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="w-56 bg-white border border-gray-200 shadow-lg z-[9999]">
-                  <DropdownMenuItem onClick={() => setShowUpload(true)} className="cursor-pointer">
-                    <FileText className="h-4 w-4 mr-2" />
-                    Add Resource
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => setShowConnectDoc(true)} className="cursor-pointer">
-                    <Link className="h-4 w-4 mr-2" />
-                    Add Live Google Doc
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => setShowSlack(true)} className="cursor-pointer">
-                    <MessageSquare className="h-4 w-4 mr-2" />
-                    Connect Slack
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => setShowCalendar(true)} className="cursor-pointer">
-                    <Calendar className="h-4 w-4 mr-2" />
-                    Connect Google Calendar
-                  </DropdownMenuItem>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem 
-                    onClick={handleRefreshGoogleDocs} 
-                    disabled={refreshingDocs}
-                    className="cursor-pointer"
-                  >
-                    {refreshingDocs ? (
-                      <>
-                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                        Refreshing...
-                      </>
-                    ) : (
-                      <>
-                        <RefreshCw className="h-4 w-4 mr-2" />
-                        Refresh All Docs
-                      </>
-                    )}
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
+              <SimpleDropdown
+                onUpload={() => setShowUpload(true)}
+                onConnectDoc={() => setShowConnectDoc(true)}
+                onSlack={() => setShowSlack(true)}
+                onCalendar={() => setShowCalendar(true)}
+                onRefresh={handleRefreshGoogleDocs}
+                refreshing={refreshingDocs}
+              />
               <div className="flex items-center space-x-3">
                 <div className="w-8 h-8 bg-panel rounded-full flex items-center justify-center text-primary text-sm font-medium">
                   {user?.firstName?.[0]}{user?.lastName?.[0]}
