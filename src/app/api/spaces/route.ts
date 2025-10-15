@@ -95,7 +95,8 @@ export async function POST(request: NextRequest) {
       .insert({
         name: name.trim(),
         domain: domain?.trim() || null,
-        default_visibility: 'space'
+        default_visibility: 'space',
+        created_by: userId  // Set the creator
       })
       .select()
       .single()
