@@ -259,13 +259,10 @@ export async function createResourcesForCalendarEvents(
     created_by: null
   }))
 
-  // Insert resources
+  // Insert resources (use insert instead of upsert since resource table doesn't have url constraint)
   const { data: insertedResources, error: resourceError } = await supabase
     .from('resource')
-    .upsert(resources, {
-      onConflict: 'url', // Don't duplicate events with same URL
-      ignoreDuplicates: true
-    })
+    .insert(resources)
     .select()
 
   if (resourceError) {
