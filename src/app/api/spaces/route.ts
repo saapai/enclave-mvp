@@ -107,18 +107,24 @@ export async function POST(request: NextRequest) {
     }
 
     // CRITICAL: Add the creator as an admin member of the space
+    // Use upsert to handle case where user already exists
     const { error: memberError } = await supabase
       .from('app_user')
-      .insert({
+      .upsert({
         space_id: space.id,
         email: userEmail,
+        user_id: userId,
         name: userName,
         role: 'admin'
+      }, {
+        onConflict: 'email,space_id',  // Handle duplicate email+space_id
+        ignoreDuplicates: false  // Update existing record
       })
 
     if (memberError) {
       console.error('Failed to add creator as member:', memberError)
       // Don't fail the request, but log it
+      // The space was created successfully, user can still access it via created_by
     } else {
       console.log(`Added creator ${userEmail} as admin of space ${space.id}`)
     }
