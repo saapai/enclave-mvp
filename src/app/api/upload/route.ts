@@ -71,36 +71,25 @@ async function extractTextFromFile(file: File): Promise<string | null> {
       return text
     }
 
-    // PDFs via pdfjs-dist (more reliable with Next.js/Turbopack)
+    // PDFs via unpdf (serverless-friendly, no canvas dependencies)
     if (contentType === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')) {
       try {
         console.log('Extracting text from PDF:', file.name)
-        const pdfjsLib = await import('pdfjs-dist/legacy/build/pdf.mjs')
+        const { extractText } = await import('unpdf')
         const arrayBuffer = await file.arrayBuffer()
         console.log('PDF buffer size:', arrayBuffer.byteLength, 'bytes')
         
-        // Load the PDF document
-        const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer })
-        const pdf = await loadingTask.promise
-        console.log('PDF loaded successfully, pages:', pdf.numPages)
+        // Extract text from PDF
+        const { text, totalPages } = await extractText(new Uint8Array(arrayBuffer), {
+          mergePages: true
+        })
         
-        // Extract text from all pages
-        const textParts: string[] = []
-        for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
-          const page = await pdf.getPage(pageNum)
-          const textContent = await page.getTextContent()
-          const pageText = textContent.items
-            .map((item: any) => item.str)
-            .join(' ')
-          textParts.push(pageText)
-        }
-        
-        const extractedText = textParts.join('\n\n').trim()
-        console.log('PDF extraction result:', extractedText ? `Success - ${extractedText.length} chars` : 'Failed')
+        console.log('PDF extraction result:', text ? `Success - ${text.length} chars from ${totalPages} pages` : 'Failed')
+        const extractedText = text?.trim() || null
         if (extractedText) {
           console.log('PDF text preview:', extractedText.substring(0, 200) + '...')
         }
-        return extractedText || null
+        return extractedText
       } catch (err) {
         console.error('PDF extraction failed:', err)
         return null
