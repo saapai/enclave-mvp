@@ -101,10 +101,9 @@ export default function HomePage() {
       if (response.ok) {
         const data = await response.json()
         setSpaces(data.spaces || [])
-        // Set default to all spaces
-        if (data.spaces && data.spaces.length > 0) {
-          setSelectedSpaceIds(data.spaces.map((s: any) => s.id))
-        }
+        // Set default to only the default space (personal workspace)
+        // User can manually select additional workspaces if needed
+        setSelectedSpaceIds(['00000000-0000-0000-0000-000000000000'])
       }
     } catch (error) {
       console.error('Failed to fetch spaces:', error)
