@@ -92,7 +92,7 @@ export function GroupsDialog({ open, onOpenChange }: GroupsDialogProps) {
 
   const handleCreateSpace = async () => {
     if (!newSpaceName.trim()) {
-      alert('Please enter a group name')
+      alert('Please enter a workspace name')
       return
     }
 
@@ -110,14 +110,14 @@ export function GroupsDialog({ open, onOpenChange }: GroupsDialogProps) {
         const data = await response.json()
         setSpaces([data.space, ...spaces])
         setNewSpaceName('')
-        alert(`Group "${data.space.name}" created successfully!`)
+        alert(`Workspace "${data.space.name}" created successfully!`)
       } else {
         const error = await response.json()
-        alert(`Failed to create group: ${error.error}`)
+        alert(`Failed to create workspace: ${error.error}`)
       }
     } catch (error) {
       console.error('Create space error:', error)
-      alert('Failed to create group')
+      alert('Failed to create workspace')
     } finally {
       setCreatingSpace(false)
     }
@@ -130,7 +130,7 @@ export function GroupsDialog({ open, onOpenChange }: GroupsDialogProps) {
     }
 
     if (!selectedSpace) {
-      alert('Please select a group first')
+      alert('Please select a workspace first')
       return
     }
 
@@ -174,8 +174,8 @@ export function GroupsDialog({ open, onOpenChange }: GroupsDialogProps) {
               <Users className="h-5 w-5" />
             </div>
             <div>
-              <h2 className="text-xl font-semibold text-primary">Groups</h2>
-              <p className="text-sm text-muted">Manage your groups and members</p>
+              <h2 className="text-xl font-semibold text-primary">Workspaces</h2>
+              <p className="text-sm text-muted">Manage your workspaces and members</p>
             </div>
           </div>
           <Button
@@ -189,9 +189,9 @@ export function GroupsDialog({ open, onOpenChange }: GroupsDialogProps) {
         </div>
 
         <div className="p-6 space-y-6">
-          {/* Your Groups */}
+          {/* Your Workspaces */}
           <div>
-            <h3 className="text-lg font-semibold text-primary mb-3">Your Groups</h3>
+            <h3 className="text-lg font-semibold text-primary mb-3">Your Workspaces</h3>
             {loading ? (
               <div className="flex items-center justify-center py-8">
                 <Loader2 className="h-6 w-6 animate-spin text-blue-400" />
@@ -199,7 +199,7 @@ export function GroupsDialog({ open, onOpenChange }: GroupsDialogProps) {
             ) : spaces.length === 0 ? (
               <Card className="bg-panel-2 border border-line">
                 <CardContent className="p-6 text-center">
-                  <p className="text-muted">No groups yet. Create one below!</p>
+                  <p className="text-muted">No workspaces yet. Create one below!</p>
                 </CardContent>
               </Card>
             ) : (
@@ -233,18 +233,18 @@ export function GroupsDialog({ open, onOpenChange }: GroupsDialogProps) {
             )}
           </div>
 
-          {/* Create Group */}
+          {/* Create Workspace */}
           <div>
-            <h3 className="text-lg font-semibold text-primary mb-3">Create Group</h3>
+            <h3 className="text-lg font-semibold text-primary mb-3">Create Workspace</h3>
             <Card className="bg-panel-2 border border-line">
               <CardContent className="p-6 space-y-4">
                 <div>
                   <label className="text-sm font-medium text-primary mb-2 block">
-                    Group Name *
+                    Workspace Name *
                   </label>
                   <Input
                     type="text"
-                    placeholder="e.g., UCLA SEP"
+                    placeholder="e.g., My Team Workspace"
                     value={newSpaceName}
                     onChange={(e) => setNewSpaceName(e.target.value)}
                     className="bg-panel border border-line"
@@ -263,7 +263,7 @@ export function GroupsDialog({ open, onOpenChange }: GroupsDialogProps) {
                   ) : (
                     <>
                       <Plus className="h-4 w-4 mr-2" />
-                      Create Group
+                      Create Workspace
                     </>
                   )}
                 </Button>
@@ -271,10 +271,10 @@ export function GroupsDialog({ open, onOpenChange }: GroupsDialogProps) {
             </Card>
           </div>
 
-          {/* Group Members */}
+          {/* Workspace Members */}
           {selectedSpace && (
             <div>
-              <h3 className="text-lg font-semibold text-primary mb-3">Group Members</h3>
+              <h3 className="text-lg font-semibold text-primary mb-3">Workspace Members</h3>
               <Card className="bg-panel-2 border border-line">
                 <CardContent className="p-6">
                   <div className="text-sm text-muted mb-4">
