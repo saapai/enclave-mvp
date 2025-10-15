@@ -19,6 +19,7 @@ import { PromptCard } from '@/components/prompt-card'
 import { GroupsDialog } from '@/components/groups-dialog'
 import { SlackDialog } from '@/components/slack-dialog'
 import { CalendarDialog } from '@/components/calendar-dialog'
+import { TestDropdown } from '@/components/test-dropdown'
 
 interface Message {
   id: string
@@ -654,7 +655,7 @@ export default function HomePage() {
                     <ChevronDown className="h-4 w-4 ml-1" />
                   </Button>
                 </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="w-56 bg-[rgba(20,20,24,0.95)] backdrop-blur-xl border-line">
+                <DropdownMenuContent align="end" className="w-56 bg-white border border-gray-200 shadow-lg z-[9999]">
                   <DropdownMenuItem onClick={() => setShowUpload(true)} className="cursor-pointer">
                     <FileText className="h-4 w-4 mr-2" />
                     Add Resource
@@ -916,6 +917,9 @@ export default function HomePage() {
           </div>
         </div>
       </main>
+
+      {/* Test Dropdown */}
+      <TestDropdown />
 
       {/* Upload Dialog */}
       <UploadDialog open={showUpload} onOpenChange={setShowUpload} />
