@@ -14,12 +14,14 @@ Run these in Supabase SQL Editor (in order):
 1. /database/add-calendar-timezone-fields.sql
 2. /database/fix-resource-created-by-type.sql  
 3. /database/fix-google-docs-vector-search.sql
+4. /database/fix-fts-search-for-uploads.sql  ⚠️ CRITICAL FOR PDF SEARCH
 ```
 
 Test after each:
 - [ ] Calendar events show correct times
 - [ ] Manual uploads work
 - [ ] Google Docs content appears in results
+- [ ] PDF uploads are searchable ⚠️ THIS FIXES YOUR CURRENT ISSUE
 
 ### 3. Security & Rate Limiting (2 hours)
 **Environment Variables:**
