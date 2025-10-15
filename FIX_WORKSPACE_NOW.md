@@ -1,3 +1,16 @@
+# 🚨 Fix Workspace Persistence NOW
+
+## Problem
+- ✅ Workspaces can be created
+- ❌ Workspaces disappear after page reload
+- ❌ Error: "duplicate key value violates unique constraint"
+
+## Solution
+Run this SQL migration in Supabase SQL Editor:
+
+### 📋 Copy & Run This SQL:
+
+```sql
 -- Fix workspace persistence and member management
 -- Run this in Supabase SQL Editor
 
@@ -124,3 +137,45 @@ SELECT schemaname, tablename, policyname, permissive, roles, cmd
 FROM pg_policies
 WHERE tablename IN ('space', 'app_user')
 ORDER BY tablename, policyname;
+```
+
+## ✅ What This Fixes
+
+1. **Workspace Persistence** - Workspaces now persist after reload
+2. **Duplicate Key Error** - Same user can be in multiple spaces
+3. **RLS Policies** - Users can view spaces they created or are members of
+4. **Unique Constraint** - Changed from `email` to `(email, space_id)`
+
+## 🧪 Test After Running
+
+1. **Create Workspace:**
+   - Go to Workspaces dialog
+   - Create new workspace
+   - ✅ Should succeed without errors
+
+2. **Reload Page:**
+   - Refresh browser
+   - Open Workspaces dialog
+   - ✅ Your workspace should still be there
+
+3. **Create Multiple Workspaces:**
+   - Create 2-3 workspaces
+   - ✅ All should persist
+
+## 🚀 Next Steps
+
+After running this migration, test the automated test suite:
+
+```bash
+npm run test:smoke
+```
+
+This will verify:
+- ✅ Workspace creation works
+- ✅ Workspaces persist
+- ✅ File uploads work
+- ✅ Search works
+
+---
+
+**Run the SQL migration now, then test!** 🎯
