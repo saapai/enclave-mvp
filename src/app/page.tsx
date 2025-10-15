@@ -353,18 +353,28 @@ export default function HomePage() {
       try {
         let aiResponse = ''
         if (searchResults.length > 0) {
-          // Generate summary from top 3 search results only
-          const topResults = searchResults.slice(0, 3)
+          // Generate summary from top 5 search results (increased for better context)
+          const topResults = searchResults.slice(0, 5)
           const context = topResults.map(r => {
-            let content = `${r.title}: ${r.body || ''}`
+            let content = `Type: ${r.type}\nTitle: ${r.title}`
+            
+            // Add body content (includes event details for calendar events)
+            if (r.body) {
+              content += `\n${r.body}`
+            }
+            
+            // Add URL if available
             if (r.url) {
               content += `\nURL: ${r.url}`
             }
+            
+            // Add tags if available
             if (r.tags && r.tags.length > 0) {
               content += `\nTags: ${r.tags.map(t => t.name).join(', ')}`
             }
+            
             return content
-          }).join('\n\n')
+          }).join('\n\n---\n\n')
           const aiRes = await fetch('/api/ai', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },

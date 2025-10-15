@@ -19,13 +19,25 @@
 
 ## 🚀 REQUIRED ACTIONS
 
-You need to run these 3 SQL migrations in Supabase:
+### ⚠️ IMPORTANT: Schema Setup First
 
-### 1. **fix-calendar-search-user-filtering.sql**
+Before running the search function migrations, you need to ensure the base schemas exist:
+
+1. **Google Calendar Schema**: Run `database/google-calendar-schema.sql` (if not already done)
+2. **Google Docs Schema**: Run `database/google-docs-schema.sql` (if not already done)
+
+These create the required tables:
+- `calendar_events` and `sources_google_calendar`
+- `google_doc_chunks` and `sources_google_docs`
+
+### Then Run These Search Function Migrations:
+
+### 1. **fix-calendar-search-user-filtering.sql** ✅ UPDATED
 ```sql
 -- Updates search_calendar_events_vector function
 -- Adds user filtering for personal workspace
 -- Maintains shared workspace functionality
+-- FIXED: Changed return type from REAL to FLOAT8
 ```
 
 ### 2. **fix-google-docs-search-user-filtering.sql**
@@ -33,6 +45,7 @@ You need to run these 3 SQL migrations in Supabase:
 -- Updates search_google_docs_vector function  
 -- Adds user filtering for personal workspace
 -- Maintains shared workspace functionality
+-- Uses correct table name: google_doc_chunks (singular)
 ```
 
 ### 3. **fix-fts-search-user-filtering.sql** (if not already run)
@@ -47,6 +60,12 @@ You need to run these 3 SQL migrations in Supabase:
 -- Updates search_resources_vector function
 -- Adds user filtering for personal workspace
 -- Maintains shared workspace functionality
+```
+
+### 5. **add-calendar-timezone-fields.sql** (if not already run)
+```sql
+-- Adds timezone fields to calendar_events table
+-- Required for proper calendar event display
 ```
 
 ## 🎯 Expected Results
