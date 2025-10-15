@@ -20,6 +20,7 @@ import { GroupsDialog } from '@/components/groups-dialog'
 import { SlackDialog } from '@/components/slack-dialog'
 import { CalendarDialog } from '@/components/calendar-dialog'
 import { SimpleDropdown } from '@/components/simple-dropdown'
+import { ProfileDropdown } from '@/components/profile-dropdown'
 import { ReportDialog } from '@/components/report-dialog'
 
 interface Message {
@@ -669,49 +670,18 @@ export default function HomePage() {
               />
               
               {/* User Profile Dropdown */}
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button 
-                    variant="secondary" 
-                    className="h-9 px-3 bg-[#2a2a2f] border border-gray-600 hover:bg-[#3a3a3f] text-white font-medium"
-                  >
-                    <div className="flex items-center space-x-2">
-                      <div className="h-6 w-6 rounded-full bg-gradient-to-r from-blue-500 to-purple-500 flex items-center justify-center">
-                        <span className="text-white text-xs font-medium">
-                          {user?.firstName?.[0] || user?.emailAddresses?.[0]?.emailAddress?.[0] || 'U'}
-                        </span>
-                      </div>
-                      <span className="hidden sm:inline text-sm">
-                        {user?.firstName || 'Profile'}
-                      </span>
-                      <ChevronDown className="h-3 w-3" />
-                    </div>
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent className="w-56 bg-[#1a1a1f] border border-gray-700 shadow-xl" align="end" forceMount>
-                  <div className="flex flex-col space-y-1 p-2">
-                    <p className="text-sm font-medium leading-none text-white">{user?.firstName} {user?.lastName}</p>
-                    <p className="text-xs leading-none text-gray-300">
-                      {user?.emailAddresses?.[0]?.emailAddress}
-                    </p>
-                  </div>
-                  <DropdownMenuSeparator className="bg-gray-700" />
-                  <DropdownMenuItem
-                    className="cursor-pointer text-white hover:bg-[#2a2a2f] focus:bg-[#2a2a2f]"
-                    onSelect={(e) => {
-                      e.preventDefault()
-                      console.log('Logout clicked')
-                      signOut(() => {
-                        console.log('Sign out complete')
-                        window.location.href = '/'
-                      })
-                    }}
-                  >
-                    <LogOut className="mr-2 h-4 w-4" />
-                    <span>Log out</span>
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
+              <ProfileDropdown
+                userName={user?.firstName || 'Profile'}
+                userEmail={user?.emailAddresses?.[0]?.emailAddress || ''}
+                userInitials={user?.firstName?.[0] || user?.emailAddresses?.[0]?.emailAddress?.[0] || 'U'}
+                onSignOut={() => {
+                  console.log('Logout clicked')
+                  signOut(() => {
+                    console.log('Sign out complete')
+                    window.location.href = '/'
+                  })
+                }}
+              />
             </div>
           </div>
         </div>
