@@ -49,7 +49,7 @@ export async function searchResourcesHybrid(
         target_space_id: spaceId,
         limit_count: limit * 2,
         offset_count: 0,
-        target_user_id: userId || null  // Filter by user
+        target_user_id: null  // Don't filter by user - search all resources in workspace
       })
     
     if (vectorError) {
@@ -80,7 +80,7 @@ export async function searchResourcesHybrid(
         target_space_id: spaceId,
         limit_count: limit * 2,
         offset_count: 0,
-        target_user_id: userId || null  // CRITICAL: Pass userId to RPC for filtering
+        target_user_id: null  // Don't filter by user - search all resources in workspace
       })
 
     if (gdError) {
@@ -103,7 +103,7 @@ export async function searchResourcesHybrid(
         target_space_id: spaceId,
         limit_count: limit * 2,
         offset_count: 0,
-        target_user_id: userId || null
+        target_user_id: null
       })
 
     if (calError) {
@@ -356,18 +356,12 @@ export async function searchResources(
       console.log(`[FTS Search] First hit:`, { id: hits[0].id, title: hits[0].title, created_by: hits[0].created_by })
     }
 
-    // Filter by userId at application level (since auth.uid() doesn't work with Clerk)
-    let filteredHits = hits || []
-    if (userId) {
-      const beforeFilter = filteredHits.length
-      filteredHits = filteredHits.filter((hit: any) => hit.created_by === userId)
-      console.log(`[FTS Search] Filtered by user: ${beforeFilter} -> ${filteredHits.length}`)
-    }
-
-    const ids = filteredHits.map((h: any) => h.id as string)
+    // No need to filter by userId - workspace membership is controlled by RLS policies
+    // All users in a workspace can search all resources in that workspace
+    const ids = (hits || []).map((h: any) => h.id as string)
     console.log(`[FTS Search] Final resource IDs:`, ids)
     if (ids.length === 0) {
-      console.log(`[FTS Search] No results after user filter`)
+      console.log(`[FTS Search] No results found`)
       return []
     }
 
