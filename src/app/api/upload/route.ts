@@ -74,13 +74,36 @@ async function extractTextFromFile(file: File): Promise<string | null> {
     // PDFs via dynamic import to avoid bundling issues if not installed
     if (contentType === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')) {
       try {
-        const pdfParse = (await import('pdf-parse')).default as (data: Buffer) => Promise<{ text: string }>
+        console.log('Extracting text from PDF:', file.name)
+        const pdfParseModule = await import('pdf-parse')
+        const pdfParse = pdfParseModule.default || pdfParseModule
         const arrayBuffer = await file.arrayBuffer()
         const buffer = Buffer.from(arrayBuffer)
+        console.log('PDF buffer size:', buffer.length, 'bytes')
         const result = await pdfParse(buffer)
-        return result.text || null
-      } catch (_err) {
-        // pdf-parse not installed or failed; skip extraction
+        console.log('PDF extraction result:', result ? `Success - ${result.text?.length || 0} chars` : 'Failed')
+        const extractedText = result.text || null
+        if (extractedText) {
+          console.log('PDF text preview:', extractedText.substring(0, 200) + '...')
+        }
+        return extractedText
+      } catch (err) {
+        console.error('PDF extraction failed:', err)
+        // Try alternative approach
+        try {
+          console.log('Trying alternative PDF parsing...')
+          const pdfParse = (await import('pdf-parse')).default
+          const arrayBuffer = await file.arrayBuffer()
+          const buffer = Buffer.from(arrayBuffer)
+          const result = await pdfParse(buffer)
+          const extractedText = result.text || null
+          if (extractedText) {
+            console.log('Alternative PDF extraction succeeded:', extractedText.length, 'chars')
+            return extractedText
+          }
+        } catch (altErr) {
+          console.error('Alternative PDF extraction also failed:', altErr)
+        }
         return null
       }
     }
@@ -230,7 +253,12 @@ export async function POST(request: NextRequest) {
     // Attempt text extraction if file provided
     let extractedText: string | null = null
     if (file) {
+      console.log('Attempting text extraction for file:', file.name, 'type:', file.type)
       extractedText = await extractTextFromFile(file)
+      console.log('Text extraction result:', extractedText ? `Success - ${extractedText.length} chars` : 'No text extracted')
+      if (extractedText) {
+        console.log('Extracted text preview:', extractedText.substring(0, 200) + '...')
+      }
     }
 
 
@@ -362,6 +390,7 @@ export async function POST(request: NextRequest) {
         .limit(0)
       if (!vecCheckError) {
         const textForEmbed = [sanitizedTitle || (file ? file.name : 'Untitled'), extractedText || sanitizedDescription].filter(Boolean).join('\n\n')
+        console.log('Generating embedding for text:', textForEmbed.substring(0, 200) + '...')
         if (textForEmbed) {
           await upsertResourceEmbedding(primaryResourceId, textForEmbed)
         }
@@ -373,6 +402,7 @@ export async function POST(request: NextRequest) {
         .limit(0)
       if (!chunkCheckError) {
         const textForChunks = extractedText || sanitizedDescription || ''
+        console.log('Generating chunks for text:', textForChunks ? `${textForChunks.length} chars` : 'No text')
         if (textForChunks) {
           await upsertResourceChunks(primaryResourceId, textForChunks)
         }

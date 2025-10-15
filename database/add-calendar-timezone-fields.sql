@@ -9,3 +9,4 @@ ADD COLUMN IF NOT EXISTS end_timezone TEXT;
 COMMENT ON COLUMN calendar_events.start_timezone IS 'IANA timezone identifier (e.g., America/Los_Angeles) from Google Calendar API';
 COMMENT ON COLUMN calendar_events.end_timezone IS 'IANA timezone identifier (e.g., America/Los_Angeles) from Google Calendar API';
 
+
