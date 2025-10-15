@@ -38,8 +38,39 @@ export async function searchResourcesHybrid(
     // Generate embedding for vector search
     const queryEmbedding = await embedText(query)
     
-    // Search regular resources (with user filtering)
+    // Search regular resources with FTS (keyword search)
     const regularResults = await searchResources(query, spaceId, filters, { limit: limit * 2, offset: 0 }, userId)
+    
+    // Search regular resources with vector search (semantic search for PDFs, uploads, etc.)
+    console.log(`[Vector Search] Searching for regular resource embeddings - Space: ${spaceId}, User: ${userId}`)
+    const { data: resourceVectorResults, error: vectorError } = await searchClient
+      .rpc('search_resources_vector', {
+        query_embedding: queryEmbedding,
+        target_space_id: spaceId,
+        limit_count: limit * 2,
+        offset_count: 0,
+        target_user_id: userId || null  // Filter by user
+      })
+    
+    if (vectorError) {
+      console.error('[Vector Search] RPC error:', vectorError)
+    } else {
+      console.log(`[Vector Search] RPC returned ${resourceVectorResults?.length || 0} resource matches`)
+      if (resourceVectorResults && resourceVectorResults.length > 0) {
+        console.log(`[Vector Search] First match:`, { 
+          title: resourceVectorResults[0].title, 
+          similarity: resourceVectorResults[0].similarity 
+        })
+      }
+    }
+    
+    // Convert vector search results to SearchResult format
+    const vectorSearchResults: SearchResult[] = (resourceVectorResults || []).map((resource: any) => ({
+      ...resource,
+      tags: [],  // TODO: Fetch tags separately if needed
+      rank: resource.similarity || 0,
+      score: resource.similarity || 0
+    } as SearchResult))
     
     // Search Google Docs chunks using admin client (pass userId for filtering)
     console.log(`[GDocs Search] Searching for Google Doc chunks - Space: ${spaceId}, User: ${userId}`)
@@ -196,9 +227,9 @@ export async function searchResourcesHybrid(
     } as SearchResult))
 
     // Combine and rank results from all sources
-    console.log(`[Hybrid Search] Result counts - Regular: ${regularResults.length}, GDocs: ${googleDocsSearchResults.length}, Calendar: ${calendarSearchResults.length}, Slack: ${slackSearchResults.length}`)
+    console.log(`[Hybrid Search] Result counts - Regular FTS: ${regularResults.length}, Regular Vector: ${vectorSearchResults.length}, GDocs: ${googleDocsSearchResults.length}, Calendar: ${calendarSearchResults.length}, Slack: ${slackSearchResults.length}`)
     
-    const allResults = [...regularResults, ...googleDocsSearchResults, ...calendarSearchResults, ...slackSearchResults]
+    const allResults = [...regularResults, ...vectorSearchResults, ...googleDocsSearchResults, ...calendarSearchResults, ...slackSearchResults]
     
     // Sort by score/rank
     allResults.sort((a, b) => (b.score || 0) - (a.score || 0))
@@ -293,7 +324,11 @@ export async function searchResources(
       limit_count: limit,
       offset_count: offset
     }) as { data: any[] | null, error: any }
-    console.log(`[FTS Search] RPC response:`, { hitCount: hits?.length, error: rpcError })
+    console.log(`[FTS Search] RPC response:`, { 
+      hitCount: hits?.length, 
+      error: rpcError,
+      firstHit: hits?.[0] ? { id: hits[0].id, title: hits[0].title, rank: hits[0].rank } : null 
+    })
 
     if (rpcError) {
       console.error('[FTS Search] RPC error:', rpcError)
