@@ -19,7 +19,6 @@ import { PromptCard } from '@/components/prompt-card'
 import { GroupsDialog } from '@/components/groups-dialog'
 import { SlackDialog } from '@/components/slack-dialog'
 import { CalendarDialog } from '@/components/calendar-dialog'
-import { TestDropdown } from '@/components/test-dropdown'
 import { SimpleDropdown } from '@/components/simple-dropdown'
 
 interface Message {
@@ -882,8 +881,6 @@ export default function HomePage() {
         </div>
       </main>
 
-      {/* Test Dropdown */}
-      <TestDropdown />
 
       {/* Upload Dialog */}
       <UploadDialog open={showUpload} onOpenChange={setShowUpload} />
