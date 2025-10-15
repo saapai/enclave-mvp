@@ -101,9 +101,10 @@ export default function HomePage() {
       if (response.ok) {
         const data = await response.json()
         setSpaces(data.spaces || [])
-        // Set default to only the default space (personal workspace)
-        // User can manually select additional workspaces if needed
-        setSelectedSpaceIds(['00000000-0000-0000-0000-000000000000'])
+        // Set default to all user's workspaces so they can search across everything they have access to
+        if (data.spaces && data.spaces.length > 0) {
+          setSelectedSpaceIds(data.spaces.map((s: any) => s.id))
+        }
       }
     } catch (error) {
       console.error('Failed to fetch spaces:', error)
@@ -850,6 +851,28 @@ export default function HomePage() {
         {/* Bottom Input Area */}
         <div className="border-t border-line bg-surface p-4">
           <div className="max-w-4xl mx-auto">
+            {/* Workspace Indicator */}
+            {spaces.length > 0 && (
+              <div className="mb-3 flex items-center gap-2 text-sm text-muted">
+                <span>Searching in:</span>
+                <div className="flex items-center gap-1">
+                  {selectedSpaceIds.map((spaceId, index) => {
+                    const space = spaces.find(s => s.id === spaceId)
+                    return (
+                      <Badge key={spaceId} variant="secondary" className="text-xs">
+                        {space?.name || (spaceId === '00000000-0000-0000-0000-000000000000' ? 'Personal' : 'Unknown')}
+                      </Badge>
+                    )
+                  })}
+                  {selectedSpaceIds.length > 1 && (
+                    <span className="text-xs text-muted-foreground">
+                      ({selectedSpaceIds.length} workspaces)
+                    </span>
+                  )}
+                </div>
+              </div>
+            )}
+            
             <div className="relative">
               <div className="rounded-2xl border border-line bg-panel flex items-center gap-2 px-3">
                 <Input
