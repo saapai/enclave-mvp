@@ -63,8 +63,7 @@ run_smoke_tests() {
     
     npx playwright test tests/e2e/smoke-test.spec.ts \
         --project=chromium \
-        --reporter=list,html \
-        --output-dir=test-results/smoke
+        --reporter=list,html
     
     if [ $? -eq 0 ]; then
         print_success "Smoke tests passed!"
@@ -81,8 +80,7 @@ run_full_tests() {
     
     npx playwright test tests/e2e/full-test-suite.spec.ts \
         --project=chromium \
-        --reporter=list,html \
-        --output-dir=test-results/full
+        --reporter=list,html
     
     if [ $? -eq 0 ]; then
         print_success "Full test suite passed!"
