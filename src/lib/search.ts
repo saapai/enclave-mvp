@@ -43,13 +43,19 @@ export async function searchResourcesHybrid(
     
     // Search regular resources with vector search (semantic search for PDFs, uploads, etc.)
     console.log(`[Vector Search] Searching for regular resource embeddings - Space: ${spaceId}, User: ${userId}`)
+    
+    // For default workspace (personal), filter by user to ensure privacy
+    // For custom workspaces, allow searching all resources in that workspace
+    const DEFAULT_SPACE_ID = '00000000-0000-0000-0000-000000000000'
+    const shouldFilterByUser = spaceId === DEFAULT_SPACE_ID
+    
     const { data: resourceVectorResults, error: vectorError } = await searchClient
       .rpc('search_resources_vector', {
         query_embedding: queryEmbedding,
         target_space_id: spaceId,
         limit_count: limit * 2,
         offset_count: 0,
-        target_user_id: null  // Don't filter by user - search all resources in workspace
+        target_user_id: shouldFilterByUser ? userId : null  // Filter by user only in personal workspace
       })
     
     if (vectorError) {
@@ -318,11 +324,18 @@ export async function searchResources(
     }
     
     console.log(`[FTS Search] Calling RPC with query: "${query}"`)
+    
+    // For default workspace (personal), filter by user to ensure privacy
+    // For custom workspaces, allow searching all resources in that workspace
+    const DEFAULT_SPACE_ID = '00000000-0000-0000-0000-000000000000'
+    const shouldFilterByUser = spaceId === DEFAULT_SPACE_ID
+    
     const { data: hits, error: rpcError } = await (dbClient as any).rpc('search_resources_fts', {
       search_query: query,
       target_space_id: spaceId,
       limit_count: limit,
-      offset_count: offset
+      offset_count: offset,
+      target_user_id: shouldFilterByUser ? userId : null  // Filter by user only in personal workspace
     }) as { data: any[] | null, error: any }
     console.log(`[FTS Search] RPC response:`, { 
       hitCount: hits?.length, 

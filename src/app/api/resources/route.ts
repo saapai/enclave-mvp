@@ -44,7 +44,9 @@ export async function GET(request: NextRequest) {
     // Fetch resources from all user's spaces
     // Use admin client to bypass RLS (auth is validated at route level with Clerk)
     const dbClient = supabaseAdmin || supabase
-    const { data: resources, error } = await dbClient
+    
+    // Build the query
+    let query = dbClient
       .from('resource')
       .select(`
         *,
@@ -54,8 +56,24 @@ export async function GET(request: NextRequest) {
         event_meta(*)
       `)
       .in('space_id', spaceIds)
-      // Remove created_by filter - users should see all resources in their workspaces
-      .order('updated_at', { ascending: false })
+    
+    // For default workspace (personal), filter by user to ensure privacy
+    // For custom workspaces, allow seeing all resources in that workspace
+    if (spaceIds.includes(DEFAULT_SPACE_ID)) {
+      // If default space is included, we need to filter resources in default space by user
+      // and allow all resources in other spaces
+      const otherSpaceIds = spaceIds.filter(id => id !== DEFAULT_SPACE_ID)
+      
+      if (otherSpaceIds.length > 0) {
+        // User has both default space and other spaces
+        query = query.or(`and(space_id.eq.${DEFAULT_SPACE_ID},created_by.eq.${userId}),space_id.in.(${otherSpaceIds.join(',')})`)
+      } else {
+        // User only has default space
+        query = query.eq('created_by', userId)
+      }
+    }
+    
+    const { data: resources, error } = await query.order('updated_at', { ascending: false })
 
     if (error) {
       console.error('Resources fetch error:', error)
