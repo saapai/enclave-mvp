@@ -286,12 +286,14 @@ export async function searchResources(
       }
     }
     
+    console.log(`[FTS Search] Calling RPC with query: "${query}"`)
     const { data: hits, error: rpcError } = await (dbClient as any).rpc('search_resources_fts', {
       search_query: query,
       target_space_id: spaceId,
       limit_count: limit,
       offset_count: offset
     }) as { data: any[] | null, error: any }
+    console.log(`[FTS Search] RPC response:`, { hitCount: hits?.length, error: rpcError })
 
     if (rpcError) {
       console.error('[FTS Search] RPC error:', rpcError)
