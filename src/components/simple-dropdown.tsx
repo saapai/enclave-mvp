@@ -27,14 +27,14 @@ export function SimpleDropdown({ onUpload, onConnectDoc, onSlack, onCalendar, on
       </Button>
       
       {isOpen && (
-        <div className="absolute right-0 top-full mt-2 w-56 bg-white border border-gray-200 shadow-lg rounded-md z-[9999]">
+        <div className="absolute right-0 top-full mt-2 w-56 bg-[rgba(20,20,24,0.95)] backdrop-blur-xl border border-line shadow-lg rounded-xl z-[9999]">
           <div className="py-1">
             <button
               onClick={() => {
                 onUpload()
                 setIsOpen(false)
               }}
-              className="w-full px-4 py-2 text-left text-sm hover:bg-gray-100 flex items-center"
+              className="w-full px-4 py-2 text-left text-sm text-primary hover:bg-panel-2 flex items-center"
             >
               <FileText className="h-4 w-4 mr-2" />
               Add Resource
@@ -44,7 +44,7 @@ export function SimpleDropdown({ onUpload, onConnectDoc, onSlack, onCalendar, on
                 onConnectDoc()
                 setIsOpen(false)
               }}
-              className="w-full px-4 py-2 text-left text-sm hover:bg-gray-100 flex items-center"
+              className="w-full px-4 py-2 text-left text-sm text-primary hover:bg-panel-2 flex items-center"
             >
               <Link className="h-4 w-4 mr-2" />
               Add Live Google Doc
@@ -54,7 +54,7 @@ export function SimpleDropdown({ onUpload, onConnectDoc, onSlack, onCalendar, on
                 onSlack()
                 setIsOpen(false)
               }}
-              className="w-full px-4 py-2 text-left text-sm hover:bg-gray-100 flex items-center"
+              className="w-full px-4 py-2 text-left text-sm text-primary hover:bg-panel-2 flex items-center"
             >
               <MessageSquare className="h-4 w-4 mr-2" />
               Connect Slack
@@ -64,19 +64,19 @@ export function SimpleDropdown({ onUpload, onConnectDoc, onSlack, onCalendar, on
                 onCalendar()
                 setIsOpen(false)
               }}
-              className="w-full px-4 py-2 text-left text-sm hover:bg-gray-100 flex items-center"
+              className="w-full px-4 py-2 text-left text-sm text-primary hover:bg-panel-2 flex items-center"
             >
               <Calendar className="h-4 w-4 mr-2" />
               Connect Google Calendar
             </button>
-            <hr className="my-1" />
+            <hr className="my-1 border-line" />
             <button
               onClick={() => {
                 onRefresh()
                 setIsOpen(false)
               }}
               disabled={refreshing}
-              className="w-full px-4 py-2 text-left text-sm hover:bg-gray-100 flex items-center disabled:opacity-50"
+              className="w-full px-4 py-2 text-left text-sm text-primary hover:bg-panel-2 flex items-center disabled:opacity-50"
             >
               {refreshing ? (
                 <>
