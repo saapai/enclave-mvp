@@ -356,27 +356,18 @@ export async function searchResources(
       console.log(`[FTS Search] First hit:`, { id: hits[0].id, title: hits[0].title, created_by: hits[0].created_by })
     }
 
-    // Filter by workspace membership at application level
-    // Get user's workspaces to filter resources
-    const { data: appUsers } = await searchClient
-      .from('app_user')
-      .select('space_id')
-      .eq('user_id', userId)
-    
-    const userSpaceIds = (appUsers || []).map((au: any) => au.space_id)
-    console.log(`[FTS Search] User's workspace IDs:`, userSpaceIds)
-    
-    // Filter hits to only include resources from user's workspaces
+    // Filter by the specific workspace (spaceId) that was passed to the search
+    // The search is already filtered by spaceId in the RPC call, but double-check here
     let filteredHits = (hits || []).filter((hit: any) => {
-      return userSpaceIds.includes(hit.space_id)
+      return hit.space_id === spaceId
     })
     
-    console.log(`[FTS Search] Filtered by workspace: ${hits?.length || 0} -> ${filteredHits.length}`)
+    console.log(`[FTS Search] Filtered by workspace ${spaceId}: ${hits?.length || 0} -> ${filteredHits.length}`)
     
     const ids = filteredHits.map((h: any) => h.id as string)
     console.log(`[FTS Search] Final resource IDs:`, ids)
     if (ids.length === 0) {
-      console.log(`[FTS Search] No results found in user's workspaces`)
+      console.log(`[FTS Search] No results found in workspace ${spaceId}`)
       return []
     }
 

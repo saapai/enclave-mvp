@@ -18,6 +18,7 @@ export async function GET(request: NextRequest) {
     const to = searchParams.get('to') || undefined
     const limit = parseInt(searchParams.get('limit') || '20')
     const offset = parseInt(searchParams.get('offset') || '0')
+    const spaceIdsParam = searchParams.get('spaceIds')
 
     const filters = {
       type,
@@ -26,9 +27,15 @@ export async function GET(request: NextRequest) {
       to
     }
 
-    // Get user's spaces to search across all of them
-    let spaceIds = ['00000000-0000-0000-0000-000000000000']
-    if (userId) {
+    // Get workspace IDs to search - either from query param or user's workspaces
+    let spaceIds: string[] = []
+    
+    if (spaceIdsParam) {
+      // Use workspace IDs from query parameter (selected by user)
+      spaceIds = spaceIdsParam.split(',').filter(Boolean)
+      console.log('[Hybrid Search API] Using workspace IDs from query param:', spaceIds)
+    } else if (userId) {
+      // Fall back to all user's workspaces
       try {
         const { clerkClient } = await import('@clerk/nextjs/server')
         const client = await clerkClient()
@@ -41,10 +48,37 @@ export async function GET(request: NextRequest) {
           .eq('email', userEmail)
 
         const userSpaceIds = userSpaces?.map(u => u.space_id) || []
-        spaceIds = [...new Set([...spaceIds, ...userSpaceIds])]
+        spaceIds = [...new Set(['00000000-0000-0000-0000-000000000000', ...userSpaceIds])]
+        console.log('[Hybrid Search API] Using user workspaces:', spaceIds)
       } catch (error) {
         console.error('Failed to get user spaces for search:', error)
-        // Fall back to default space only
+        spaceIds = ['00000000-0000-0000-0000-000000000000']
+      }
+    } else {
+      spaceIds = ['00000000-0000-0000-0000-000000000000']
+    }
+    
+    // Verify user has access to these workspaces
+    if (userId) {
+      try {
+        const { clerkClient } = await import('@clerk/nextjs/server')
+        const client = await clerkClient()
+        const clerkUser = await client.users.getUser(userId)
+        const userEmail = clerkUser.emailAddresses[0]?.emailAddress
+
+        const { data: userSpaces } = await supabase
+          .from('app_user')
+          .select('space_id')
+          .eq('email', userEmail)
+
+        const allowedSpaceIds = userSpaces?.map(u => u.space_id) || []
+        allowedSpaceIds.push('00000000-0000-0000-0000-000000000000') // Always allow default space
+        
+        // Filter to only workspaces user has access to
+        spaceIds = spaceIds.filter(id => allowedSpaceIds.includes(id))
+        console.log('[Hybrid Search API] Filtered to allowed workspaces:', spaceIds)
+      } catch (error) {
+        console.error('Failed to verify workspace access:', error)
       }
     }
 

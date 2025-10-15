@@ -337,7 +337,9 @@ export default function HomePage() {
       ])
 
       // Now execute the search with potentially updated Google Doc content
-      const res = await fetch(`/api/search/hybrid?q=${encodeURIComponent(currentQuery)}&limit=3`)
+      // Pass selected workspace IDs to search API
+      const spaceIdsParam = selectedSpaceIds.join(',')
+      const res = await fetch(`/api/search/hybrid?q=${encodeURIComponent(currentQuery)}&limit=3&spaceIds=${spaceIdsParam}`)
       if (!res.ok) throw new Error('Search API failed')
       const data = await res.json()
       const searchResults = (data.results || []) as ResourceWithTags[]
