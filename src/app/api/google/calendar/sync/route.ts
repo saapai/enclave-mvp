@@ -9,6 +9,7 @@ import {
   createResourcesForCalendarEvents
 } from '@/lib/google-calendar'
 import { apiCache, CACHE_KEYS } from '@/lib/cache'
+import { supabase } from '@/lib/supabase'
 
 const DEFAULT_SPACE_ID = '00000000-0000-0000-0000-000000000000'
 
