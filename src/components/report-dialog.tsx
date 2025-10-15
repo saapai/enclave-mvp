@@ -58,13 +58,13 @@ export function ReportDialog({ open, onOpenChange, userEmail }: ReportDialogProp
   if (submitted) {
     return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md bg-panel border-line shadow-2xl">
+      <DialogContent className="sm:max-w-md bg-[#1a1a1f] border-gray-700 shadow-2xl text-white">
           <div className="text-center py-6">
-            <div className="w-12 h-12 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
-              <Send className="h-6 w-6 text-green-600" />
+            <div className="w-12 h-12 bg-green-600 rounded-full flex items-center justify-center mx-auto mb-4">
+              <Send className="h-6 w-6 text-white" />
             </div>
-            <h3 className="text-lg font-semibold text-primary mb-2">Report Submitted!</h3>
-            <p className="text-sm text-muted">
+            <h3 className="text-lg font-semibold text-white mb-2">Report Submitted!</h3>
+            <p className="text-sm text-gray-300">
               Thank you for your feedback. We'll review it and get back to you if needed.
             </p>
           </div>
@@ -75,43 +75,43 @@ export function ReportDialog({ open, onOpenChange, userEmail }: ReportDialogProp
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md bg-panel border-line shadow-2xl">
+      <DialogContent className="sm:max-w-md bg-[#1a1a1f] border border-gray-700 shadow-2xl text-white">
         <DialogHeader>
-          <DialogTitle>Report & Feedback</DialogTitle>
-          <DialogDescription>
+          <DialogTitle className="text-white">Report & Feedback</DialogTitle>
+          <DialogDescription className="text-gray-300">
             Help us improve Enclave by sharing your thoughts, reporting bugs, or suggesting features.
           </DialogDescription>
         </DialogHeader>
         
         <div className="space-y-4">
           <div>
-            <label className="text-sm font-medium text-primary mb-2 block">
+            <label className="text-sm font-medium text-white mb-2 block">
               Category
             </label>
             <Select value={category} onValueChange={setCategory}>
-              <SelectTrigger>
+              <SelectTrigger className="bg-[#2a2a2f] border-gray-600 text-white">
                 <SelectValue placeholder="Select a category" />
               </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="bug">🐛 Bug Report</SelectItem>
-                <SelectItem value="feature">💡 Feature Request</SelectItem>
-                <SelectItem value="improvement">✨ Improvement Suggestion</SelectItem>
-                <SelectItem value="feedback">💬 General Feedback</SelectItem>
-                <SelectItem value="complaint">😞 Complaint</SelectItem>
-                <SelectItem value="praise">😊 Praise</SelectItem>
+              <SelectContent className="bg-[#2a2a2f] border-gray-600">
+                <SelectItem value="bug" className="text-white hover:bg-gray-700">🐛 Bug Report</SelectItem>
+                <SelectItem value="feature" className="text-white hover:bg-gray-700">💡 Feature Request</SelectItem>
+                <SelectItem value="improvement" className="text-white hover:bg-gray-700">✨ Improvement Suggestion</SelectItem>
+                <SelectItem value="feedback" className="text-white hover:bg-gray-700">💬 General Feedback</SelectItem>
+                <SelectItem value="complaint" className="text-white hover:bg-gray-700">😞 Complaint</SelectItem>
+                <SelectItem value="praise" className="text-white hover:bg-gray-700">😊 Praise</SelectItem>
               </SelectContent>
             </Select>
           </div>
 
           <div>
-            <label className="text-sm font-medium text-primary mb-2 block">
+            <label className="text-sm font-medium text-white mb-2 block">
               Message
             </label>
             <Textarea
               placeholder="Describe the issue, suggestion, or feedback in detail..."
               value={message}
               onChange={(e) => setMessage(e.target.value)}
-              className="min-h-[120px]"
+              className="min-h-[120px] bg-[#2a2a2f] border-gray-600 text-white placeholder-gray-400"
             />
           </div>
 
@@ -120,12 +120,14 @@ export function ReportDialog({ open, onOpenChange, userEmail }: ReportDialogProp
               variant="outline"
               onClick={() => onOpenChange(false)}
               disabled={submitting}
+              className="border-gray-600 text-white hover:bg-gray-700"
             >
               Cancel
             </Button>
             <Button
               onClick={handleSubmit}
               disabled={!category || !message.trim() || submitting}
+              className="bg-blue-600 hover:bg-blue-700 text-white"
             >
               {submitting ? (
                 <>
