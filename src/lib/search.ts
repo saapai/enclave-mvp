@@ -80,13 +80,18 @@ export async function searchResourcesHybrid(
     
     // Search Google Docs chunks using admin client (pass userId for filtering)
     console.log(`[GDocs Search] Searching for Google Doc chunks - Space: ${spaceId}, User: ${userId}`)
+    
+    // For default workspace (personal), filter by user to ensure privacy
+    // For custom workspaces, allow searching all resources in that workspace
+    const shouldFilterGoogleDocsByUser = spaceId === DEFAULT_SPACE_ID
+    
     const { data: googleDocsResults, error: gdError } = await searchClient
       .rpc('search_google_docs_vector', {
         query_embedding: queryEmbedding,
         target_space_id: spaceId,
         limit_count: limit * 2,
         offset_count: 0,
-        target_user_id: null  // Don't filter by user - search all resources in workspace
+        target_user_id: shouldFilterGoogleDocsByUser ? userId : null
       })
 
     if (gdError) {
@@ -103,13 +108,17 @@ export async function searchResourcesHybrid(
     }
 
     // Search Calendar Events using admin client (pass userId for filtering)
+    // For default workspace (personal), filter by user to ensure privacy
+    // For custom workspaces, allow searching all events in that workspace
+    const shouldFilterCalendarByUser = spaceId === DEFAULT_SPACE_ID
+    
     const { data: calendarResults, error: calError } = await searchClient
       .rpc('search_calendar_events_vector', {
         query_embedding: queryEmbedding,
         target_space_id: spaceId,
         limit_count: limit * 2,
         offset_count: 0,
-        target_user_id: null
+        target_user_id: shouldFilterCalendarByUser ? userId : null
       })
 
     if (calError) {
