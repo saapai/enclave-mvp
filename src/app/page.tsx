@@ -696,16 +696,6 @@ export default function HomePage() {
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
-              <div className="flex items-center space-x-3">
-                <div className="w-8 h-8 bg-panel rounded-full flex items-center justify-center text-primary text-sm font-medium">
-                  {user?.firstName?.[0]}{user?.lastName?.[0]}
-                </div>
-                <div className="hidden sm:block">
-                  <p className="text-sm font-medium text-primary">
-                    {user?.firstName} {user?.lastName}
-                  </p>
-                </div>
-              </div>
             </div>
           </div>
         </div>
