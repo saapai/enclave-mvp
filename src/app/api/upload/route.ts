@@ -71,39 +71,38 @@ async function extractTextFromFile(file: File): Promise<string | null> {
       return text
     }
 
-    // PDFs via dynamic import to avoid bundling issues if not installed
+    // PDFs via pdfjs-dist (more reliable with Next.js/Turbopack)
     if (contentType === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')) {
       try {
         console.log('Extracting text from PDF:', file.name)
-        const pdfParseModule = await import('pdf-parse')
-        const pdfParse = pdfParseModule.default || pdfParseModule
+        const pdfjsLib = await import('pdfjs-dist/legacy/build/pdf.mjs')
         const arrayBuffer = await file.arrayBuffer()
-        const buffer = Buffer.from(arrayBuffer)
-        console.log('PDF buffer size:', buffer.length, 'bytes')
-        const result = await pdfParse(buffer)
-        console.log('PDF extraction result:', result ? `Success - ${result.text?.length || 0} chars` : 'Failed')
-        const extractedText = result.text || null
+        console.log('PDF buffer size:', arrayBuffer.byteLength, 'bytes')
+        
+        // Load the PDF document
+        const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer })
+        const pdf = await loadingTask.promise
+        console.log('PDF loaded successfully, pages:', pdf.numPages)
+        
+        // Extract text from all pages
+        const textParts: string[] = []
+        for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+          const page = await pdf.getPage(pageNum)
+          const textContent = await page.getTextContent()
+          const pageText = textContent.items
+            .map((item: any) => item.str)
+            .join(' ')
+          textParts.push(pageText)
+        }
+        
+        const extractedText = textParts.join('\n\n').trim()
+        console.log('PDF extraction result:', extractedText ? `Success - ${extractedText.length} chars` : 'Failed')
         if (extractedText) {
           console.log('PDF text preview:', extractedText.substring(0, 200) + '...')
         }
-        return extractedText
+        return extractedText || null
       } catch (err) {
         console.error('PDF extraction failed:', err)
-        // Try alternative approach
-        try {
-          console.log('Trying alternative PDF parsing...')
-          const pdfParse = (await import('pdf-parse')).default
-          const arrayBuffer = await file.arrayBuffer()
-          const buffer = Buffer.from(arrayBuffer)
-          const result = await pdfParse(buffer)
-          const extractedText = result.text || null
-          if (extractedText) {
-            console.log('Alternative PDF extraction succeeded:', extractedText.length, 'chars')
-            return extractedText
-          }
-        } catch (altErr) {
-          console.error('Alternative PDF extraction also failed:', altErr)
-        }
         return null
       }
     }
