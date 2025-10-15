@@ -640,17 +640,17 @@ export default function HomePage() {
             <div className="flex items-center space-x-4">
               <Button
                 variant="secondary"
-                onClick={() => setShowGroups(true)}
-              >
-                <Users className="h-4 w-4 mr-2" />
-                Groups
-              </Button>
-              <Button
-                variant="secondary"
                 onClick={() => setShowReport(true)}
               >
                 <Bug className="h-4 w-4 mr-2" />
                 Report
+              </Button>
+              <Button
+                variant="secondary"
+                onClick={() => setShowGroups(true)}
+              >
+                <Users className="h-4 w-4 mr-2" />
+                Groups
               </Button>
               <Button
                 variant="secondary"
@@ -671,24 +671,33 @@ export default function HomePage() {
               {/* User Profile Dropdown */}
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <Button variant="ghost" className="relative h-8 w-8 rounded-full">
-                    <div className="h-8 w-8 rounded-full bg-gradient-to-r from-blue-500 to-purple-500 flex items-center justify-center">
-                      <span className="text-white text-sm font-medium">
-                        {user?.firstName?.[0] || user?.emailAddresses?.[0]?.emailAddress?.[0] || 'U'}
+                  <Button 
+                    variant="secondary" 
+                    className="h-9 px-3 bg-panel border-line hover:bg-panel-2 text-primary font-medium"
+                  >
+                    <div className="flex items-center space-x-2">
+                      <div className="h-6 w-6 rounded-full bg-gradient-to-r from-blue-500 to-purple-500 flex items-center justify-center">
+                        <span className="text-white text-xs font-medium">
+                          {user?.firstName?.[0] || user?.emailAddresses?.[0]?.emailAddress?.[0] || 'U'}
+                        </span>
+                      </div>
+                      <span className="hidden sm:inline text-sm">
+                        {user?.firstName || 'Profile'}
                       </span>
+                      <ChevronDown className="h-3 w-3" />
                     </div>
                   </Button>
                 </DropdownMenuTrigger>
-                <DropdownMenuContent className="w-56" align="end" forceMount>
+                <DropdownMenuContent className="w-56 bg-panel border-line" align="end" forceMount>
                   <div className="flex flex-col space-y-1 p-2">
-                    <p className="text-sm font-medium leading-none">{user?.firstName} {user?.lastName}</p>
+                    <p className="text-sm font-medium leading-none text-primary">{user?.firstName} {user?.lastName}</p>
                     <p className="text-xs leading-none text-muted-foreground">
                       {user?.emailAddresses?.[0]?.emailAddress}
                     </p>
                   </div>
-                  <DropdownMenuSeparator />
+                  <DropdownMenuSeparator className="bg-line" />
                   <DropdownMenuItem
-                    className="cursor-pointer"
+                    className="cursor-pointer text-primary hover:bg-panel-2 focus:bg-panel-2"
                     onClick={() => signOut(() => window.location.href = '/')}
                   >
                     <LogOut className="mr-2 h-4 w-4" />
