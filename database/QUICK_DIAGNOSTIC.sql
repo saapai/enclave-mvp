@@ -27,3 +27,4 @@ WHERE tablename = 'space';
 -- 6. Test simple query on space table
 SELECT 'Can query space table:' as status, COUNT(*) as space_count 
 FROM space;
+

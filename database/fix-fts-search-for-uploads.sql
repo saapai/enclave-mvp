@@ -53,3 +53,4 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 -- Test the function (should return your resume)
 -- SELECT * FROM search_resources_fts('resume', '00000000-0000-0000-0000-000000000000', 10, 0);
 
+

@@ -80,3 +80,4 @@ export function ProfileDropdown({ userName, userEmail, userInitials, onSignOut }
     </div>
   )
 }
+

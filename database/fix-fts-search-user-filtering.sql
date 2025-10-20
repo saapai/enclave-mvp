@@ -51,3 +51,4 @@ BEGIN
   OFFSET offset_count;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
+

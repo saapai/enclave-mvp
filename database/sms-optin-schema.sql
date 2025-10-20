@@ -56,3 +56,4 @@ COMMENT ON TABLE sms_optin IS 'Stores SMS opt-in consent information for Twilio 
 COMMENT ON TABLE sms_message_log IS 'Logs all SMS messages sent through the system for auditing and compliance';
 
 
+

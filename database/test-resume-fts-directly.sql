@@ -53,3 +53,4 @@ WHERE space_id = '00000000-0000-0000-0000-000000000000'
       @@ plainto_tsquery('english', 'UCLA')
 ORDER BY rank DESC;
 
+

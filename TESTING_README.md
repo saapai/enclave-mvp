@@ -203,3 +203,4 @@ test('My new feature', async ({ page }) => {
 ---
 
 **Remember:** Run smoke tests before every deploy! 🚀
+

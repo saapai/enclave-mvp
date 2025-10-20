@@ -16,3 +16,4 @@ WHERE tablename = 'app_user';
 -- Test that we can query spaces
 SELECT 'Spaces accessible:' as status, COUNT(*) as count 
 FROM space;
+

@@ -54,3 +54,4 @@ These policies are safe because:
 - All API routes verify user identity via Clerk before database operations
 - Service role key is only used in server-side API routes (never exposed to client)
 
+

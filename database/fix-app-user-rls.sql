@@ -39,3 +39,4 @@ CREATE POLICY "Users can delete their profile"
 SELECT schemaname, tablename, policyname, permissive, roles, cmd, qual, with_check
 FROM pg_policies
 WHERE tablename = 'app_user';
+

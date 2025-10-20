@@ -129,3 +129,4 @@ END $$;
 -- Verify policies were created
 SELECT 'RLS Policies Created Successfully' as status;
 SELECT tablename, policyname FROM pg_policies WHERE tablename IN ('resource', 'space', 'app_user', 'resource_embedding') ORDER BY tablename, policyname;
+

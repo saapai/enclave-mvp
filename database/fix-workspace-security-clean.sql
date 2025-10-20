@@ -192,3 +192,4 @@ WHERE tablename IN (
   'google_docs_chunks', 'calendar_events_chunks', 
   'resource_embedding'
 );
+

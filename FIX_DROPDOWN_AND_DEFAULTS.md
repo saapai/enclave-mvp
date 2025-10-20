@@ -114,3 +114,4 @@ fetch('/api/spaces')
 3. **Whether dropdown exists in HTML** (inspect element)
 
 With this info, I'll fix both issues immediately! 🚀
+

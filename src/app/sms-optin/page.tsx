@@ -321,7 +321,10 @@ export default function SMSOptInPage() {
         <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
           <div className="flex justify-center space-x-6 mb-4">
             <Link href="/terms" className="text-blue-400 hover:text-blue-300 underline text-sm">
-              Terms & Privacy
+              Terms of Service
+            </Link>
+            <Link href="/privacy" className="text-blue-400 hover:text-blue-300 underline text-sm">
+              Privacy Policy
             </Link>
             <Link href="/" className="text-blue-400 hover:text-blue-300 underline text-sm">
               Back to Home
@@ -335,5 +338,6 @@ export default function SMSOptInPage() {
     </div>
   )
 }
+
 
 

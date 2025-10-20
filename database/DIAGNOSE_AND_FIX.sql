@@ -54,3 +54,4 @@ FROM space;
 -- 9. Check if there are any app_user entries
 SELECT 'App users count' as check_type, COUNT(*) as user_count
 FROM app_user;
+

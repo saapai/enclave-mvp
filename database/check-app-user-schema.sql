@@ -16,3 +16,4 @@ SELECT
 FROM pg_constraint
 WHERE conrelid = 'app_user'::regclass
 ORDER BY contype, conname;
+

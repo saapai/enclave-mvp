@@ -231,3 +231,4 @@ CREATE POLICY "authenticated_workspace_members"
 - No more cross-workspace visibility issues
 
 **This is a critical security fix - please run it immediately!**
+

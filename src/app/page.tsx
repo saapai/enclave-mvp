@@ -1067,6 +1067,31 @@ export default function HomePage() {
           </div>
         </div>
       )}
+
+      {/* Footer */}
+      <footer className="mt-16 py-8 border-t border-gray-800">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex flex-col md:flex-row justify-between items-center space-y-4 md:space-y-0">
+            <div className="text-gray-400 text-sm">
+              © 2025 Enclave. All rights reserved.
+            </div>
+            <div className="flex space-x-6">
+              <a 
+                href="/terms" 
+                className="text-gray-400 hover:text-white text-sm transition-colors"
+              >
+                Terms of Service
+              </a>
+              <a 
+                href="/privacy" 
+                className="text-gray-400 hover:text-white text-sm transition-colors"
+              >
+                Privacy Policy
+              </a>
+            </div>
+          </div>
+        </div>
+      </footer>
     </div>
   )
 }

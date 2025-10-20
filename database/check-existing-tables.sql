@@ -11,3 +11,4 @@ WHERE table_schema = 'public'
     'resource_embedding', 'google_accounts'
   )
 ORDER BY table_name;
+

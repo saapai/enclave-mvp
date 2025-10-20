@@ -75,3 +75,4 @@ FROM pg_policies
 WHERE tablename = 'app_user'
 ORDER BY policyname;
 
+

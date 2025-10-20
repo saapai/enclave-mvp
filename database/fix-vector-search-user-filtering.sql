@@ -60,3 +60,4 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 --   0,
 --   'user_345gIKBpm7EpflDg5nayG4kvT8D'
 -- );
+

@@ -58,3 +58,4 @@ After checking console and network:
 4. **Whether dropdown exists in HTML** (inspect element)
 
 With this info, I can fix the dropdown immediately!
+

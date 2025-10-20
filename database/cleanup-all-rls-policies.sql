@@ -59,3 +59,4 @@ CREATE POLICY "embedding_all_access_auth" ON resource_embedding FOR ALL TO authe
 -- Verify cleanup
 SELECT 'RLS Cleanup Complete' as status;
 SELECT tablename, policyname FROM pg_policies WHERE tablename IN ('resource', 'space', 'app_user', 'resource_embedding') ORDER BY tablename, policyname;
+

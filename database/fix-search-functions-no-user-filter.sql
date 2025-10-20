@@ -127,3 +127,4 @@ WHERE proname IN (
   'search_google_docs_vector', 
   'search_calendar_events_vector'
 );
+

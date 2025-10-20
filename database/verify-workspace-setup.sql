@@ -67,3 +67,4 @@ SELECT
         ) THEN '✅ created_by column exists in space'
         ELSE '❌ created_by column missing in space'
     END AS created_by_status;
+
