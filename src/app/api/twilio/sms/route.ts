@@ -390,65 +390,86 @@ export async function POST(request: NextRequest) {
 
     console.log(`[Twilio SMS] Found ${dedupedResults.length} unique results`)
 
-    // Generate natural summary from results - send ALL results to AI to choose best
+    // Generate natural summary from results - use CHUNKING to search through entire documents
     let summary = ''
     if (dedupedResults.length > 0) {
-      // Build context with all top results
-      // Use more context per document so AI can find information throughout the doc
-      const context = dedupedResults
-        .slice(0, 2) // Top 2 results (increased context per result)
-        .map((result, idx) => {
-          const body = result.body || ''
-          // Increase to 1500 chars per document to capture more content
-          const truncatedBody = body.length > 1500 ? body.substring(0, 1500) + '...' : body
-          return `Title: ${result.title}\nContent: ${truncatedBody}`
-        })
-        .join('\n\n---\n\n')
+      console.log(`[Twilio SMS] Processing ${dedupedResults.length} results with chunking strategy`)
       
-      console.log(`[Twilio SMS] Sending ${dedupedResults.slice(0, 2).length} results to AI for best match`)
-      console.log(`[Twilio SMS] Context length: ${context.length} chars`)
-      console.log(`[Twilio SMS] Context preview: ${context.substring(0, 200)}...`)
+      // Try each result, chunking large documents
+      let foundAnswer = false
       
-      // ALWAYS use AI to extract ONLY relevant info from the documents for the query
-      // AI will choose which documents are most relevant
-      try {
-        const aiUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'https://www.tryenclave.com'}/api/ai`
-        console.log(`[Twilio SMS] Calling AI API at: ${aiUrl}`)
+      for (const result of dedupedResults.slice(0, 3)) {
+        if (foundAnswer) break
         
-        const aiRes = await fetch(aiUrl, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            query,
-            context: context.length > 2000 ? context.substring(0, 2000) + '...' : context, // Send up to 2000 chars
-            type: 'summary'
-          })
-        })
+        const body = result.body || ''
+        if (!body) continue
         
-        console.log(`[Twilio SMS] AI API response status: ${aiRes.status}`)
+        // Split document into 1500-char chunks with overlap
+        const chunkSize = 1500
+        const chunks: string[] = []
         
-        if (aiRes.ok) {
-          const aiData = await aiRes.json()
-          console.log(`[Twilio SMS] AI API response data:`, JSON.stringify(aiData).substring(0, 200))
-          summary = aiData.response || dedupedResults[0].body || dedupedResults[0].title
-          console.log('[Twilio SMS] AI generated summary from multiple results')
+        if (body.length <= chunkSize) {
+          chunks.push(body)
         } else {
-          const errorText = await aiRes.text()
-          console.error(`[Twilio SMS] AI API error response:`, errorText.substring(0, 300))
-          // Fallback: use top result
-          const topResult = dedupedResults[0]
-          summary = topResult.body || topResult.title
-          console.log('[Twilio SMS] Using fallback summary from top result')
+          // Create overlapping chunks to avoid splitting relevant content
+          for (let i = 0; i < body.length; i += chunkSize - 200) { // 200 char overlap
+            chunks.push(body.substring(i, i + chunkSize))
+          }
         }
-      } catch (err) {
-        console.error('[Twilio SMS] AI summary failed with exception:', err)
-        // Fallback: use top result
-        const topResult = dedupedResults[0]
-        summary = topResult.body || topResult.title
-        console.log('[Twilio SMS] Using fallback summary after exception')
+        
+        console.log(`[Twilio SMS] Document "${result.title}" split into ${chunks.length} chunks`)
+        
+        // Try each chunk until we find an answer
+        for (let i = 0; i < chunks.length; i++) {
+          if (foundAnswer) break
+          
+          const context = `Title: ${result.title}\nContent: ${chunks[i]}`
+          
+          try {
+            const aiUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'https://www.tryenclave.com'}/api/ai`
+            
+            const aiRes = await fetch(aiUrl, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                query,
+                context,
+                type: 'summary'
+              })
+            })
+            
+            if (aiRes.ok) {
+              const aiData = await aiRes.json()
+              const response = aiData.response || ''
+              
+              // Check if AI found information (not a "no information" response)
+              if (!response.toLowerCase().includes('no information') && 
+                  !response.toLowerCase().includes('not found') &&
+                  response.length > 20) {
+                summary = response
+                foundAnswer = true
+                console.log(`[Twilio SMS] Found answer in chunk ${i + 1}/${chunks.length} of "${result.title}"`)
+                break
+              } else if (i === chunks.length - 1) {
+                // Last chunk and still no answer, keep the response
+                summary = response
+                console.log(`[Twilio SMS] No answer found in "${result.title}", trying next document`)
+              }
+            }
+          } catch (err) {
+            console.error(`[Twilio SMS] AI call failed for chunk ${i + 1}:`, err)
+          }
+        }
       }
       
-      console.log('[Twilio SMS] Generated summary:', summary.substring(0, 100))
+      // Fallback if no answer found
+      if (!summary) {
+        const topResult = dedupedResults[0]
+        summary = topResult.body?.substring(0, 400) || topResult.title
+        console.log('[Twilio SMS] Using fallback summary from top result')
+      }
+      
+      console.log('[Twilio SMS] Final summary:', summary.substring(0, 100))
     }
 
     // Format response for SMS
