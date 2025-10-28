@@ -28,8 +28,12 @@ export async function POST(request: NextRequest) {
     let userPrompt = ''
 
     if (type === 'summary') {
-      systemPrompt = `You are a helpful AI assistant. You provide concise, accurate summaries of information based on the context provided. When users ask for links, always include the actual URLs from the context. Keep responses under 200 words and focus on the most important details.`
-      userPrompt = `Context: ${safeContext}\n\nQuery: ${safeQuery || 'Summarize the context above.'}\n\nProvide a helpful summary or answer based on the context above. If the user is asking for a link or URL, make sure to include the actual URL from the context.`
+      systemPrompt = `You are a helpful AI assistant. You provide concise, accurate summaries of information based on the context provided. 
+      
+IMPORTANT: You may receive multiple documents in the context, separated by "---". Analyze which document(s) best match the user's query and provide information ONLY from the most relevant document(s). If multiple documents are relevant, you can combine information from them. 
+
+When users ask for links, always include the actual URLs from the context. Keep responses under 300 words and focus on the most important details.`
+      userPrompt = `Context: ${safeContext}\n\nQuery: ${safeQuery || 'Summarize the context above.'}\n\nAnalyze which part of the context best answers this query. Provide a helpful summary or answer based ONLY on the most relevant information from the context. If the user is asking for a link or URL, make sure to include the actual URL from the context.`
     } else if (type === 'response') {
       systemPrompt = `You are a helpful AI assistant. You provide direct, helpful answers to questions about information, events, and procedures. Be friendly but professional.`
       userPrompt = `Context: ${safeContext}\n\nQuestion: ${safeQuery || 'Provide key takeaways from the context.'}\n\nAnswer this question based on the context provided.`
