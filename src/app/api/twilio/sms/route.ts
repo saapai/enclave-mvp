@@ -273,40 +273,18 @@ export async function POST(request: NextRequest) {
 
     console.log(`[Twilio SMS] Found ${dedupedResults.length} unique results`)
 
-    // Generate smart summary from results
+    // Generate smart summary from top result
     let summary = ''
     if (dedupedResults.length > 0) {
-      try {
-        // Create context from top results
-        const context = dedupedResults.map(r => 
-          `${r.title}${r.body ? ': ' + r.body.substring(0, 150) : ''}`
-        ).join('\n\n')
-        
-        // Call AI API for summary
-        const aiRes = await fetch(`${process.env.NEXT_PUBLIC_APP_URL || 'https://www.tryenclave.com'}/api/ai`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            query,
-            context,
-            type: 'summary'
-          })
-        })
-        
-        if (aiRes.ok) {
-          const aiData = await aiRes.json()
-          summary = aiData.response || ''
-          console.log('[Twilio SMS] Generated AI summary:', summary.substring(0, 100))
-          console.log('[Twilio SMS] Full summary length:', summary.length)
-        } else {
-          const errorText = await aiRes.text()
-          console.error('[Twilio SMS] AI API error:', aiRes.status, aiRes.statusText, errorText)
-        }
-      } catch (err) {
-        console.error('[Twilio SMS] AI summary failed:', err)
+      const topResult = dedupedResults[0]
+      // Create a concise summary from the top result
+      if (topResult.body) {
+        const bodyPreview = topResult.body.length > 100 ? topResult.body.substring(0, 100) + '...' : topResult.body
+        summary = `${topResult.title}: ${bodyPreview}`
+      } else {
+        summary = topResult.title
       }
-      
-      console.log('[Twilio SMS] Summary variable after AI call:', summary ? 'HAS VALUE' : 'EMPTY')
+      console.log('[Twilio SMS] Generated summary:', summary)
     }
 
     // Format response for SMS
