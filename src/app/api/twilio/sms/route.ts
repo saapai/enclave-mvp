@@ -208,11 +208,13 @@ export async function POST(request: NextRequest) {
     }
 
     // Check if user is in sms_optin table to determine if they're truly new
+    // Only send welcome if they're NOT in the table at all (first time ever)
     const isTrulyNewUser = !optInData
     let sassyWelcome = ''
     
+    // Only show welcome for users who have NEVER opted in before (completely new phone number)
     if (isTrulyNewUser) {
-      console.log(`[Twilio SMS] New user ${phoneNumber}, auto-opting in`)
+      console.log(`[Twilio SMS] Brand new user ${phoneNumber}, sending welcome and opting in`)
       
       // Auto-opt in the user
       await supabase
@@ -359,7 +361,8 @@ export async function POST(request: NextRequest) {
     // Format response for SMS
     let responseMessage = ''
     
-    // Add sassy welcome ONLY for truly new users (first time opt-in)
+    // Add welcome ONLY for brand new users who just opted in (isTrulyNewUser = true and sassyWelcome was set)
+    // This ensures welcome is ONLY sent on the FIRST message ever from a phone number
     if (isTrulyNewUser && sassyWelcome) {
       responseMessage = `${sassyWelcome}\n\n`
     }
