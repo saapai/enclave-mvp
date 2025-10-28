@@ -80,7 +80,9 @@ export async function POST(request: NextRequest) {
       .eq('opted_out', false)
       .single()
 
-    const isNewUser = !optInData
+    let isNewUser = !optInData
+    let sassyWelcome = ''
+    
     if (isNewUser) {
       console.log(`[Twilio SMS] New user ${phoneNumber}, auto-opting in`)
       
@@ -97,7 +99,7 @@ export async function POST(request: NextRequest) {
           updated_at: new Date().toISOString()
         })
 
-      // Send sassy welcome message
+      // Pick sassy welcome message
       const sassyMessages = [
         "📱 Wow, so entrepreneurial of you to actually use what your friends are using. Welcome to Enclave, you follower.",
         "🚀 Look at you being all innovative and using the same tools everyone else does! Enclave welcomes another sheep 🐑",
@@ -105,7 +107,7 @@ export async function POST(request: NextRequest) {
         "📚 Wow, such innovation! Much entrepreneurship! Very unique! Enclave welcomes another copycat 👏",
         "🌟 Joining late to the party we see. Welcome to Enclave, where everyone's an entrepreneur (apparently)."
       ]
-      const randomSassyMsg = sassyMessages[Math.floor(Math.random() * sassyMessages.length)]
+      sassyWelcome = sassyMessages[Math.floor(Math.random() * sassyMessages.length)]
       
       // Start query session for them
       await supabase
@@ -116,11 +118,6 @@ export async function POST(request: NextRequest) {
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString()
         })
-
-      return new NextResponse(
-        `<?xml version="1.0" encoding="UTF-8"?><Response><Message>${randomSassyMsg}</Message></Response>`,
-        { headers: { 'Content-Type': 'application/xml' } }
-      )
     }
 
     // Handle commands: STOP, HELP
@@ -302,12 +299,17 @@ export async function POST(request: NextRequest) {
     // Format response for SMS
     let responseMessage = ''
     
+    // Add sassy welcome for new users
+    if (isNewUser && sassyWelcome) {
+      responseMessage = `${sassyWelcome}\n\n`
+    }
+    
     if (dedupedResults.length === 0) {
-      responseMessage = 'No results found. Try a different search term.'
+      responseMessage += isNewUser ? 'No results found. Try a different search term.' : 'No results found. Try a different search term.'
     } else {
       // Add AI summary at top if available
       if (summary && summary.length > 0) {
-        responseMessage = `💡 ${summary}\n\n`
+        responseMessage += `💡 ${summary}\n\n`
       }
       
       responseMessage += `Found ${dedupedResults.length} result${dedupedResults.length > 1 ? 's' : ''}:\n\n`
