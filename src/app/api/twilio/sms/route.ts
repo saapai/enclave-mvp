@@ -17,6 +17,49 @@ const isEnclaveQuery = (query: string): boolean => {
          lowerQuery.includes('enclave sucks')
 }
 
+// LLM query classifier to determine if query is about content, enclave, or neither
+const classifyQuery = async (query: string, searchResultsCount: number): Promise<'content' | 'enclave' | 'chat'> => {
+  try {
+    // If we found results, it's definitely a content query
+    if (searchResultsCount > 0) {
+      return 'content'
+    }
+    
+    // Call AI to classify the query
+    const aiRes = await fetch(`${process.env.NEXT_PUBLIC_APP_URL || 'https://www.tryenclave.com'}/api/ai`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        query: `Classify this query into exactly one category: "content", "enclave", or "chat". 
+        
+Query: "${query}"
+
+Content means asking about documents/events/resources in the knowledge base.
+Enclave means asking about what Enclave is/how it works.
+Chat means anything else - greetings, complaints, random conversation.
+
+Respond with ONLY the category word:`,
+        context: '',
+        type: 'general'
+      })
+    })
+    
+    if (aiRes.ok) {
+      const aiData = await aiRes.json()
+      const response = aiData.response?.toLowerCase().trim() || 'chat'
+      
+      if (response.includes('content')) return 'content'
+      if (response.includes('enclave')) return 'enclave'
+      return 'chat'
+    }
+  } catch (err) {
+    console.error('[Twilio SMS] AI classifier failed:', err)
+  }
+  
+  // Fallback to checking if it's about Enclave
+  return isEnclaveQuery(query) ? 'enclave' : 'chat'
+}
+
 // Force dynamic rendering for webhooks
 export const dynamic = 'force-dynamic'
 
@@ -321,13 +364,16 @@ export async function POST(request: NextRequest) {
       responseMessage = `${sassyWelcome}\n\n`
     }
     
-    if (dedupedResults.length === 0) {
-      // No results found - check if it's about Enclave, then fall back to snarky response
-      const lowerQuery = query.toLowerCase()
+    // Classify the query using LLM
+    const queryType = await classifyQuery(query, dedupedResults.length)
+    console.log(`[Twilio SMS] Query classified as: ${queryType}`)
+    
+    if (dedupedResults.length === 0 || queryType === 'chat' || queryType === 'enclave') {
+      // No results OR classified as chat/enclave - check category
       
-      // Check if query is about Enclave
-      if (isEnclaveQuery(lowerQuery)) {
+      if (queryType === 'enclave') {
         let enclaveInfo = ''
+        const lowerQuery = query.toLowerCase()
         if (lowerQuery.includes('terrible') || lowerQuery.includes('sucks')) {
           enclaveInfo = `😅 Ouch! We're working on it. Enclave helps you search all your resources via SMS or web.\n\n📧 Questions? Email try.inquiyr@gmail.com`
         } else {
@@ -358,8 +404,8 @@ export async function POST(request: NextRequest) {
           responseMessage += "I don't have any info on that. Try asking about something in your resources."
         }
       }
-    } else {
-      // We have results - send the natural summary
+    } else if (queryType === 'content' && dedupedResults.length > 0) {
+      // We have results and it's classified as content - send the natural summary
       if (summary && summary.length > 0) {
         responseMessage += summary
       } else {
@@ -368,6 +414,7 @@ export async function POST(request: NextRequest) {
         responseMessage += topResult.body || topResult.title
       }
     }
+    // If queryType is 'chat' but no results, the chat handler above already took care of it
 
     // Truncate to SMS limits (1600 chars max for Twilio)
     if (responseMessage.length > 1600) {
