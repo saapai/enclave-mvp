@@ -128,3 +128,4 @@ WHERE proname IN (
   'search_calendar_events_vector'
 );
 
+

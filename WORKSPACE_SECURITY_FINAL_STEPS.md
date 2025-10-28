@@ -143,3 +143,4 @@ SELECT tablename, policyname FROM pg_policies WHERE tablename IN ('resource', 's
 
 **Run the SQL script above in Supabase SQL Editor to complete the fix!**
 
+

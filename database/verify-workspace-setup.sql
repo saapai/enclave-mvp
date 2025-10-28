@@ -68,3 +68,4 @@ SELECT
         ELSE '❌ created_by column missing in space'
     END AS created_by_status;
 
+

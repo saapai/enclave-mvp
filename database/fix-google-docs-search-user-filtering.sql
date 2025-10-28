@@ -51,3 +51,4 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 -- Add comment
 COMMENT ON FUNCTION search_google_docs_vector IS 'Vector similarity search for Google Doc chunks with optional user filtering for personal workspace isolation';
 
+

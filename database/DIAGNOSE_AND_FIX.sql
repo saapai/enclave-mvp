@@ -55,3 +55,4 @@ FROM space;
 SELECT 'App users count' as check_type, COUNT(*) as user_count
 FROM app_user;
 
+

@@ -33,3 +33,4 @@ SELECT plainto_tsquery('english', 'resume')::text as processed_query;
 SELECT plainto_tsquery('english', 'UCLA')::text as processed_query;
 
 
+

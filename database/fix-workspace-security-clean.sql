@@ -193,3 +193,4 @@ WHERE tablename IN (
   'resource_embedding'
 );
 
+

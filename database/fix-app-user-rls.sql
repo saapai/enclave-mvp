@@ -40,3 +40,4 @@ SELECT schemaname, tablename, policyname, permissive, roles, cmd, qual, with_che
 FROM pg_policies
 WHERE tablename = 'app_user';
 
+

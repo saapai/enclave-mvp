@@ -17,3 +17,4 @@ WHERE tablename = 'app_user';
 SELECT 'Spaces accessible:' as status, COUNT(*) as count 
 FROM space;
 
+

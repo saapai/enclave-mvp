@@ -84,3 +84,4 @@ Query "what does my resume say" in your app - **IT WILL WORK!** 🎉
 Once you run this migration, **ALL CORE FEATURES WILL WORK!**
 
 
+
