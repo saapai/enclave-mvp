@@ -59,21 +59,55 @@ export async function POST(request: NextRequest) {
     // Normalize phone number
     const phoneNumber = from.replace('+', '')
 
-    // Check if user is opted in
-    const { data: optInData } = await supabase
-      .from('sms_optin')
-      .select('*')
-      .eq('phone', phoneNumber)
-      .eq('opted_out', false)
-      .single()
-
-    if (!optInData) {
-      console.log(`[Twilio SMS] User ${phoneNumber} not opted in, ignoring message`)
-      return new NextResponse('User not opted in', { status: 200 })
-    }
-
-    // Handle commands: STOP, HELP
+    // Handle commands: STOP, HELP, SEP
     const command = body?.trim().toUpperCase()
+
+    // Check if this is the "SEP" keyword - handle FIRST to allow opt-in
+    if (command === 'SEP') {
+      // Check if user is opted in, if not, opt them in automatically
+      const { data: optInData } = await supabase
+        .from('sms_optin')
+        .select('*')
+        .eq('phone', phoneNumber)
+        .eq('opted_out', false)
+        .single()
+
+      if (!optInData) {
+        console.log(`[Twilio SMS] User ${phoneNumber} not opted in, auto-opting in via SEP command`)
+        
+        // Auto-opt in the user
+        await supabase
+          .from('sms_optin')
+          .upsert({
+            phone: phoneNumber,
+            name: phoneNumber, // Use phone as name for now
+            method: 'sms_keyword',
+            keyword: 'SEP',
+            opted_out: false,
+            consent_timestamp: new Date().toISOString(),
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
+          })
+      }
+
+      // Start a query session
+      await supabase
+        .from('sms_query_session')
+        .upsert({
+          phone_number: phoneNumber,
+          status: 'active',
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        })
+
+      return new NextResponse(
+        '<?xml version="1.0" encoding="UTF-8"?>' +
+        '<Response><Message>Welcome to Enclave search! Type your question and I\'ll search through your resources.</Message></Response>',
+        { 
+          headers: { 'Content-Type': 'application/xml' }
+        }
+      )
+    }
     
     if (command === 'STOP') {
       // Opt out the user
@@ -105,28 +139,6 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Check if this is the "SEP" keyword
-    const upperBody = body?.trim().toUpperCase()
-    if (upperBody === 'SEP') {
-      // Start a query session
-      await supabase
-        .from('sms_query_session')
-        .upsert({
-          phone_number: phoneNumber,
-          status: 'active',
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString()
-        })
-
-      return new NextResponse(
-        '<?xml version="1.0" encoding="UTF-8"?>' +
-        '<Response><Message>Welcome to Enclave search! Type your question and I\'ll search through your resources.</Message></Response>',
-        { 
-          headers: { 'Content-Type': 'application/xml' }
-        }
-      )
-    }
-
     // Check if user has an active query session
     const { data: activeSession } = await supabase
       .from('sms_query_session')
@@ -135,7 +147,7 @@ export async function POST(request: NextRequest) {
       .eq('status', 'active')
       .single()
 
-    if (!activeSession && upperBody !== 'SEP') {
+    if (!activeSession) {
       // No active session - prompt user to start with SEP
       return new NextResponse(
         '<?xml version="1.0" encoding="UTF-8"?>' +
