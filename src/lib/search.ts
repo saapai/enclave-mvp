@@ -2,10 +2,14 @@ import { supabase, supabaseAdmin } from './supabase'
 import { ResourceWithTags, SearchResult } from './database.types'
 import { embedText } from './embeddings'
 import { searchSlackMessages } from './slack'
+import { rerankResults } from './reranker'
 
 // Use admin client for vector searches to bypass RLS (user auth validated at API level)
 // Regular client used for standard queries with user context
 const searchClient = supabaseAdmin!
+
+// Feature flag: Enable reranking with time decay + authority
+const USE_RERANKING = process.env.USE_RERANKING === 'true'
 
 export interface SearchFilters {
   type?: string
@@ -254,14 +258,42 @@ export async function searchResourcesHybrid(
     // Combine and rank results from all sources
     console.log(`[Hybrid Search] Result counts - Regular FTS: ${regularResults.length}, Regular Vector: ${vectorSearchResults.length}, GDocs: ${googleDocsSearchResults.length}, Calendar: ${calendarSearchResults.length}, Slack: ${slackSearchResults.length}`)
     
-    const allResults = [...regularResults, ...vectorSearchResults, ...googleDocsSearchResults, ...calendarSearchResults, ...slackSearchResults]
+    let allResults = [...regularResults, ...vectorSearchResults, ...googleDocsSearchResults, ...calendarSearchResults, ...slackSearchResults]
     
-    // Sort by score/rank
-    allResults.sort((a, b) => (b.score || 0) - (a.score || 0))
+    // Apply reranking if enabled
+    if (USE_RERANKING && regularResults.length > 0 && vectorSearchResults.length > 0) {
+      console.log(`[Hybrid Search] Applying reranking (time decay + authority)`)
+      
+      // Separate BM25 (FTS) and Vector results for reranking
+      const bm25Results = regularResults
+      const vectorOnlyResults = vectorSearchResults
+      
+      // Rerank with time decay + authority
+      const reranked = rerankResults(bm25Results, vectorOnlyResults, {
+        bm25Weight: 0.4,
+        vectorWeight: 0.6,
+        halfLifeDays: 90
+      })
+      
+      // Merge with other sources (GDocs, Calendar, Slack)
+      allResults = [...reranked, ...googleDocsSearchResults, ...calendarSearchResults, ...slackSearchResults]
+      
+      // Sort by final score (from reranker) or fallback to original score
+      allResults.sort((a, b) => {
+        const scoreA = (a as any).finalScore || a.score || 0
+        const scoreB = (b as any).finalScore || b.score || 0
+        return scoreB - scoreA
+      })
+    } else {
+      // Simple sort by score/rank (old behavior)
+      allResults.sort((a, b) => (b.score || 0) - (a.score || 0))
+    }
     
     console.log(`[Hybrid Search] Top 5 results:`)
     allResults.slice(0, 5).forEach((result, i) => {
-      console.log(`  ${i+1}. [${result.type}] ${result.title} (score: ${result.score?.toFixed(3)}, source: ${(result as any).source})`)
+      const finalScore = (result as any).finalScore
+      const scoreDisplay = finalScore ? `final: ${finalScore.toFixed(3)}` : `score: ${result.score?.toFixed(3)}`
+      console.log(`  ${i+1}. [${result.type}] ${result.title} (${scoreDisplay}, source: ${(result as any).source})`)
     })
     
     // Apply limit and offset
