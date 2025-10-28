@@ -60,6 +60,43 @@ Respond with ONLY the category word:`,
   return isEnclaveQuery(query) ? 'enclave' : 'chat'
 }
 
+// Split long messages at sentence boundaries into multiple messages
+const splitLongMessage = (message: string, maxLength: number = 1600): string[] => {
+  if (message.length <= maxLength) {
+    return [message]
+  }
+  
+  const messages: string[] = []
+  let remaining = message
+  
+  while (remaining.length > maxLength) {
+    // Find the last sentence boundary within maxLength
+    let splitPoint = maxLength
+    const searchText = remaining.substring(0, maxLength)
+    
+    // Try to find sentence endings
+    const lastPeriod = searchText.lastIndexOf('. ')
+    const lastNewline = searchText.lastIndexOf('\n')
+    const lastQuestion = searchText.lastIndexOf('? ')
+    const lastExclamation = searchText.lastIndexOf('! ')
+    
+    // Use the latest sentence boundary
+    const boundaries = [lastPeriod, lastNewline, lastQuestion, lastExclamation].filter(b => b > maxLength * 0.5) // Only use if reasonable length
+    if (boundaries.length > 0) {
+      splitPoint = Math.max(...boundaries) + 1
+    }
+    
+    messages.push(remaining.substring(0, splitPoint).trim())
+    remaining = remaining.substring(splitPoint).trim()
+  }
+  
+  if (remaining.length > 0) {
+    messages.push(remaining)
+  }
+  
+  return messages
+}
+
 // Force dynamic rendering for webhooks
 export const dynamic = 'force-dynamic'
 
@@ -343,15 +380,39 @@ export async function POST(request: NextRequest) {
     // Generate natural summary from results
     let summary = ''
     if (dedupedResults.length > 0) {
-      // Take the best matching result and format it naturally
+      // Take the best matching result
       const topResult = dedupedResults[0]
       
-      // Create a natural response based on the query and result
-      if (topResult.body) {
-        // If there's body content, use it directly (already contains the info)
-        summary = topResult.body.length > 400 ? topResult.body.substring(0, 400) : topResult.body
+      // If body is long, use AI to summarize to relevant info only
+      if (topResult.body && topResult.body.length > 300) {
+        try {
+          const aiRes = await fetch(`${process.env.NEXT_PUBLIC_APP_URL || 'https://www.tryenclave.com'}/api/ai`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              query,
+              context: topResult.body.substring(0, 1000), // Send up to 1000 chars for context
+              type: 'summary'
+            })
+          })
+          
+          if (aiRes.ok) {
+            const aiData = await aiRes.json()
+            summary = aiData.response || topResult.body.substring(0, 400)
+            console.log('[Twilio SMS] AI generated summary')
+          } else {
+            // Fallback: just truncate
+            summary = topResult.body.substring(0, 400) + '...'
+          }
+        } catch (err) {
+          // Fallback: just truncate
+          summary = topResult.body.substring(0, 400) + '...'
+        }
+      } else if (topResult.body) {
+        // Short body, use directly
+        summary = topResult.body
       } else {
-        // If no body, use the title
+        // No body, use title
         summary = topResult.title
       }
       
@@ -419,20 +480,29 @@ export async function POST(request: NextRequest) {
     }
     // If queryType is 'chat' but no results, the chat handler above already took care of it
 
-    // Truncate to SMS limits (1600 chars max for Twilio)
-    if (responseMessage.length > 1600) {
-      responseMessage = responseMessage.substring(0, 1600) + '...\n[Message truncated]'
-    }
-
-    return new NextResponse(
-      `<?xml version="1.0" encoding="UTF-8"?>
+    // Split long messages at sentence boundaries
+    const messages = splitLongMessage(responseMessage, 1600)
+    
+    // Twilio supports multiple <Message> tags for multiple messages
+    if (messages.length === 1) {
+      return new NextResponse(
+        `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Message>${responseMessage}</Message>
+  <Message>${messages[0]}</Message>
 </Response>`,
-      { 
-        headers: { 'Content-Type': 'application/xml' }
-      }
-    )
+        { headers: { 'Content-Type': 'application/xml' } }
+      )
+    } else {
+      // Multiple messages
+      const messagesXml = messages.map(msg => `<Message>${msg}</Message>`).join('\n  ')
+      return new NextResponse(
+        `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  ${messagesXml}
+</Response>`,
+        { headers: { 'Content-Type': 'application/xml' } }
+      )
+    }
 
   } catch (error) {
     console.error('[Twilio SMS] Error processing message:', error)
