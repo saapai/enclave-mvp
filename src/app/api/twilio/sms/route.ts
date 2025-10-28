@@ -178,7 +178,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Check if user has an active query session
-    const { data: activeSession } = await supabase
+    let { data: activeSession } = await supabase
       .from('sms_query_session')
       .select('*')
       .eq('phone_number', phoneNumber)
@@ -186,14 +186,26 @@ export async function POST(request: NextRequest) {
       .single()
 
     if (!activeSession) {
-      // No active session - prompt user to start with SEP
-      return new NextResponse(
-        '<?xml version="1.0" encoding="UTF-8"?>' +
-        '<Response><Message>To start searching, text SEP followed by your question. Text HELP for help or STOP to unsubscribe.</Message></Response>',
-        { 
-          headers: { 'Content-Type': 'application/xml' }
-        }
-      )
+      // No active session - auto-create one and continue
+      console.log(`[Twilio SMS] No active session for ${phoneNumber}, creating one`)
+      await supabase
+        .from('sms_query_session')
+        .upsert({
+          phone_number: phoneNumber,
+          status: 'active',
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        })
+      
+      // Re-check to confirm session was created
+      const { data: newSession } = await supabase
+        .from('sms_query_session')
+        .select('*')
+        .eq('phone_number', phoneNumber)
+        .eq('status', 'active')
+        .single()
+      
+      activeSession = newSession
     }
 
     // This is a query - execute search
