@@ -124,6 +124,36 @@ export async function POST(request: NextRequest) {
       )
     }
 
+    if (command === 'START') {
+      // Resubscribe the user (restore opted_out = false)
+      await supabase
+        .from('sms_optin')
+        .update({ 
+          opted_out: false,
+          consent_timestamp: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        })
+        .eq('phone', phoneNumber)
+
+      // Start query session
+      await supabase
+        .from('sms_query_session')
+        .upsert({
+          phone_number: phoneNumber,
+          status: 'active',
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        })
+
+      return new NextResponse(
+        '<?xml version="1.0" encoding="UTF-8"?>' +
+        '<Response><Message>You have been re-subscribed to Enclave notifications. Text your question to search!</Message></Response>',
+        { 
+          headers: { 'Content-Type': 'application/xml' }
+        }
+      )
+    }
+
     if (command === 'HELP') {
       return new NextResponse(
         '<?xml version="1.0" encoding="UTF-8"?>' +
