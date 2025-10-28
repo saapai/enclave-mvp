@@ -261,10 +261,10 @@ export async function POST(request: NextRequest) {
     if (isTrulyNewUser) {
       console.log(`[Twilio SMS] Brand new user ${phoneNumber}, sending welcome and opting in`)
       
-      // Auto-opt in the user
-      await supabase
+      // Auto-opt in the user - use INSERT with ON CONFLICT to ensure it works
+      const { error: insertError } = await supabase
         .from('sms_optin')
-        .upsert({
+        .insert({
           phone: phoneNumber,
           name: phoneNumber,
           method: 'sms_auto',
@@ -273,6 +273,11 @@ export async function POST(request: NextRequest) {
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString()
         })
+      
+      // If insert failed due to existing record, ignore it
+      if (insertError && insertError.code !== '23505') {
+        console.error(`[Twilio SMS] Error inserting optin:`, insertError)
+      }
 
       // Pick friendly welcome message (no emojis, no sarcasm)
       const sassyMessages = [
