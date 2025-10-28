@@ -172,21 +172,21 @@ export async function POST(request: NextRequest) {
     }
 
     // For SMS queries, restrict to UCLA SEP workspace ONLY
-    // Find the UCLA SEP workspace by name
-    const { data: uclaSepSpace } = await supabase
+    // Search for workspace with "SEP" in the name (should match "UCLA SEP" or any workspace containing "SEP")
+    const { data: sepSpaces } = await supabase
       .from('space')
-      .select('id')
-      .ilike('name', '%UCLA SEP%')
-      .limit(1)
-      .single()
+      .select('id, name')
+      .ilike('name', '%SEP%')
 
     const spaceIds: string[] = []
     
-    if (uclaSepSpace) {
-      spaceIds.push(uclaSepSpace.id)
-      console.log(`[Twilio SMS] Found UCLA SEP workspace: ${uclaSepSpace.id}`)
+    if (sepSpaces && sepSpaces.length > 0) {
+      for (const space of sepSpaces) {
+        spaceIds.push(space.id)
+      }
+      console.log(`[Twilio SMS] Found ${sepSpaces.length} SEP workspace(s):`, sepSpaces.map(s => ({ id: s.id, name: s.name })))
     } else {
-      console.error('[Twilio SMS] UCLA SEP workspace not found, defaulting to empty search')
+      console.error('[Twilio SMS] No SEP workspace found, defaulting to empty search')
     }
 
     console.log(`[Twilio SMS] Searching across ${spaceIds.length} workspaces for: "${query}"`)
