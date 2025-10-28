@@ -385,45 +385,48 @@ export async function POST(request: NextRequest) {
 
     console.log(`[Twilio SMS] Found ${dedupedResults.length} unique results`)
 
-    // Generate natural summary from results
+    // Generate natural summary from results - send ALL results to AI to choose best
     let summary = ''
     if (dedupedResults.length > 0) {
-      // Take the best matching result
-      const topResult = dedupedResults[0]
+      // Build context with all top results
+      const context = dedupedResults
+        .slice(0, 3) // Top 3 results
+        .map((result, idx) => {
+          const body = result.body || ''
+          const truncatedBody = body.length > 500 ? body.substring(0, 500) + '...' : body
+          return `Title: ${result.title}\nContent: ${truncatedBody}`
+        })
+        .join('\n\n---\n\n')
       
-      // ALWAYS use AI to extract ONLY relevant info from the document for the query
-      // This ensures we don't return the whole document
-      if (topResult.body && topResult.body.length > 50) {
-        try {
-          const aiRes = await fetch(`${process.env.NEXT_PUBLIC_APP_URL || 'https://www.tryenclave.com'}/api/ai`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              query,
-              context: topResult.body.length > 1500 ? topResult.body.substring(0, 1500) + '...' : topResult.body, // Send up to 1500 chars
-              type: 'summary'
-            })
+      console.log(`[Twilio SMS] Sending ${dedupedResults.slice(0, 3).length} results to AI for best match`)
+      
+      // ALWAYS use AI to extract ONLY relevant info from the documents for the query
+      // AI will choose which documents are most relevant
+      try {
+        const aiRes = await fetch(`${process.env.NEXT_PUBLIC_APP_URL || 'https://www.tryenclave.com'}/api/ai`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            query,
+            context: context.length > 2000 ? context.substring(0, 2000) + '...' : context, // Send up to 2000 chars
+            type: 'summary'
           })
-          
-          if (aiRes.ok) {
-            const aiData = await aiRes.json()
-            summary = aiData.response || topResult.body.substring(0, 400)
-            console.log('[Twilio SMS] AI generated summary')
-          } else {
-            // Fallback: just truncate
-            summary = topResult.body.substring(0, 400) + '...'
-          }
-        } catch (err) {
-          console.error('[Twilio SMS] AI summary failed:', err)
-          // Fallback: just truncate
-          summary = topResult.body.substring(0, 400) + '...'
+        })
+        
+        if (aiRes.ok) {
+          const aiData = await aiRes.json()
+          summary = aiData.response || dedupedResults[0].body || dedupedResults[0].title
+          console.log('[Twilio SMS] AI generated summary from multiple results')
+        } else {
+          // Fallback: use top result
+          const topResult = dedupedResults[0]
+          summary = topResult.body || topResult.title
         }
-      } else if (topResult.body) {
-        // Very short body, use directly
-        summary = topResult.body
-      } else {
-        // No body, use title
-        summary = topResult.title
+      } catch (err) {
+        console.error('[Twilio SMS] AI summary failed:', err)
+        // Fallback: use top result
+        const topResult = dedupedResults[0]
+        summary = topResult.body || topResult.title
       }
       
       console.log('[Twilio SMS] Generated summary:', summary.substring(0, 100))
