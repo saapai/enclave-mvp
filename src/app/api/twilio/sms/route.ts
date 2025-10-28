@@ -134,11 +134,11 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Now handle new user opt-in (if not a command)
-    let isNewUser = !optInData
+    // Check if user is in sms_optin table to determine if they're truly new
+    const isTrulyNewUser = !optInData
     let sassyWelcome = ''
     
-    if (isNewUser) {
+    if (isTrulyNewUser) {
       console.log(`[Twilio SMS] New user ${phoneNumber}, auto-opting in`)
       
       // Auto-opt in the user
@@ -300,13 +300,13 @@ export async function POST(request: NextRequest) {
     // Format response for SMS
     let responseMessage = ''
     
-    // Add sassy welcome for new users
-    if (isNewUser && sassyWelcome) {
+    // Add sassy welcome ONLY for truly new users (first time opt-in)
+    if (isTrulyNewUser && sassyWelcome) {
       responseMessage = `${sassyWelcome}\n\n`
     }
     
     if (dedupedResults.length === 0) {
-      responseMessage += isNewUser ? 'No results found. Try a different search term.' : 'No results found. Try a different search term.'
+      responseMessage += 'No results found. Try a different search term.'
     } else {
       // Add AI summary at top if available
       if (summary && summary.length > 0) {
