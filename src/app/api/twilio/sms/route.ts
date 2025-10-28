@@ -313,18 +313,22 @@ export async function POST(request: NextRequest) {
 
     console.log(`[Twilio SMS] Found ${dedupedResults.length} unique results`)
 
-    // Generate smart summary from top result
+    // Generate natural summary from results
     let summary = ''
     if (dedupedResults.length > 0) {
+      // Take the best matching result and format it naturally
       const topResult = dedupedResults[0]
-      // Create a concise summary from the top result
+      
+      // Create a natural response based on the query and result
       if (topResult.body) {
-        const bodyPreview = topResult.body.length > 100 ? topResult.body.substring(0, 100) + '...' : topResult.body
-        summary = `${topResult.title}: ${bodyPreview}`
+        // If there's body content, use it directly (already contains the info)
+        summary = topResult.body.length > 400 ? topResult.body.substring(0, 400) : topResult.body
       } else {
+        // If no body, use the title
         summary = topResult.title
       }
-      console.log('[Twilio SMS] Generated summary:', summary)
+      
+      console.log('[Twilio SMS] Generated summary:', summary.substring(0, 100))
     }
 
     // Format response for SMS
@@ -336,31 +340,18 @@ export async function POST(request: NextRequest) {
     }
     
     if (dedupedResults.length === 0) {
-      responseMessage += 'No results found. Try a different search term.'
+      responseMessage += "I couldn't find anything relevant to that in your resources. Try rephrasing your question or ask about something else."
     } else {
-      // Add AI summary at top if available
+      // For natural responses, just send the summary without the "Found X results:" format
+      // The summary already contains the relevant info from top result
       if (summary && summary.length > 0) {
-        responseMessage += `💡 ${summary}\n\n`
+        responseMessage += summary
+      } else {
+        // Fallback if no summary generated
+        const topResult = dedupedResults[0]
+        responseMessage += topResult.body || topResult.title
       }
-      
-      responseMessage += `Found ${dedupedResults.length} result${dedupedResults.length > 1 ? 's' : ''}:\n\n`
-      
-      dedupedResults.forEach((result, index) => {
-        responseMessage += `${index + 1}. ${result.title}\n`
-        if (result.body && result.body.length > 100) {
-          responseMessage += result.body.substring(0, 100) + '...\n'
-        } else if (result.body) {
-          responseMessage += result.body + '\n'
-        }
-        if (result.url) {
-          responseMessage += `Link: ${result.url}\n`
-        }
-        responseMessage += '\n'
-      })
     }
-
-    // Add footer
-    responseMessage += '---\nReply with another question or STOP to opt out.'
 
     // Truncate to SMS limits (1600 chars max for Twilio)
     if (responseMessage.length > 1600) {
