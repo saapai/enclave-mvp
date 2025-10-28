@@ -6,8 +6,15 @@ import { ENV } from '@/lib/env'
 
 // Check if query is about Enclave itself
 const isEnclaveQuery = (query: string): boolean => {
-  const enclaveKeywords = ['what is enclave', 'what does enclave', 'what is the point of enclave', 'what can enclave', 'enclave features', 'enclave capabilities']
-  return enclaveKeywords.some(keyword => query.toLowerCase().includes(keyword))
+  const lowerQuery = query.toLowerCase()
+  return lowerQuery.includes('what is enclave') || 
+         lowerQuery.includes('what does enclave') || 
+         lowerQuery.includes('what\'s enclave') ||
+         lowerQuery.includes('enclave features') || 
+         lowerQuery.includes('enclave capabilities') ||
+         lowerQuery.includes('what can enclave') ||
+         lowerQuery.includes('enclave is terrible') ||
+         lowerQuery.includes('enclave sucks')
 }
 
 // Force dynamic rendering for webhooks
@@ -224,8 +231,18 @@ export async function POST(request: NextRequest) {
 
     // Check if query is about Enclave itself
     if (isEnclaveQuery(query)) {
+      const lowerQuery = query.toLowerCase()
+      let response = ''
+      
+      // Special response for negative queries
+      if (lowerQuery.includes('terrible') || lowerQuery.includes('sucks')) {
+        response = `😅 Ouch! We're working on it. Enclave helps you search all your resources.\n\nTRY IT: Text me a question about your content and I'll find it.\n\n📧 Questions? Email try.inquiyr@gmail.com`
+      } else {
+        response = `📦 Enclave is your AI-powered knowledge base.\n\n🔍 CURRENT CAPABILITIES:\n• Search across docs, Google Docs, Calendar events\n• Hybrid search (semantic + keyword)\n• Workspace-based organization\n• Multiple sources: uploads, Google, Calendar, Slack\n\n🚀 FUTURE:\n• Multi-modal search (images, videos)\n• Team collaboration features\n• Advanced analytics\n• Enterprise integrations\n\nText your question to search!`
+      }
+      
       return new NextResponse(
-        `<?xml version="1.0" encoding="UTF-8"?><Response><Message>📦 Enclave is your AI-powered knowledge base.\n\n🔍 CURRENT CAPABILITIES:\n• Search across docs, Google Docs, Calendar events\n• Hybrid search (semantic + keyword)\n• Workspace-based organization\n• Multiple sources: uploads, Google, Calendar, Slack\n\n🚀 FUTURE:\n• Multi-modal search (images, videos)\n• Team collaboration features\n• Advanced analytics\n• Enterprise integrations\n\nText your question to search!</Message></Response>`,
+        `<?xml version="1.0" encoding="UTF-8"?><Response><Message>${response}</Message></Response>`,
         { headers: { 'Content-Type': 'application/xml' } }
       )
     }
@@ -280,12 +297,16 @@ export async function POST(request: NextRequest) {
           const aiData = await aiRes.json()
           summary = aiData.response || ''
           console.log('[Twilio SMS] Generated AI summary:', summary.substring(0, 100))
+          console.log('[Twilio SMS] Full summary length:', summary.length)
         } else {
-          console.error('[Twilio SMS] AI API error:', aiRes.status, aiRes.statusText)
+          const errorText = await aiRes.text()
+          console.error('[Twilio SMS] AI API error:', aiRes.status, aiRes.statusText, errorText)
         }
       } catch (err) {
         console.error('[Twilio SMS] AI summary failed:', err)
       }
+      
+      console.log('[Twilio SMS] Summary variable after AI call:', summary ? 'HAS VALUE' : 'EMPTY')
     }
 
     // Format response for SMS
