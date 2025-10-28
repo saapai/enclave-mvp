@@ -394,16 +394,18 @@ export async function POST(request: NextRequest) {
     let summary = ''
     if (dedupedResults.length > 0) {
       // Build context with all top results
+      // Use more context per document so AI can find information throughout the doc
       const context = dedupedResults
-        .slice(0, 3) // Top 3 results
+        .slice(0, 2) // Top 2 results (increased context per result)
         .map((result, idx) => {
           const body = result.body || ''
-          const truncatedBody = body.length > 500 ? body.substring(0, 500) + '...' : body
+          // Increase to 1500 chars per document to capture more content
+          const truncatedBody = body.length > 1500 ? body.substring(0, 1500) + '...' : body
           return `Title: ${result.title}\nContent: ${truncatedBody}`
         })
         .join('\n\n---\n\n')
       
-      console.log(`[Twilio SMS] Sending ${dedupedResults.slice(0, 3).length} results to AI for best match`)
+      console.log(`[Twilio SMS] Sending ${dedupedResults.slice(0, 2).length} results to AI for best match`)
       console.log(`[Twilio SMS] Context length: ${context.length} chars`)
       console.log(`[Twilio SMS] Context preview: ${context.substring(0, 200)}...`)
       
