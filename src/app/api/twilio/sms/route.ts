@@ -3,6 +3,10 @@ import twilio from 'twilio'
 import { supabase } from '@/lib/supabase'
 import { searchResourcesHybrid } from '@/lib/search'
 import { ENV } from '@/lib/env'
+import { planQuery, executePlan, composeResponse } from '@/lib/planner'
+
+// Feature flag: Enable new planner-based flow
+const USE_PLANNER = process.env.USE_PLANNER === 'true'
 
 // Check if query is about Enclave itself
 const isEnclaveQuery = (query: string): boolean => {
@@ -398,6 +402,66 @@ export async function POST(request: NextRequest) {
 
     console.log(`[Twilio SMS] Found ${dedupedResults.length} unique results`)
 
+    // ========================================================================
+    // NEW PLANNER-BASED FLOW (if enabled)
+    // ========================================================================
+    if (USE_PLANNER) {
+      console.log(`[Twilio SMS] Using planner-based flow`)
+      
+      try {
+        // Create query plan
+        const plan = await planQuery(query, spaceIds[0])
+        console.log(`[Twilio SMS] Plan intent: ${plan.intent}, confidence: ${plan.confidence}`)
+        
+        // Execute plan
+        const toolResults = await executePlan(plan, spaceIds[0])
+        console.log(`[Twilio SMS] Executed ${toolResults.length} tools`)
+        
+        // Compose response
+        const composed = await composeResponse(query, plan, toolResults)
+        console.log(`[Twilio SMS] Composed response, confidence: ${composed.confidence}`)
+        
+        // Format response
+        let responseMessage = ''
+        
+        // Add welcome for new users
+        if (isTrulyNewUser && sassyWelcome) {
+          responseMessage = `${sassyWelcome}\n\n`
+        }
+        
+        // Add main response
+        responseMessage += composed.text
+        
+        // Split and send
+        const messages = splitLongMessage(responseMessage, 1600)
+        
+        if (messages.length === 1) {
+          return new NextResponse(
+            `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Message>${messages[0]}</Message>
+</Response>`,
+            { headers: { 'Content-Type': 'application/xml' } }
+          )
+        } else {
+          const messageXml = messages.map(msg => `  <Message>${msg}</Message>`).join('\n')
+          return new NextResponse(
+            `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+${messageXml}
+</Response>`,
+            { headers: { 'Content-Type': 'application/xml' } }
+          )
+        }
+      } catch (error) {
+        console.error(`[Twilio SMS] Planner error, falling back to old flow:`, error)
+        // Fall through to old flow
+      }
+    }
+
+    // ========================================================================
+    // OLD FLOW (fallback or if planner disabled)
+    // ========================================================================
     // Generate natural summary from results - use CHUNKING to search through entire documents
     let summary = ''
     if (dedupedResults.length > 0) {
