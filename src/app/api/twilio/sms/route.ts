@@ -4,6 +4,12 @@ import { supabase } from '@/lib/supabase'
 import { searchResourcesHybrid } from '@/lib/search'
 import { ENV } from '@/lib/env'
 
+// Check if query is about Enclave itself
+const isEnclaveQuery = (query: string): boolean => {
+  const enclaveKeywords = ['what is enclave', 'what does enclave', 'what is the point of enclave', 'what can enclave', 'enclave features', 'enclave capabilities']
+  return enclaveKeywords.some(keyword => query.toLowerCase().includes(keyword))
+}
+
 // Force dynamic rendering for webhooks
 export const dynamic = 'force-dynamic'
 
@@ -59,38 +65,63 @@ export async function POST(request: NextRequest) {
     // Normalize phone number
     const phoneNumber = from.replace('+', '')
 
-    // Handle commands: STOP, HELP, SEP
+    // AUTO-OPT-IN: Check if user is opted in, if not, auto-opt them in with sassy message
+    const { data: optInData } = await supabase
+      .from('sms_optin')
+      .select('*')
+      .eq('phone', phoneNumber)
+      .eq('opted_out', false)
+      .single()
+
+    const isNewUser = !optInData
+    if (isNewUser) {
+      console.log(`[Twilio SMS] New user ${phoneNumber}, auto-opting in`)
+      
+      // Auto-opt in the user
+      await supabase
+        .from('sms_optin')
+        .upsert({
+          phone: phoneNumber,
+          name: phoneNumber,
+          method: 'sms_auto',
+          opted_out: false,
+          consent_timestamp: new Date().toISOString(),
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        })
+
+      // Send sassy welcome message
+      const sassyMessages = [
+        "📱 Wow, so entrepreneurial of you to actually use what your friends are using. Welcome to Enclave, you follower.",
+        "🚀 Look at you being all innovative and using the same tools everyone else does! Enclave welcomes another sheep 🐑",
+        "💼 So you finally caught up to the herd? Welcome to Enclave - where being mainstream is apparently entrepreneurial.",
+        "📚 Wow, such innovation! Much entrepreneurship! Very unique! Enclave welcomes another copycat 👏",
+        "🌟 Joining late to the party we see. Welcome to Enclave, where everyone's an entrepreneur (apparently)."
+      ]
+      const randomSassyMsg = sassyMessages[Math.floor(Math.random() * sassyMessages.length)]
+      
+      // Start query session for them
+      await supabase
+        .from('sms_query_session')
+        .upsert({
+          phone_number: phoneNumber,
+          status: 'active',
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        })
+
+      return new NextResponse(
+        `<?xml version="1.0" encoding="UTF-8"?><Response><Message>${randomSassyMsg}\n\nNow text me your question and I'll search your resources.</Message></Response>`,
+        { headers: { 'Content-Type': 'application/xml' } }
+      )
+    }
+
+    // Handle commands: STOP, HELP
     const command = body?.trim().toUpperCase()
 
-    // Check if this is the "SEP" keyword - handle FIRST to allow opt-in
+    // Check if this is the "SEP" keyword (legacy, still supported but auto-opt-in is now automatic)
     if (command === 'SEP') {
-      // Check if user is opted in, if not, opt them in automatically
-      const { data: optInData } = await supabase
-        .from('sms_optin')
-        .select('*')
-        .eq('phone', phoneNumber)
-        .eq('opted_out', false)
-        .single()
-
-      if (!optInData) {
-        console.log(`[Twilio SMS] User ${phoneNumber} not opted in, auto-opting in via SEP command`)
-        
-        // Auto-opt in the user
-        await supabase
-          .from('sms_optin')
-          .upsert({
-            phone: phoneNumber,
-            name: phoneNumber, // Use phone as name for now
-            method: 'sms_keyword',
-            keyword: 'SEP',
-            opted_out: false,
-            consent_timestamp: new Date().toISOString(),
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString()
-          })
-      }
-
-      // Start a query session
+      // Just start a query session
       await supabase
         .from('sms_query_session')
         .upsert({
@@ -102,7 +133,7 @@ export async function POST(request: NextRequest) {
 
       return new NextResponse(
         '<?xml version="1.0" encoding="UTF-8"?>' +
-        '<Response><Message>Welcome to Enclave search! Type your question and I\'ll search through your resources.</Message></Response>',
+        '<Response><Message>Ready to search! Type your question.</Message></Response>',
         { 
           headers: { 'Content-Type': 'application/xml' }
         }
@@ -191,6 +222,14 @@ export async function POST(request: NextRequest) {
 
     console.log(`[Twilio SMS] Searching across ${spaceIds.length} workspaces for: "${query}"`)
 
+    // Check if query is about Enclave itself
+    if (isEnclaveQuery(query)) {
+      return new NextResponse(
+        `<?xml version="1.0" encoding="UTF-8"?><Response><Message>📦 Enclave is your AI-powered knowledge base.\n\n🔍 CURRENT CAPABILITIES:\n• Search across docs, Google Docs, Calendar events\n• Hybrid search (semantic + keyword)\n• Workspace-based organization\n• Multiple sources: uploads, Google, Calendar, Slack\n\n🚀 FUTURE:\n• Multi-modal search (images, videos)\n• Team collaboration features\n• Advanced analytics\n• Enterprise integrations\n\nText your question to search!</Message></Response>`,
+        { headers: { 'Content-Type': 'application/xml' } }
+      )
+    }
+
     // Execute search
     const allResults = []
     for (const spaceId of spaceIds) {
@@ -198,28 +237,66 @@ export async function POST(request: NextRequest) {
         query,
         spaceId,
         {},
-        { limit: 3, offset: 0 },
+        { limit: 5, offset: 0 },
         null // No specific userId for SMS searches
       )
       allResults.push(...results)
     }
 
-    // Sort by relevance
-    const sortedResults = allResults
+    // Deduplicate results by ID
+    const uniqueResultsMap = new Map()
+    for (const result of allResults) {
+      if (!uniqueResultsMap.has(result.id)) {
+        uniqueResultsMap.set(result.id, result)
+      }
+    }
+    const dedupedResults = Array.from(uniqueResultsMap.values())
       .sort((a, b) => (b.score || b.rank || 0) - (a.score || a.rank || 0))
       .slice(0, 3)
 
-    console.log(`[Twilio SMS] Found ${sortedResults.length} results`)
+    console.log(`[Twilio SMS] Found ${dedupedResults.length} unique results`)
+
+    // Generate AI summary if we have results
+    let aiSummary = ''
+    if (dedupedResults.length > 0) {
+      try {
+        const context = dedupedResults.map(r => 
+          `${r.title}${r.body ? ': ' + r.body : ''}`
+        ).join('\n\n')
+        
+        const aiRes = await fetch(`${ENV.NEXT_PUBLIC_APP_URL}/api/ai`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            query,
+            context,
+            type: 'summary'
+          })
+        })
+        
+        if (aiRes.ok) {
+          const aiData = await aiRes.json()
+          aiSummary = aiData.response || ''
+        }
+      } catch (err) {
+        console.error('[Twilio SMS] AI summary failed:', err)
+      }
+    }
 
     // Format response for SMS
     let responseMessage = ''
     
-    if (sortedResults.length === 0) {
+    if (dedupedResults.length === 0) {
       responseMessage = 'No results found. Try a different search term.'
     } else {
-      responseMessage = `Found ${sortedResults.length} result${sortedResults.length > 1 ? 's' : ''}:\n\n`
+      // Add AI summary at top if available
+      if (aiSummary) {
+        responseMessage = `💡 ${aiSummary}\n\n`
+      }
       
-      sortedResults.forEach((result, index) => {
+      responseMessage += `Found ${dedupedResults.length} result${dedupedResults.length > 1 ? 's' : ''}:\n\n`
+      
+      dedupedResults.forEach((result, index) => {
         responseMessage += `${index + 1}. ${result.title}\n`
         if (result.body && result.body.length > 100) {
           responseMessage += result.body.substring(0, 100) + '...\n'
