@@ -190,7 +190,7 @@ export async function POST(request: NextRequest) {
 
       return new NextResponse(
         '<?xml version="1.0" encoding="UTF-8"?>' +
-        '<Response><Message>You have been re-subscribed to Enclave notifications. Text your question to search!</Message></Response>',
+        '<Response><Message>You have been re-subscribed. Ask me anything about your resources!</Message></Response>',
         { 
           headers: { 'Content-Type': 'application/xml' }
         }
@@ -227,13 +227,13 @@ export async function POST(request: NextRequest) {
           updated_at: new Date().toISOString()
         })
 
-      // Pick sassy welcome message
+      // Pick friendly welcome message (no emojis, no sarcasm)
       const sassyMessages = [
-        "📱 Wow, so entrepreneurial of you to actually use what your friends are using. Welcome to Enclave, you follower.",
-        "🚀 Look at you being all innovative and using the same tools everyone else does! Enclave welcomes another sheep 🐑",
-        "💼 So you finally caught up to the herd? Welcome to Enclave - where being mainstream is apparently entrepreneurial.",
-        "📚 Wow, such innovation! Much entrepreneurship! Very unique! Enclave welcomes another copycat 👏",
-        "🌟 Joining late to the party we see. Welcome to Enclave, where everyone's an entrepreneur (apparently)."
+        "Hey! Welcome to Enclave. I'm your AI assistant - just text me questions and I'll search through your resources.",
+        "Yo, welcome to Enclave! Ask me anything about your docs, events, or resources and I'll find it.",
+        "Hey there! Enclave here - I can search through all your connected resources. What do you need?",
+        "Welcome to Enclave! I can help you search across your documents, calendar, and more. What are you looking for?",
+        "Hey! You're all set up with Enclave. Just ask me questions about your resources and I'll find what you need."
       ]
       sassyWelcome = sassyMessages[Math.floor(Math.random() * sassyMessages.length)]
       
@@ -375,9 +375,9 @@ export async function POST(request: NextRequest) {
         let enclaveInfo = ''
         const lowerQuery = query.toLowerCase()
         if (lowerQuery.includes('terrible') || lowerQuery.includes('sucks')) {
-          enclaveInfo = `😅 Ouch! We're working on it. Enclave helps you search all your resources via SMS or web.\n\n📧 Questions? Email try.inquiyr@gmail.com`
+          enclaveInfo = `Ouch! We're working on it. Enclave helps you search all your resources via SMS or web.\n\nQuestions? Email try.inquiyr@gmail.com`
         } else {
-          enclaveInfo = `📦 Enclave is your AI-powered knowledge base.\n\n🔍 CURRENT CAPABILITIES:\n• Search across docs, Google Docs, Calendar events\n• Hybrid search (semantic + keyword)\n• Workspace-based organization\n• Multiple sources: uploads, Google, Calendar, Slack\n\n🚀 FUTURE:\n• Multi-modal search (images, videos)\n• Team collaboration features\n• Advanced analytics\n• Enterprise integrations\n\nText your question to search!`
+          enclaveInfo = `Enclave is your AI-powered knowledge base.\n\nCURRENT CAPABILITIES:\nSearch across docs, Google Docs, Calendar events\nHybrid search (semantic + keyword)\nWorkspace-based organization\nMultiple sources: uploads, Google, Calendar, Slack\n\nFUTURE:\nMulti-modal search (images, videos)\nTeam collaboration features\nAdvanced analytics\nEnterprise integrations\n\nText your question to search!`
         }
         responseMessage += enclaveInfo
       } else {
