@@ -4,12 +4,8 @@ import { ENV } from '@/lib/env'
 
 export async function POST(request: NextRequest) {
   try {
-    const { userId } = await auth()
-    const isDev = process.env.NODE_ENV !== 'production'
-    if (!userId && !isDev) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
-
+    // Allow public access for SMS and internal API calls
+    // SMS webhook needs to call this without Clerk auth
     const body = await request.json()
     const { query, context, type = 'summary' } = body
     const safeQuery = (query || '').toString().trim()

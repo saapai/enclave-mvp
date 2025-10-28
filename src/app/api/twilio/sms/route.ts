@@ -404,11 +404,16 @@ export async function POST(request: NextRequest) {
         .join('\n\n---\n\n')
       
       console.log(`[Twilio SMS] Sending ${dedupedResults.slice(0, 3).length} results to AI for best match`)
+      console.log(`[Twilio SMS] Context length: ${context.length} chars`)
+      console.log(`[Twilio SMS] Context preview: ${context.substring(0, 200)}...`)
       
       // ALWAYS use AI to extract ONLY relevant info from the documents for the query
       // AI will choose which documents are most relevant
       try {
-        const aiRes = await fetch(`${process.env.NEXT_PUBLIC_APP_URL || 'https://www.tryenclave.com'}/api/ai`, {
+        const aiUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'https://www.tryenclave.com'}/api/ai`
+        console.log(`[Twilio SMS] Calling AI API at: ${aiUrl}`)
+        
+        const aiRes = await fetch(aiUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -418,20 +423,27 @@ export async function POST(request: NextRequest) {
           })
         })
         
+        console.log(`[Twilio SMS] AI API response status: ${aiRes.status}`)
+        
         if (aiRes.ok) {
           const aiData = await aiRes.json()
+          console.log(`[Twilio SMS] AI API response data:`, JSON.stringify(aiData).substring(0, 200))
           summary = aiData.response || dedupedResults[0].body || dedupedResults[0].title
           console.log('[Twilio SMS] AI generated summary from multiple results')
         } else {
+          const errorText = await aiRes.text()
+          console.error(`[Twilio SMS] AI API error response:`, errorText.substring(0, 300))
           // Fallback: use top result
           const topResult = dedupedResults[0]
           summary = topResult.body || topResult.title
+          console.log('[Twilio SMS] Using fallback summary from top result')
         }
       } catch (err) {
-        console.error('[Twilio SMS] AI summary failed:', err)
+        console.error('[Twilio SMS] AI summary failed with exception:', err)
         // Fallback: use top result
         const topResult = dedupedResults[0]
         summary = topResult.body || topResult.title
+        console.log('[Twilio SMS] Using fallback summary after exception')
       }
       
       console.log('[Twilio SMS] Generated summary:', summary.substring(0, 100))
