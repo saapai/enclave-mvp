@@ -8,7 +8,7 @@ import { ENV } from '@/lib/env'
 export const dynamic = 'force-dynamic'
 
 // Twilio webhook signature validation
-const validateRequest = async (request: NextRequest) => {
+const validateRequest = async (formData: FormData, signature: string, url: string) => {
   const authToken = ENV.TWILIO_AUTH_TOKEN
   
   if (!authToken) {
@@ -16,21 +16,17 @@ const validateRequest = async (request: NextRequest) => {
     return false
   }
 
-  try {
-    const formData = await request.formData()
-    const twilioSignature = request.headers.get('x-twilio-signature')
-    
-    if (!twilioSignature) {
-      console.error('[Twilio SMS] Missing signature header')
-      return false
-    }
+  if (!signature) {
+    console.error('[Twilio SMS] Missing signature header')
+    return false
+  }
 
-    const url = request.url.split('?')[0] // Remove query params for validation
+  try {
     const params = Object.fromEntries(formData.entries())
     
     return twilio.validateRequest(
       authToken,
-      twilioSignature,
+      signature,
       url,
       params as Record<string, string>
     )
@@ -42,15 +38,18 @@ const validateRequest = async (request: NextRequest) => {
 
 export async function POST(request: NextRequest) {
   try {
+    // Read form data once
+    const formData = await request.formData()
+    const twilioSignature = request.headers.get('x-twilio-signature')
+    const url = request.url.split('?')[0] // Remove query params for validation
+    
     // Validate Twilio signature
-    const isValid = await validateRequest(request)
+    const isValid = await validateRequest(formData, twilioSignature || '', url)
     
     if (!isValid) {
       console.error('[Twilio SMS] Invalid request signature')
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
-
-    const formData = await request.formData()
     const from = formData.get('From') as string
     const to = formData.get('To') as string
     const body = formData.get('Body') as string
