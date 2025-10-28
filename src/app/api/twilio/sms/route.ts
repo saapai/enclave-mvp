@@ -269,24 +269,6 @@ export async function POST(request: NextRequest) {
 
     console.log(`[Twilio SMS] Searching across ${spaceIds.length} workspaces for: "${query}"`)
 
-    // Check if query is about Enclave itself
-    if (isEnclaveQuery(query)) {
-      const lowerQuery = query.toLowerCase()
-      let response = ''
-      
-      // Special response for negative queries
-      if (lowerQuery.includes('terrible') || lowerQuery.includes('sucks')) {
-        response = `😅 Ouch! We're working on it. Enclave helps you search all your resources.\n\nTRY IT: Text me a question about your content and I'll find it.\n\n📧 Questions? Email try.inquiyr@gmail.com`
-      } else {
-        response = `📦 Enclave is your AI-powered knowledge base.\n\n🔍 CURRENT CAPABILITIES:\n• Search across docs, Google Docs, Calendar events\n• Hybrid search (semantic + keyword)\n• Workspace-based organization\n• Multiple sources: uploads, Google, Calendar, Slack\n\n🚀 FUTURE:\n• Multi-modal search (images, videos)\n• Team collaboration features\n• Advanced analytics\n• Enterprise integrations\n\nText your question to search!`
-      }
-      
-      return new NextResponse(
-        `<?xml version="1.0" encoding="UTF-8"?><Response><Message>${response}</Message></Response>`,
-        { headers: { 'Content-Type': 'application/xml' } }
-      )
-    }
-
     // Execute search
     const allResults = []
     for (const spaceId of spaceIds) {
@@ -340,10 +322,44 @@ export async function POST(request: NextRequest) {
     }
     
     if (dedupedResults.length === 0) {
-      responseMessage += "I couldn't find anything relevant to that in your resources. Try rephrasing your question or ask about something else."
+      // No results found - check if it's about Enclave, then fall back to snarky response
+      const lowerQuery = query.toLowerCase()
+      
+      // Check if query is about Enclave
+      if (isEnclaveQuery(lowerQuery)) {
+        let enclaveInfo = ''
+        if (lowerQuery.includes('terrible') || lowerQuery.includes('sucks')) {
+          enclaveInfo = `😅 Ouch! We're working on it. Enclave helps you search all your resources via SMS or web.\n\n📧 Questions? Email try.inquiyr@gmail.com`
+        } else {
+          enclaveInfo = `📦 Enclave is your AI-powered knowledge base.\n\n🔍 CURRENT CAPABILITIES:\n• Search across docs, Google Docs, Calendar events\n• Hybrid search (semantic + keyword)\n• Workspace-based organization\n• Multiple sources: uploads, Google, Calendar, Slack\n\n🚀 FUTURE:\n• Multi-modal search (images, videos)\n• Team collaboration features\n• Advanced analytics\n• Enterprise integrations\n\nText your question to search!`
+        }
+        responseMessage += enclaveInfo
+      } else {
+        // Not about content or Enclave - snarky AI response
+        // Call the AI API for a snarky response
+        try {
+          const aiRes = await fetch(`${process.env.NEXT_PUBLIC_APP_URL || 'https://www.tryenclave.com'}/api/ai`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              query,
+              context: 'No matching content found.',
+              type: 'general'
+            })
+          })
+          
+          if (aiRes.ok) {
+            const aiData = await aiRes.json()
+            responseMessage += aiData.response || "I don't have any info on that. Try asking about something in your resources."
+          } else {
+            responseMessage += "I don't have any info on that. Try asking about something in your resources."
+          }
+        } catch (err) {
+          responseMessage += "I don't have any info on that. Try asking about something in your resources."
+        }
+      }
     } else {
-      // For natural responses, just send the summary without the "Found X results:" format
-      // The summary already contains the relevant info from top result
+      // We have results - send the natural summary
       if (summary && summary.length > 0) {
         responseMessage += summary
       } else {
