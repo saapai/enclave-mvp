@@ -428,11 +428,13 @@ export async function POST(request: NextRequest) {
       responseMessage = `${sassyWelcome}\n\n`
     }
     
-    // Classify the query using LLM
-    const queryType = await classifyQuery(query, dedupedResults.length)
-    console.log(`[Twilio SMS] Query classified as: ${queryType}`)
+    // Classify the query using LLM, but also check similarity scores
+    // If results have low similarity (< 0.7), they're probably not relevant
+    const hasGoodResults = dedupedResults.length > 0 && dedupedResults.some(r => (r.score || r.rank || 0) > 0.7)
+    const queryType = await classifyQuery(query, hasGoodResults ? dedupedResults.length : 0)
+    console.log(`[Twilio SMS] Query classified as: ${queryType}, has good results: ${hasGoodResults}`)
     
-    if (dedupedResults.length === 0 || queryType === 'chat' || queryType === 'enclave') {
+    if (!hasGoodResults || queryType === 'chat' || queryType === 'enclave') {
       // No results OR classified as chat/enclave - check category
       
       if (queryType === 'enclave') {
@@ -468,8 +470,8 @@ export async function POST(request: NextRequest) {
           responseMessage += "I don't have any info on that. Try asking about something in your resources."
         }
       }
-    } else if (queryType === 'content' && dedupedResults.length > 0) {
-      // We have results and it's classified as content - send the natural summary
+    } else if (queryType === 'content' && hasGoodResults) {
+      // We have good results and it's classified as content - send the natural summary
       if (summary && summary.length > 0) {
         responseMessage += summary
       } else {
