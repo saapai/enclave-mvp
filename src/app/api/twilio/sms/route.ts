@@ -118,7 +118,7 @@ export async function POST(request: NextRequest) {
         })
 
       return new NextResponse(
-        `<?xml version="1.0" encoding="UTF-8"?><Response><Message>${randomSassyMsg}\n\nNow text me your question and I'll search your resources.</Message></Response>`,
+        `<?xml version="1.0" encoding="UTF-8"?><Response><Message>${randomSassyMsg}</Message></Response>`,
         { headers: { 'Content-Type': 'application/xml' } }
       )
     }
