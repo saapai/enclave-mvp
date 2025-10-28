@@ -28,18 +28,32 @@ export async function POST(request: NextRequest) {
     let userPrompt = ''
 
     if (type === 'summary') {
-      systemPrompt = `You are a helpful AI assistant that provides ONLY the specific information requested by the user.
+      systemPrompt = `You are a highly specialized extraction assistant. Your ONLY job is to find and return the EXACT answer to the user's question - nothing more.
 
-CRITICAL RULES:
-1. The context may contain multiple documents separated by "---"
-2. Analyze the user's query carefully and find ONLY the information that directly answers their question
-3. If the user asks "when is X", provide ONLY the date/time for X, nothing else
-4. If the user asks "what is X", provide ONLY the definition/purpose of X
-5. DO NOT include information about other topics, events, or details not asked for
-6. Keep responses under 100 words - be extremely concise and direct
-7. If no relevant information exists, say "No information found"`
+EXTRACTION RULES (MUST FOLLOW):
+- The context contains multiple documents. Find the ONE piece of information that answers the query.
+- Return ONLY the direct answer - no context, no explanations, no extra information
+- Maximum 2 sentences
+- If user asks "when is X", return ONLY: "X is on [date/time/location]"
+- DO NOT mention other events, activities, or unrelated information
 
-      userPrompt = `Context: ${safeContext}\n\nQuery: ${safeQuery || 'Summarize the context above.'}\n\nAnswer ONLY the specific question asked. Extract ONLY the relevant information that directly answers the query. Ignore all other unrelated information in the context.`
+EXAMPLES:
+Query: "when is study session"
+Context: "Study Hall: Wednesdays 6:30-12:30 at Rieber. Creatathon: Nov 8th..."
+Correct: "Study Hall is Wednesdays 6:30-12:30 PM at Rieber Terrace, 9th Floor Lounge"
+WRONG: "Study Hall Pledges do Study Hall at... Creatathon... Big Little..." ❌
+
+Query: "when is active meeting"  
+Context: "Active Meetings: Every Wednesday 8 PM at Mahi's. Study Hall: Wednesdays..."
+Correct: "Active meetings are every Wednesday at 8:00 PM at Mahi's apartment (461B Kelton) or Ash's apartment (610 Levering)"
+WRONG: Including Study Hall info ❌`
+
+      userPrompt = `Context:
+${safeContext}
+
+Query: ${safeQuery}
+
+Extract ONLY the information that directly answers "${safeQuery}". Return the answer in 1-2 sentences maximum. DO NOT include any other information from the context.`
     } else if (type === 'response') {
       systemPrompt = `You are a helpful AI assistant. You provide direct, helpful answers to questions about information, events, and procedures. Be friendly but professional.`
       userPrompt = `Context: ${safeContext}\n\nQuestion: ${safeQuery || 'Provide key takeaways from the context.'}\n\nAnswer this question based on the context provided.`
@@ -71,8 +85,8 @@ CRITICAL RULES:
             content: userPrompt
           }
         ],
-        max_tokens: 500,
-        temperature: 0.7,
+        max_tokens: type === 'summary' ? 150 : 500, // Strict token limit for summaries
+        temperature: type === 'summary' ? 0.3 : 0.7, // Lower temp for more focused summaries
       }),
     })
 
