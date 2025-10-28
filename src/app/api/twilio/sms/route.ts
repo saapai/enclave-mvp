@@ -267,15 +267,23 @@ export async function POST(request: NextRequest) {
         .insert({
           phone: phoneNumber,
           name: phoneNumber,
-          method: 'sms_auto',
+          method: 'sms_keyword',
+          keyword: 'SEP',
           opted_out: false,
           consent_timestamp: new Date().toISOString(),
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString()
         })
       
-      // If insert failed due to existing record, ignore it
-      if (insertError && insertError.code !== '23505') {
+      // If insert failed due to constraint (user already exists), don't send welcome
+      if (insertError && insertError.code === '23505') {
+        console.log(`[Twilio SMS] User ${phoneNumber} already in database, skipping welcome`)
+        return new NextResponse(
+          '<?xml version="1.0" encoding="UTF-8"?>' +
+          '<Response></Response>',
+          { headers: { 'Content-Type': 'application/xml' } }
+        )
+      } else if (insertError) {
         console.error(`[Twilio SMS] Error inserting optin:`, insertError)
       }
 
@@ -443,16 +451,26 @@ export async function POST(request: NextRequest) {
               const response = aiData.response || ''
               
               // Check if AI found information (not a "no information" response)
-              if (!response.toLowerCase().includes('no information') && 
-                  !response.toLowerCase().includes('not found') &&
-                  response.length > 20) {
+              const lowerResponse = response.toLowerCase()
+              const noInfoPatterns = [
+                'no information',
+                'not found',
+                'does not contain',
+                'does not provide',
+                'no info',
+                'could not find',
+                'unable to find'
+              ]
+              
+              const hasNoInfo = noInfoPatterns.some(pattern => lowerResponse.includes(pattern))
+              
+              if (!hasNoInfo && response.length > 20) {
                 summary = response
                 foundAnswer = true
                 console.log(`[Twilio SMS] Found answer in chunk ${i + 1}/${chunks.length} of "${result.title}"`)
                 break
               } else if (i === chunks.length - 1) {
-                // Last chunk and still no answer, keep the response
-                summary = response
+                // Last chunk and still no answer, try next document
                 console.log(`[Twilio SMS] No answer found in "${result.title}", trying next document`)
               }
             }
