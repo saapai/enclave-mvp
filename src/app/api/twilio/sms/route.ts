@@ -80,47 +80,7 @@ export async function POST(request: NextRequest) {
       .eq('opted_out', false)
       .single()
 
-    let isNewUser = !optInData
-    let sassyWelcome = ''
-    
-    if (isNewUser) {
-      console.log(`[Twilio SMS] New user ${phoneNumber}, auto-opting in`)
-      
-      // Auto-opt in the user
-      await supabase
-        .from('sms_optin')
-        .upsert({
-          phone: phoneNumber,
-          name: phoneNumber,
-          method: 'sms_auto',
-          opted_out: false,
-          consent_timestamp: new Date().toISOString(),
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString()
-        })
-
-      // Pick sassy welcome message
-      const sassyMessages = [
-        "📱 Wow, so entrepreneurial of you to actually use what your friends are using. Welcome to Enclave, you follower.",
-        "🚀 Look at you being all innovative and using the same tools everyone else does! Enclave welcomes another sheep 🐑",
-        "💼 So you finally caught up to the herd? Welcome to Enclave - where being mainstream is apparently entrepreneurial.",
-        "📚 Wow, such innovation! Much entrepreneurship! Very unique! Enclave welcomes another copycat 👏",
-        "🌟 Joining late to the party we see. Welcome to Enclave, where everyone's an entrepreneur (apparently)."
-      ]
-      sassyWelcome = sassyMessages[Math.floor(Math.random() * sassyMessages.length)]
-      
-      // Start query session for them
-      await supabase
-        .from('sms_query_session')
-        .upsert({
-          phone_number: phoneNumber,
-          status: 'active',
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString()
-        })
-    }
-
-    // Handle commands: STOP, HELP
+    // Handle commands: STOP, HELP first (before checking if new user)
     const command = body?.trim().toUpperCase()
 
     // Check if this is the "SEP" keyword (legacy, still supported but auto-opt-in is now automatic)
@@ -172,6 +132,47 @@ export async function POST(request: NextRequest) {
           headers: { 'Content-Type': 'application/xml' }
         }
       )
+    }
+
+    // Now handle new user opt-in (if not a command)
+    let isNewUser = !optInData
+    let sassyWelcome = ''
+    
+    if (isNewUser) {
+      console.log(`[Twilio SMS] New user ${phoneNumber}, auto-opting in`)
+      
+      // Auto-opt in the user
+      await supabase
+        .from('sms_optin')
+        .upsert({
+          phone: phoneNumber,
+          name: phoneNumber,
+          method: 'sms_auto',
+          opted_out: false,
+          consent_timestamp: new Date().toISOString(),
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        })
+
+      // Pick sassy welcome message
+      const sassyMessages = [
+        "📱 Wow, so entrepreneurial of you to actually use what your friends are using. Welcome to Enclave, you follower.",
+        "🚀 Look at you being all innovative and using the same tools everyone else does! Enclave welcomes another sheep 🐑",
+        "💼 So you finally caught up to the herd? Welcome to Enclave - where being mainstream is apparently entrepreneurial.",
+        "📚 Wow, such innovation! Much entrepreneurship! Very unique! Enclave welcomes another copycat 👏",
+        "🌟 Joining late to the party we see. Welcome to Enclave, where everyone's an entrepreneur (apparently)."
+      ]
+      sassyWelcome = sassyMessages[Math.floor(Math.random() * sassyMessages.length)]
+      
+      // Start query session for them
+      await supabase
+        .from('sms_query_session')
+        .upsert({
+          phone_number: phoneNumber,
+          status: 'active',
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        })
     }
 
     // Check if user has an active query session
