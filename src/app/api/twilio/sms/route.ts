@@ -153,11 +153,11 @@ export async function POST(request: NextRequest) {
     const phoneNumber = from.replace('+', '')
 
     // Check if user exists in sms_optin table at ALL (not filtered by opted_out)
-    const { data: optInDataAll } = await supabase
+    const { data: optInDataAll, error: optInError } = await supabase
       .from('sms_optin')
       .select('*')
       .eq('phone', phoneNumber)
-      .single()
+      .maybeSingle()
 
     // AUTO-OPT-IN: Check if user is opted in, if not, auto-opt them in with sassy message
     const { data: optInData } = await supabase
