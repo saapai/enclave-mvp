@@ -152,6 +152,13 @@ export async function POST(request: NextRequest) {
     // Normalize phone number
     const phoneNumber = from.replace('+', '')
 
+    // Check if user exists in sms_optin table at ALL (not filtered by opted_out)
+    const { data: optInDataAll } = await supabase
+      .from('sms_optin')
+      .select('*')
+      .eq('phone', phoneNumber)
+      .single()
+
     // AUTO-OPT-IN: Check if user is opted in, if not, auto-opt them in with sassy message
     const { data: optInData } = await supabase
       .from('sms_optin')
@@ -246,7 +253,8 @@ export async function POST(request: NextRequest) {
 
     // Check if user is in sms_optin table to determine if they're truly new
     // Only send welcome if they're NOT in the table at all (first time ever)
-    const isTrulyNewUser = !optInData
+    // Use optInDataAll which doesn't filter by opted_out
+    const isTrulyNewUser = !optInDataAll
     let sassyWelcome = ''
     
     // Only show welcome for users who have NEVER opted in before (completely new phone number)
@@ -383,15 +391,16 @@ export async function POST(request: NextRequest) {
       // Take the best matching result
       const topResult = dedupedResults[0]
       
-      // If body is long, use AI to summarize to relevant info only
-      if (topResult.body && topResult.body.length > 300) {
+      // ALWAYS use AI to extract ONLY relevant info from the document for the query
+      // This ensures we don't return the whole document
+      if (topResult.body && topResult.body.length > 50) {
         try {
           const aiRes = await fetch(`${process.env.NEXT_PUBLIC_APP_URL || 'https://www.tryenclave.com'}/api/ai`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               query,
-              context: topResult.body.substring(0, 1000), // Send up to 1000 chars for context
+              context: topResult.body.length > 1500 ? topResult.body.substring(0, 1500) + '...' : topResult.body, // Send up to 1500 chars
               type: 'summary'
             })
           })
@@ -405,11 +414,12 @@ export async function POST(request: NextRequest) {
             summary = topResult.body.substring(0, 400) + '...'
           }
         } catch (err) {
+          console.error('[Twilio SMS] AI summary failed:', err)
           // Fallback: just truncate
           summary = topResult.body.substring(0, 400) + '...'
         }
       } else if (topResult.body) {
-        // Short body, use directly
+        // Very short body, use directly
         summary = topResult.body
       } else {
         // No body, use title
