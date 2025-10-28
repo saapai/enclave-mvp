@@ -256,15 +256,17 @@ export async function POST(request: NextRequest) {
 
     console.log(`[Twilio SMS] Found ${dedupedResults.length} unique results`)
 
-    // Generate AI summary if we have results
-    let aiSummary = ''
+    // Generate smart summary from results
+    let summary = ''
     if (dedupedResults.length > 0) {
       try {
+        // Create context from top results
         const context = dedupedResults.map(r => 
-          `${r.title}${r.body ? ': ' + r.body : ''}`
+          `${r.title}${r.body ? ': ' + r.body.substring(0, 150) : ''}`
         ).join('\n\n')
         
-        const aiRes = await fetch(`${ENV.NEXT_PUBLIC_APP_URL}/api/ai`, {
+        // Call AI API for summary
+        const aiRes = await fetch(`${process.env.NEXT_PUBLIC_APP_URL || 'https://www.tryenclave.com'}/api/ai`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -276,7 +278,10 @@ export async function POST(request: NextRequest) {
         
         if (aiRes.ok) {
           const aiData = await aiRes.json()
-          aiSummary = aiData.response || ''
+          summary = aiData.response || ''
+          console.log('[Twilio SMS] Generated AI summary:', summary.substring(0, 100))
+        } else {
+          console.error('[Twilio SMS] AI API error:', aiRes.status, aiRes.statusText)
         }
       } catch (err) {
         console.error('[Twilio SMS] AI summary failed:', err)
@@ -290,8 +295,8 @@ export async function POST(request: NextRequest) {
       responseMessage = 'No results found. Try a different search term.'
     } else {
       // Add AI summary at top if available
-      if (aiSummary) {
-        responseMessage = `💡 ${aiSummary}\n\n`
+      if (summary && summary.length > 0) {
+        responseMessage = `💡 ${summary}\n\n`
       }
       
       responseMessage += `Found ${dedupedResults.length} result${dedupedResults.length > 1 ? 's' : ''}:\n\n`
