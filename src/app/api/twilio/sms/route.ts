@@ -410,7 +410,10 @@ export async function POST(request: NextRequest) {
         if (foundAnswer) break
         
         const body = result.body || ''
-        if (!body) continue
+        if (!body) {
+          console.log(`[Twilio SMS] Skipping "${result.title}" - no body content`)
+          continue
+        }
         
         // Split document into 1500-char chunks with overlap
         const chunkSize = 1500
@@ -425,7 +428,7 @@ export async function POST(request: NextRequest) {
           }
         }
         
-        console.log(`[Twilio SMS] Document "${result.title}" split into ${chunks.length} chunks`)
+        console.log(`[Twilio SMS] Document "${result.title}" (${body.length} chars) split into ${chunks.length} chunks`)
         
         // Try each chunk until we find an answer
         for (let i = 0; i < chunks.length; i++) {
@@ -457,9 +460,11 @@ export async function POST(request: NextRequest) {
                 'not found',
                 'does not contain',
                 'does not provide',
+                'does not include',
                 'no info',
                 'could not find',
-                'unable to find'
+                'unable to find',
+                'cannot provide'
               ]
               
               const hasNoInfo = noInfoPatterns.some(pattern => lowerResponse.includes(pattern))
@@ -467,16 +472,23 @@ export async function POST(request: NextRequest) {
               if (!hasNoInfo && response.length > 20) {
                 summary = response
                 foundAnswer = true
-                console.log(`[Twilio SMS] Found answer in chunk ${i + 1}/${chunks.length} of "${result.title}"`)
+                console.log(`[Twilio SMS] ✓ Found answer in chunk ${i + 1}/${chunks.length} of "${result.title}"`)
+                console.log(`[Twilio SMS] Answer preview: ${response.substring(0, 100)}...`)
                 break
-              } else if (i === chunks.length - 1) {
-                // Last chunk and still no answer, try next document
-                console.log(`[Twilio SMS] No answer found in "${result.title}", trying next document`)
+              } else {
+                console.log(`[Twilio SMS] ✗ Chunk ${i + 1}/${chunks.length} of "${result.title}" - no relevant info (hasNoInfo: ${hasNoInfo})`)
               }
+            } else {
+              console.error(`[Twilio SMS] AI API returned ${aiRes.status}`)
             }
           } catch (err) {
             console.error(`[Twilio SMS] AI call failed for chunk ${i + 1}:`, err)
           }
+        }
+        
+        // After trying all chunks of this document, log result
+        if (!foundAnswer) {
+          console.log(`[Twilio SMS] No answer found in any chunk of "${result.title}", moving to next document`)
         }
       }
       
