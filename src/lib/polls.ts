@@ -109,7 +109,30 @@ export async function generatePollQuestion(
   previousDraft?: string
 ): Promise<string> {
   try {
-    const question = details.question || '';
+    let question = details.question || '';
+    
+    // CRITICAL: If question contains quotes, use quoted text VERBATIM
+    const quoteMatch = question.match(/"([^"]+)"/)
+    if (quoteMatch) {
+      question = quoteMatch[1] // Use exact quoted text
+      // Still make it conversational if needed
+      if (!question.match(/\?$/)) {
+        // Not a question - convert based on content
+        if (question.match(/^(is|are|do|does)\s+/i)) {
+          // Already starts with question word - just add "yo"
+          question = `yo ${question}`
+        } else {
+          // Statement-like - convert to question
+          question = `yo ${question}?`
+        }
+      } else {
+        // Already a question - just add "yo" if not present
+        if (!question.match(/^(yo|hey|sup)/i)) {
+          question = `yo ${question}`
+        }
+      }
+      return question
+    }
     
     // If it's short and specific, use it directly
     const isShort = question.length < 200 && question.length > 5;
