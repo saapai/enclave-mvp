@@ -79,8 +79,14 @@ export async function upsertAirtableRecord(
   
   // Validate token format
   if (keyLength < 30) {
-    console.error(`[Airtable] API key is too short (${keyLength} chars). Personal Access Tokens are typically 40-60 characters long.`)
-    console.error(`[Airtable] The token appears to be incomplete. Please check your Vercel environment variable.`)
+    console.error(`[Airtable] ⚠️ API key is too short (${keyLength} chars). Personal Access Tokens are typically 40-60 characters long.`)
+    console.error(`[Airtable] The token appears to be incomplete or truncated.`)
+    console.error(`[Airtable] ACTION REQUIRED:`)
+    console.error(`[Airtable] 1. Go to Vercel → Environment Variables → AIRTABLE_API_KEY`)
+    console.error(`[Airtable] 2. Click "Reveal" to see the current value and check its length`)
+    console.error(`[Airtable] 3. Get the FULL token from Airtable (40-60 chars, starts with "pat_")`)
+    console.error(`[Airtable] 4. Update the env var with the complete token`)
+    console.error(`[Airtable] 5. Redeploy your application`)
   }
   
   // Validate token format (should start with 'pat_' for PAT - lowercase)
