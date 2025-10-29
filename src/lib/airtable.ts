@@ -276,6 +276,9 @@ export async function createAirtableFields(
     const metaUrl = `https://api.airtable.com/v0/meta/bases/${baseId}/tables/${tableId}`
     
     console.log(`[Airtable] Checking existing fields in table ${tableId}...`)
+    console.log(`[Airtable] Metadata API URL: ${metaUrl}`)
+    console.log(`[Airtable] Base ID: ${baseId}`)
+    console.log(`[Airtable] Table ID: ${tableId}`)
     
     // First, check if fields already exist and get table schema
     const metaRes = await fetch(metaUrl, {
@@ -286,10 +289,39 @@ export async function createAirtableFields(
     })
     
     if (!metaRes.ok) {
-      const errorData = await metaRes.json()
-      const errorMsg = errorData?.error?.message || `HTTP ${metaRes.status}`
-      console.error(`[Airtable] Failed to fetch table schema:`, errorMsg)
-      return { ok: false, created, errors: [`Failed to access Metadata API: ${errorMsg}`], existing }
+      let errorData: any = {}
+      try {
+        errorData = await metaRes.json()
+      } catch (e) {
+        // Response wasn't JSON, use status code
+      }
+      
+      const errorMsg = errorData?.error?.message || errorData?.error?.type || `HTTP ${metaRes.status}`
+      const status = metaRes.status
+      
+      console.error(`[Airtable] ❌ Failed to fetch table schema: ${errorMsg}`)
+      console.error(`[Airtable] HTTP Status: ${status}`)
+      
+      if (status === 404) {
+        console.error(`[Airtable] 404 Error - Table not found. Possible causes:`)
+        console.error(`[Airtable]   1. Table ID "${tableId}" doesn't exist in base "${baseId}"`)
+        console.error(`[Airtable]   2. Check table ID in Airtable URL: https://airtable.com/${baseId}/${tableId}/...`)
+        console.error(`[Airtable]   3. Verify the table ID is correct (should start with "tbl" and be in the URL)`)
+        console.error(`[Airtable]   4. PAT may not have access to this base/table`)
+        console.error(`[Airtable]   5. Verify PAT has scope: schema.bases:read`)
+        console.error(`[Airtable]   6. Check if PAT has access to base "${baseId}"`)
+        console.error(`[Airtable]   📋 HOW TO FIND TABLE ID:`)
+        console.error(`[Airtable]      - Go to your Airtable table`)
+        console.error(`[Airtable]      - Look at URL: https://airtable.com/appXXXXXX/tblYYYYYYYY/...`)
+        console.error(`[Airtable]      - The "tblYYYYYYYY" part is your Table ID`)
+      } else if (status === 401 || status === 403) {
+        console.error(`[Airtable] Authentication/Permission Error:`)
+        console.error(`[Airtable]   1. Check PAT is valid and not expired`)
+        console.error(`[Airtable]   2. Verify PAT has scope: schema.bases:read`)
+        console.error(`[Airtable]   3. Check PAT has access to base "${baseId}"`)
+      }
+      
+      return { ok: false, created, errors: [`Failed to access Metadata API: ${errorMsg} (HTTP ${status})`], existing }
     }
     
     const metaData = await metaRes.json()
