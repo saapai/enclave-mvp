@@ -22,9 +22,19 @@ export async function POST(request: NextRequest) {
     // Prepare the prompt based on type
     let systemPrompt = ''
     let userPrompt = ''
-
+    let maxTokens = 500 // Default token limit
+    
+    // Dynamically determine response style based on query type
+    const isBroadQuery = /(what's happening|what's up|what's going on|what's new|upcoming events|what's coming up)/i.test(safeQuery)
+    const isSpecificQuery = /(when is|where is|what time|who is|how do)/i.test(safeQuery)
+    
     if (type === 'summary') {
-      systemPrompt = `You are Poke - a super smart, friendly AI that gives concise, natural answers. You sound like a knowledgeable friend, not a robot.
+      // Adjust token limit based on query type
+      // Broad queries need more space for comprehensive answers
+      // Specific queries need precise, brief answers
+      maxTokens = isBroadQuery ? 200 : (isSpecificQuery ? 100 : 150)
+      
+      systemPrompt = `You are Poke - a super smart, friendly AI that gives natural, helpful answers. You sound like a knowledgeable friend, not a robot.
 
 WRITING STYLE:
 - Be CONCISE - one clear sentence for simple questions, 2-3 max for complex ones
@@ -40,17 +50,17 @@ CRITICAL RULES:
 5. Put the most important info first
 
 EXAMPLES:
-Query: "when is active meeting"
-Context: "Active meetings are every Wednesday at 8:00 PM at Mahi's apartment (461B Kelton). Attendance is mandatory."
+Query: "when is active meeting" (specific - short answer)
+Context: "Active meetings are every Wednesday at 8:00 PM at Mahi's apartment (461B Kelton)."
 Good: "Every Wednesday at 8 PM at Mahi's (461B Kelton)."
 Bad: "Based on the provided context, active meetings occur every Wednesday at 8:00 PM..." ❌
 
-Query: "what's upcoming"
-Context: "Study Hall (Wed 6:30 PM), Creatathon (Nov 8), Big Little (Nov 13)"
-Good: "Study Hall every Wed at 6:30 PM, Creatathon Nov 8, Big Little Nov 13."
+Query: "what's happening this week" (broad - comprehensive answer)
+Context: "Study Hall (Wed 6:30 PM), Active Meeting (Wed 8 PM), Creatathon (Nov 8), Big Little (Nov 13)"
+Good: "This week: Study Hall Wed 6:30 PM, Active Meeting Wed 8 PM. Coming up: Creatathon Nov 8, Big Little Nov 13."
 Bad: "Upcoming events include: 1. Study Hall: Every Wednesday from 6:30 PM..." ❌
 
-Query: "what is big little"
+Query: "what is big little" (specific - concise explanation)
 Context: "Big Little is Nov 13. Littles show gratitude to Bigs with gifts and performances."
 Good: "Nov 13 - Littles celebrate their Bigs with gifts and performances."
 Bad: "Big Little appreciation is an event taking place on November 13th wherein..." ❌`
@@ -60,7 +70,7 @@ ${safeContext}
 
 Query: ${safeQuery}
 
-Give a concise, natural answer. One sentence max unless you need multiple specific details.`
+${isBroadQuery ? 'Give a comprehensive answer covering all relevant events/info (2-4 sentences).' : 'Give a concise, natural answer (1-2 sentences max).'}`
     } else if (type === 'response') {
       systemPrompt = `You are a helpful AI assistant. You provide direct, helpful answers to questions about information, events, and procedures. Be friendly but professional.`
       userPrompt = `Context: ${safeContext}\n\nQuestion: ${safeQuery || 'Provide key takeaways from the context.'}\n\nAnswer this question based on the context provided.`
@@ -92,7 +102,7 @@ Give a concise, natural answer. One sentence max unless you need multiple specif
             content: userPrompt
           }
         ],
-        max_tokens: type === 'summary' ? 80 : 500, // SHORT answers - one sentence max
+        max_tokens: maxTokens, // Dynamic token limit based on query type
         temperature: type === 'summary' ? 0.4 : 0.7, // Slightly higher temp for naturalness, still focused
       }),
     })
