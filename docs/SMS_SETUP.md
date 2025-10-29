@@ -189,9 +189,9 @@ Body (poll):
 
 Notes:
 - Sends to app users in the space who are opted-in via sms_optin.
-- Polls include a 4-char code. Members reply with the letter (A, B, C...).
+- Polls include a 4-char code. Members reply with the option number (1..n) or the exact option word (case-insensitive). Letters (A..I) are also accepted for backward compatibility.
 - Replies are recorded to Supabase (sms_poll_response) and, if configured, to Airtable.
- - If AIRTABLE_PUBLIC_RESULTS_URL is set, poll texts include a "View results" link to Airtable. Otherwise, they link to the base URL if AIRTABLE_BASE_ID is set.
+- If AIRTABLE_PUBLIC_RESULTS_URL is set, poll texts include a "View results" link to Airtable. Otherwise, they link to the base URL if AIRTABLE_BASE_ID is set.
 
 ## Twilio Integration (TODO)
 

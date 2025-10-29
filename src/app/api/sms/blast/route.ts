@@ -93,17 +93,16 @@ export async function POST(request: NextRequest) {
       }
       pollId = created.id as string
 
-      // Build poll instructions with letter mapping A..I
-      const letters = 'ABCDEFGHI'
+      // Build poll instructions with numeric mapping 1..n
       const lines: string[] = []
       ;(options as string[]).forEach((opt: string, idx: number) => {
-        lines.push(`${letters[idx]}) ${opt}`)
+        lines.push(`${idx + 1}) ${opt}`)
       })
       const publicResultsUrl =
         process.env.AIRTABLE_PUBLIC_RESULTS_URL ||
         (process.env.AIRTABLE_BASE_ID ? `https://airtable.com/${process.env.AIRTABLE_BASE_ID}` : undefined)
       const resultsSuffix = publicResultsUrl ? `\nView results: ${publicResultsUrl} (search code ${code})` : ''
-      finalMessage = `POLL (${code}): ${message}\nReply with letter:\n${lines.join('\n')}${resultsSuffix}`
+      finalMessage = `POLL (${code}): ${message}\nReply with number or option word:\n${lines.join('\n')}${resultsSuffix}`
     }
 
     // Send messages

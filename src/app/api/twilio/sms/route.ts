@@ -276,76 +276,94 @@ export async function POST(request: NextRequest) {
     // POLL RESPONSE HANDLING (RSVP)
     // ========================================================================
     try {
-      const upper = (body || '').trim().toUpperCase()
+      const textRaw = (body || '').trim()
+      const upper = textRaw.toUpperCase()
       const codeMatch = upper.match(/\b([A-Z0-9]{4})\b/)
-      const letterMatch = upper.match(/\b([A-I])\b/)
-      if (letterMatch) {
-        const replyLetter = letterMatch[1]
-        const phoneE164 = from.startsWith('+') ? from : `+1${phoneNumber}`
+      const phoneE164 = from.startsWith('+') ? from : `+1${phoneNumber}`
 
-        // Find poll by code or latest for this phone
-        let poll: any = null
-        if (codeMatch) {
-          const { data: p } = await supabase
-            .from('sms_poll')
-            .select('id, space_id, question, options, code, created_at')
-            .eq('code', codeMatch[1])
-            .maybeSingle()
-          poll = p
-        } else {
-          const { data: rows } = await supabase
-            .from('sms_poll_response')
-            .select('poll_id, sms_poll!inner(id, space_id, question, options, code, created_at)')
-            .eq('phone', phoneE164)
-            .order('sms_poll(created_at)', { ascending: false })
-            .limit(1)
-          poll = rows?.[0]?.sms_poll || null
+      // Find poll by code or latest for this phone
+      let poll: any = null
+      if (codeMatch) {
+        const { data: p } = await supabase
+          .from('sms_poll')
+          .select('id, space_id, question, options, code, created_at')
+          .eq('code', codeMatch[1])
+          .maybeSingle()
+        poll = p
+      } else {
+        const { data: rows } = await supabase
+          .from('sms_poll_response')
+          .select('poll_id, sms_poll!inner(id, space_id, question, options, code, created_at)')
+          .eq('phone', phoneE164)
+          .order('sms_poll(created_at)', { ascending: false })
+          .limit(1)
+        poll = rows?.[0]?.sms_poll || null
+      }
+
+      if (poll && Array.isArray(poll.options)) {
+        const normalize = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '')
+        const options: string[] = poll.options as string[]
+        const digitsMatch = upper.match(/\b([1-9])\b/)
+        const letters = 'ABCDEFGHI'
+        const letterMatch = upper.match(/\b([A-I])\b/)
+
+        let idx = -1
+        // 1) Prefer numeric reply (1..n)
+        if (digitsMatch) {
+          const n = parseInt(digitsMatch[1], 10)
+          if (n >= 1 && n <= options.length) idx = n - 1
+        }
+        // 2) Try exact option text (case/punctuation-insensitive)
+        if (idx === -1) {
+          const normText = normalize(textRaw)
+          idx = options.findIndex(opt => normalize(opt) === normText)
+        }
+        // 3) Fallback: letters A..I (backward compatibility)
+        if (idx === -1 && letterMatch) {
+          const replyLetter = letterMatch[1]
+          idx = letters.indexOf(replyLetter)
         }
 
-        if (poll && Array.isArray(poll.options)) {
-          const letters = 'ABCDEFGHI'
-          const idx = letters.indexOf(replyLetter)
-          if (idx >= 0 && idx < poll.options.length) {
-            const label = String(poll.options[idx])
-            // Upsert response
-            await supabase
-              .from('sms_poll_response')
-              .upsert({
-                poll_id: poll.id,
-                phone: phoneE164,
-                option_index: idx,
-                option_label: label,
-                received_at: new Date().toISOString()
-              } as any, { onConflict: 'poll_id,phone' } as any)
+        if (idx >= 0 && idx < options.length) {
+          const label = String(options[idx])
+          // Upsert response
+          await supabase
+            .from('sms_poll_response')
+            .upsert({
+              poll_id: poll.id,
+              phone: phoneE164,
+              option_index: idx,
+              option_label: label,
+              received_at: new Date().toISOString()
+            } as any, { onConflict: 'poll_id,phone' } as any)
 
-            // Record to Airtable (optional, if configured)
-            const baseId = process.env.AIRTABLE_BASE_ID
-            const tableName = process.env.AIRTABLE_TABLE_NAME || 'RSVP Responses'
-            if (baseId) {
-              await airtableInsert(baseId, tableName, {
-                PollId: poll.id,
-                PollCode: poll.code,
-                SpaceId: poll.space_id,
-                Question: poll.question,
-                Phone: phoneE164,
-                OptionIndex: idx,
-                Option: label,
-                ReceivedAt: new Date().toISOString()
-              })
-            }
-
-            return new NextResponse(
-              '<?xml version="1.0" encoding="UTF-8"?>' +
-              `<Response><Message>Thanks! Recorded your response: ${label}</Message></Response>`,
-              { headers: { 'Content-Type': 'application/xml' } }
-            )
-          } else {
-            return new NextResponse(
-              '<?xml version="1.0" encoding="UTF-8"?>' +
-              '<Response><Message>Sorry, invalid option. Reply with the letter shown next to your choice.</Message></Response>',
-              { headers: { 'Content-Type': 'application/xml' } }
-            )
+          // Record to Airtable (optional, if configured)
+          const baseId = process.env.AIRTABLE_BASE_ID
+          const tableName = process.env.AIRTABLE_TABLE_NAME || 'RSVP Responses'
+          if (baseId) {
+            await airtableInsert(baseId, tableName, {
+              PollId: poll.id,
+              PollCode: poll.code,
+              SpaceId: poll.space_id,
+              Question: poll.question,
+              Phone: phoneE164,
+              OptionIndex: idx,
+              Option: label,
+              ReceivedAt: new Date().toISOString()
+            })
           }
+
+          return new NextResponse(
+            '<?xml version="1.0" encoding="UTF-8"?>' +
+            `<Response><Message>Thanks! Recorded your response: ${label}</Message></Response>`,
+            { headers: { 'Content-Type': 'application/xml' } }
+          )
+        } else {
+          return new NextResponse(
+            '<?xml version="1.0" encoding="UTF-8"?>' +
+            '<Response><Message>Sorry, invalid option. Reply with the number (1..n) or the option word shown in the poll.</Message></Response>',
+            { headers: { 'Content-Type': 'application/xml' } }
+          )
         }
       }
     } catch (err) {
