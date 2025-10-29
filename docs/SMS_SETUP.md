@@ -67,6 +67,11 @@ TWILIO_ACCOUNT_SID=your_twilio_account_sid
 TWILIO_AUTH_TOKEN=your_twilio_auth_token
 TWILIO_PHONE_NUMBER=your_twilio_phone_number
 
+# Airtable (optional for RSVP poll recording)
+AIRTABLE_API_KEY=your_airtable_api_key
+AIRTABLE_BASE_ID=appXXXXXXXXXXXXXX
+AIRTABLE_TABLE_NAME=RSVP Responses
+
 # Supabase Configuration (should already exist)
 NEXT_PUBLIC_SUPABASE_URL=your_supabase_url
 SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_role_key
@@ -157,6 +162,34 @@ Response:
   "message": "Successfully opted out of SMS notifications"
 }
 ```
+
+### 3. SMS Blast (Announcement or Poll)
+
+**POST** `/api/sms/blast`
+
+Body (announcement):
+```json
+{
+  "spaceId": "<space_uuid>",
+  "type": "announcement",
+  "message": "Officer meeting moved to 7pm."
+}
+```
+
+Body (poll):
+```json
+{
+  "spaceId": "<space_uuid>",
+  "type": "poll",
+  "message": "Are you attending active meeting?",
+  "options": ["Yes", "No", "Maybe"]
+}
+```
+
+Notes:
+- Sends to app users in the space who are opted-in via sms_optin.
+- Polls include a 4-char code. Members reply with the letter (A, B, C...).
+- Replies are recorded to Supabase (sms_poll_response) and, if configured, to Airtable.
 
 ## Twilio Integration (TODO)
 

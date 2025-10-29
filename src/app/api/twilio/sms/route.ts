@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import twilio from 'twilio'
 import { supabase } from '@/lib/supabase'
+import { airtableInsert } from '@/lib/airtable'
 import { searchResourcesHybrid } from '@/lib/search'
 import { ENV } from '@/lib/env'
 import { planQuery, executePlan, composeResponse } from '@/lib/planner'
@@ -269,6 +270,87 @@ export async function POST(request: NextRequest) {
           headers: { 'Content-Type': 'application/xml' }
         }
       )
+    }
+
+    // ========================================================================
+    // POLL RESPONSE HANDLING (RSVP)
+    // ========================================================================
+    try {
+      const upper = (body || '').trim().toUpperCase()
+      const codeMatch = upper.match(/\b([A-Z0-9]{4})\b/)
+      const letterMatch = upper.match(/\b([A-I])\b/)
+      if (letterMatch) {
+        const replyLetter = letterMatch[1]
+        const phoneE164 = from.startsWith('+') ? from : `+1${phoneNumber}`
+
+        // Find poll by code or latest for this phone
+        let poll: any = null
+        if (codeMatch) {
+          const { data: p } = await supabase
+            .from('sms_poll')
+            .select('id, space_id, question, options, code, created_at')
+            .eq('code', codeMatch[1])
+            .maybeSingle()
+          poll = p
+        } else {
+          const { data: rows } = await supabase
+            .from('sms_poll_response')
+            .select('poll_id, sms_poll!inner(id, space_id, question, options, code, created_at)')
+            .eq('phone', phoneE164)
+            .order('sms_poll(created_at)', { ascending: false })
+            .limit(1)
+          poll = rows?.[0]?.sms_poll || null
+        }
+
+        if (poll && Array.isArray(poll.options)) {
+          const letters = 'ABCDEFGHI'
+          const idx = letters.indexOf(replyLetter)
+          if (idx >= 0 && idx < poll.options.length) {
+            const label = String(poll.options[idx])
+            // Upsert response
+            await supabase
+              .from('sms_poll_response')
+              .upsert({
+                poll_id: poll.id,
+                phone: phoneE164,
+                option_index: idx,
+                option_label: label,
+                received_at: new Date().toISOString()
+              } as any, { onConflict: 'poll_id,phone' } as any)
+
+            // Record to Airtable (optional, if configured)
+            const baseId = process.env.AIRTABLE_BASE_ID
+            const tableName = process.env.AIRTABLE_TABLE_NAME || 'RSVP Responses'
+            if (baseId) {
+              await airtableInsert(baseId, tableName, {
+                PollId: poll.id,
+                PollCode: poll.code,
+                SpaceId: poll.space_id,
+                Question: poll.question,
+                Phone: phoneE164,
+                OptionIndex: idx,
+                Option: label,
+                ReceivedAt: new Date().toISOString()
+              })
+            }
+
+            return new NextResponse(
+              '<?xml version="1.0" encoding="UTF-8"?>' +
+              `<Response><Message>Thanks! Recorded your response: ${label}</Message></Response>`,
+              { headers: { 'Content-Type': 'application/xml' } }
+            )
+          } else {
+            return new NextResponse(
+              '<?xml version="1.0" encoding="UTF-8"?>' +
+              '<Response><Message>Sorry, invalid option. Reply with the letter shown next to your choice.</Message></Response>',
+              { headers: { 'Content-Type': 'application/xml' } }
+            )
+          }
+        }
+      }
+    } catch (err) {
+      console.error('[Twilio SMS] Poll handling error:', err)
+      // fall through to normal assistant flow
     }
 
     // ========================================================================
