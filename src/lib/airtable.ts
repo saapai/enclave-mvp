@@ -72,9 +72,15 @@ export async function upsertAirtableRecord(
     return { ok: false, error: 'Missing AIRTABLE_API_KEY' }
   }
   
+  // Log diagnostic info (first few chars only for security)
+  const keyPreview = apiKey.substring(0, 10) + (apiKey.length > 10 ? '...' : '')
+  const keyLength = apiKey.length
+  console.log(`[Airtable] API key preview: "${keyPreview}" (length: ${keyLength})`)
+  
   // Validate token format (should start with 'pat_' for PAT)
   if (!apiKey.startsWith('pat_')) {
     console.warn('[Airtable] API key does not start with "pat_" - may be using old API key instead of Personal Access Token')
+    console.warn(`[Airtable] First 20 chars of key: "${apiKey.substring(0, 20)}"`)
   }
 
   try {
