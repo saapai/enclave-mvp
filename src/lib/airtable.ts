@@ -274,6 +274,20 @@ export async function createAirtableFields(
   try {
     const trimmedApiKey = apiKey.trim()
     
+    // Validate PAT format
+    if (!trimmedApiKey || trimmedApiKey.length < 30) {
+      console.error(`[Airtable] ❌ Invalid PAT: Token is too short or missing`)
+      return { ok: false, created, errors: [`Invalid PAT: Token must be at least 30 characters`], existing }
+    }
+    
+    if (!trimmedApiKey.toLowerCase().startsWith('pat')) {
+      console.warn(`[Airtable] ⚠️ PAT doesn't start with "pat" - may not be a Personal Access Token`)
+      console.warn(`[Airtable] Expected format: pat... (Personal Access Token)`)
+      console.warn(`[Airtable] Current token preview: ${trimmedApiKey.substring(0, 10)}...`)
+    } else {
+      console.log(`[Airtable] ✓ PAT format valid (starts with "pat", length: ${trimmedApiKey.length})`)
+    }
+    
     // First, verify PAT can access the base itself (this helps isolate the issue)
     const baseMetaUrl = `https://api.airtable.com/v0/meta/bases/${baseId}`
     console.log(`[Airtable] Step 1: Verifying PAT access to base ${baseId}...`)
