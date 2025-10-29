@@ -7,7 +7,10 @@ CREATE TABLE IF NOT EXISTS sms_conversation_history (
   phone_number TEXT NOT NULL,
   user_message TEXT NOT NULL,
   bot_response TEXT NOT NULL,
-  created_at TIMESTAMPTZ DEFAULT NOW()
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  
+  -- Ensure isolation per phone number
+  CONSTRAINT sms_conversation_history_phone_check CHECK (phone_number ~ '^[0-9]{10,15}$')
 );
 
 -- Create indexes for efficient lookups
