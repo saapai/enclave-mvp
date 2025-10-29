@@ -359,17 +359,20 @@ export async function createAirtableFieldsForPoll(
         ENV.AIRTABLE_API_KEY
       )
       
-      if (result.ok) {
+      if (result.ok && result.created.length > 0) {
         console.log(`[Polls] ✓ Created ${result.created.length} Airtable fields:`, result.created)
         if (result.errors.length > 0) {
           console.warn(`[Polls] Some fields had errors:`, result.errors)
         }
       } else {
-        console.warn(`[Polls] Field creation had errors (will continue with field names):`, result.errors)
-        console.log(`[Polls] Admin should manually create these fields in Airtable:`)
-        console.log(`  - ${questionFieldName} (Single line text)`)
-        console.log(`  - ${responseFieldName} (Single select: Yes, No, Maybe)`)
-        console.log(`  - ${notesFieldName} (Long text)`)
+        console.error(`[Polls] ❌ Field creation failed or incomplete:`)
+        console.error(`[Polls]   Created: ${result.created.length} fields`)
+        console.error(`[Polls]   Errors: ${result.errors.length} errors`)
+        if (result.errors.length > 0) {
+          console.error(`[Polls]   Error details:`, result.errors)
+        }
+        console.error(`[Polls] This means fields "${questionFieldName}", "${responseFieldName}", "${notesFieldName}" may not exist in Airtable`)
+        console.error(`[Polls] Manual action required: Create these fields in Airtable or check AIRTABLE_TABLE_ID is set correctly`)
       }
     } else {
       console.log(`[Polls] AIRTABLE_TABLE_ID not set, skipping Metadata API field creation`)
