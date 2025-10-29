@@ -409,12 +409,24 @@ export async function POST(request: NextRequest) {
       console.log(`[Twilio SMS] Using planner-based flow`)
       
       try {
-        // Create query plan
+        // Create query plan (spaceId doesn't matter for planning, just for tool execution)
         const plan = await planQuery(query, spaceIds[0])
         console.log(`[Twilio SMS] Plan intent: ${plan.intent}, confidence: ${plan.confidence}`)
         
-        // Execute plan
-        const toolResults = await executePlan(plan, spaceIds[0])
+        // For doc search, use the deduped results we already have
+        let toolResults = await executePlan(plan, spaceIds[0])
+        
+        // If plan was for doc_search and we have good results, replace with our cross-workspace results
+        if (plan.intent === 'doc_search' && dedupedResults.length > 0) {
+          console.log(`[Twilio SMS] Using cross-workspace doc search results (${dedupedResults.length} results)`)
+          toolResults = [{
+            tool: 'search_docs',
+            success: true,
+            data: { results: dedupedResults },
+            confidence: 0.8
+          }]
+        }
+        
         console.log(`[Twilio SMS] Executed ${toolResults.length} tools`)
         
         // Compose response

@@ -109,18 +109,24 @@ CREATE TABLE IF NOT EXISTS person (
   
   -- Core info
   name TEXT NOT NULL,
-  role TEXT, -- 'president', 'vp-professional', 'pledge', 'active'
+  role TEXT, -- 'president', 'pledge educator', 'member'
   email TEXT,
   phone TEXT,
-  
-  -- Identifiers
-  handles JSONB, -- {slack: '@username', discord: 'username#1234'}
-  
-  -- Organization
-  org TEXT, -- 'Sigma Eta Pi', 'UCLA SEP'
-  class TEXT, -- 'Alpha Eta', 'Alpha Delta'
+  handles JSONB, -- {slack: '@username', instagram: '@handle'}
   
   -- Metadata
+  org TEXT,
+  class TEXT, -- 'fall 2024', '2025'
+  
+  -- Provenance
+  source_type TEXT,
+  source_id UUID,
+  chunk_id UUID,
+  start_offset INT,
+  end_offset INT,
+  
+  -- Metadata
+  confidence FLOAT DEFAULT 1.0,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW(),
   created_by TEXT
@@ -129,24 +135,24 @@ CREATE TABLE IF NOT EXISTS person (
 -- Indexes
 CREATE INDEX IF NOT EXISTS person_space_id_idx ON person(space_id);
 CREATE INDEX IF NOT EXISTS person_name_trgm_idx ON person USING gin(name gin_trgm_ops);
-CREATE INDEX IF NOT EXISTS person_email_idx ON person(email);
 CREATE INDEX IF NOT EXISTS person_role_idx ON person(role);
 
 -- ============================================================================
--- FACTS TABLE (Atomic Knowledge)
+-- FACTS TABLE
 -- ============================================================================
--- Stores atomic facts extracted from documents
--- Events and policies are materialized views over facts
+-- Stores atomic knowledge triples for flexible querying
 CREATE TABLE IF NOT EXISTS fact (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   space_id UUID NOT NULL REFERENCES space(id) ON DELETE CASCADE,
   
-  -- Triple structure
-  kind TEXT NOT NULL, -- 'event', 'policy', 'person', 'relationship'
-  subject TEXT NOT NULL, -- entity name
-  predicate TEXT NOT NULL, -- 'has_date', 'located_at', 'requires'
-  object TEXT NOT NULL, -- value
-  qualifiers JSONB, -- additional context {time, location, condition}
+  -- Triple structure: subject-predicate-object
+  kind TEXT NOT NULL, -- 'property', 'relationship', 'attribute'
+  subject TEXT NOT NULL, -- 'Big Little Appreciation'
+  predicate TEXT NOT NULL, -- 'happens_on'
+  object TEXT NOT NULL, -- 'Nov 13'
+  
+  -- Additional context
+  qualifiers JSONB, -- {frequency: 'weekly', required: true}
   
   -- Provenance
   source_type TEXT,
@@ -158,7 +164,8 @@ CREATE TABLE IF NOT EXISTS fact (
   -- Metadata
   confidence FLOAT DEFAULT 1.0,
   extracted_at TIMESTAMPTZ DEFAULT NOW(),
-  created_by TEXT -- 'extractor-v1', 'manual', user_id
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  created_by TEXT
 );
 
 -- Indexes
@@ -215,33 +222,36 @@ RETURNS TABLE (
 ) AS $$
 BEGIN
   RETURN QUERY
-  -- Direct name match
-  SELECT 
-    e.id,
-    e.name,
-    e.start_at,
-    e.end_at,
-    e.location,
-    'direct'::TEXT as match_type
-  FROM event e
-  WHERE e.space_id = target_space_id
-    AND e.name ILIKE '%' || search_name || '%'
-  
-  UNION
-  
-  -- Alias match
-  SELECT 
-    e.id,
-    e.name,
-    e.start_at,
-    e.end_at,
-    e.location,
-    'alias'::TEXT as match_type
-  FROM event e
-  JOIN event_alias ea ON ea.event_id = e.id
-  WHERE e.space_id = target_space_id
-    AND ea.alias ILIKE '%' || search_name || '%'
-  
+  WITH direct_matches AS (
+    -- Direct name match
+    SELECT 
+      e.id,
+      e.name,
+      e.start_at,
+      e.end_at,
+      e.location,
+      'direct'::TEXT as match_type
+    FROM event e
+    WHERE e.space_id = target_space_id
+      AND e.name ILIKE '%' || search_name || '%'
+  ),
+  alias_matches AS (
+    -- Alias match
+    SELECT 
+      e.id,
+      e.name,
+      e.start_at,
+      e.end_at,
+      e.location,
+      'alias'::TEXT as match_type
+    FROM event e
+    JOIN event_alias ea ON ea.event_id = e.id
+    WHERE e.space_id = target_space_id
+      AND ea.alias ILIKE '%' || search_name || '%'
+  )
+  SELECT * FROM direct_matches
+  UNION ALL
+  SELECT * FROM alias_matches
   ORDER BY match_type, event_name
   LIMIT 5;
 END;
@@ -282,4 +292,3 @@ COMMENT ON TABLE policy IS 'Structured policy/program information extracted from
 COMMENT ON TABLE person IS 'People in the organization with roles and contact info';
 COMMENT ON TABLE fact IS 'Atomic knowledge triples for flexible querying';
 COMMENT ON TABLE linkback IS 'Source citations for all extracted knowledge';
-
