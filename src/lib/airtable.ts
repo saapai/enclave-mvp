@@ -258,21 +258,26 @@ export async function upsertAirtableRecord(
 
 /**
  * Create Airtable fields via Metadata API
+ * Uses Airtable Metadata API to programmatically create fields
+ * Reference: https://airtable.com/developers/web/api/create-field
  */
 export async function createAirtableFields(
   baseId: string,
   tableId: string,
   fieldNames: { question: string; response: string; notes: string },
   apiKey: string
-): Promise<{ ok: boolean; created: string[]; errors: string[] }> {
+): Promise<{ ok: boolean; created: string[]; errors: string[]; existing: string[] }> {
   const created: string[] = []
   const errors: string[] = []
+  const existing: string[] = []
   
   try {
-    // First, check if fields already exist
-    const metaUrl = `https://api.airtable.com/v0/meta/bases/${baseId}/tables/${tableId}`
     const trimmedApiKey = apiKey.trim()
+    const metaUrl = `https://api.airtable.com/v0/meta/bases/${baseId}/tables/${tableId}`
     
+    console.log(`[Airtable] Checking existing fields in table ${tableId}...`)
+    
+    // First, check if fields already exist and get table schema
     const metaRes = await fetch(metaUrl, {
       headers: {
         'Authorization': `Bearer ${trimmedApiKey}`,
@@ -280,12 +285,21 @@ export async function createAirtableFields(
       }
     })
     
+    if (!metaRes.ok) {
+      const errorData = await metaRes.json()
+      const errorMsg = errorData?.error?.message || `HTTP ${metaRes.status}`
+      console.error(`[Airtable] Failed to fetch table schema:`, errorMsg)
+      return { ok: false, created, errors: [`Failed to access Metadata API: ${errorMsg}`], existing }
+    }
+    
     const metaData = await metaRes.json()
     const existingFields = metaData?.schema?.fields?.map((f: any) => f.name) || []
+    console.log(`[Airtable] Found ${existingFields.length} existing fields in table`)
     
-    // Create Question field
+    // Create Question field (singleLineText)
     if (!existingFields.includes(fieldNames.question)) {
       try {
+        console.log(`[Airtable] Creating field: "${fieldNames.question}" (singleLineText)`)
         const createRes = await fetch(`${metaUrl}/fields`, {
           method: 'POST',
           headers: {
@@ -300,22 +314,29 @@ export async function createAirtableFields(
           })
         })
         
+        const responseData = await createRes.json()
+        
         if (createRes.ok) {
           created.push(fieldNames.question)
+          console.log(`[Airtable] ✓ Created field: "${fieldNames.question}"`)
         } else {
-          const errorData = await createRes.json()
-          errors.push(`${fieldNames.question}: ${errorData?.error?.message || 'Unknown error'}`)
+          const errorMsg = responseData?.error?.message || responseData?.error?.type || `HTTP ${createRes.status}`
+          console.error(`[Airtable] Failed to create "${fieldNames.question}":`, errorMsg)
+          errors.push(`${fieldNames.question}: ${errorMsg}`)
         }
       } catch (err: any) {
+        console.error(`[Airtable] Exception creating "${fieldNames.question}":`, err.message)
         errors.push(`${fieldNames.question}: ${err.message}`)
       }
     } else {
+      existing.push(fieldNames.question)
       console.log(`[Airtable] Field "${fieldNames.question}" already exists`)
     }
     
-    // Create Response field (single select)
+    // Create Response field (singleSelect with Yes/No/Maybe options)
     if (!existingFields.includes(fieldNames.response)) {
       try {
+        console.log(`[Airtable] Creating field: "${fieldNames.response}" (singleSelect: Yes, No, Maybe)`)
         const createRes = await fetch(`${metaUrl}/fields`, {
           method: 'POST',
           headers: {
@@ -337,22 +358,29 @@ export async function createAirtableFields(
           })
         })
         
+        const responseData = await createRes.json()
+        
         if (createRes.ok) {
           created.push(fieldNames.response)
+          console.log(`[Airtable] ✓ Created field: "${fieldNames.response}"`)
         } else {
-          const errorData = await createRes.json()
-          errors.push(`${fieldNames.response}: ${errorData?.error?.message || 'Unknown error'}`)
+          const errorMsg = responseData?.error?.message || responseData?.error?.type || `HTTP ${createRes.status}`
+          console.error(`[Airtable] Failed to create "${fieldNames.response}":`, errorMsg)
+          errors.push(`${fieldNames.response}: ${errorMsg}`)
         }
       } catch (err: any) {
+        console.error(`[Airtable] Exception creating "${fieldNames.response}":`, err.message)
         errors.push(`${fieldNames.response}: ${err.message}`)
       }
     } else {
+      existing.push(fieldNames.response)
       console.log(`[Airtable] Field "${fieldNames.response}" already exists`)
     }
     
-    // Create Notes field
+    // Create Notes field (multilineText for longer notes)
     if (!existingFields.includes(fieldNames.notes)) {
       try {
+        console.log(`[Airtable] Creating field: "${fieldNames.notes}" (multilineText)`)
         const createRes = await fetch(`${metaUrl}/fields`, {
           method: 'POST',
           headers: {
@@ -367,22 +395,35 @@ export async function createAirtableFields(
           })
         })
         
+        const responseData = await createRes.json()
+        
         if (createRes.ok) {
           created.push(fieldNames.notes)
+          console.log(`[Airtable] ✓ Created field: "${fieldNames.notes}"`)
         } else {
-          const errorData = await createRes.json()
-          errors.push(`${fieldNames.notes}: ${errorData?.error?.message || 'Unknown error'}`)
+          const errorMsg = responseData?.error?.message || responseData?.error?.type || `HTTP ${createRes.status}`
+          console.error(`[Airtable] Failed to create "${fieldNames.notes}":`, errorMsg)
+          errors.push(`${fieldNames.notes}: ${errorMsg}`)
         }
       } catch (err: any) {
+        console.error(`[Airtable] Exception creating "${fieldNames.notes}":`, err.message)
         errors.push(`${fieldNames.notes}: ${err.message}`)
       }
     } else {
+      existing.push(fieldNames.notes)
       console.log(`[Airtable] Field "${fieldNames.notes}" already exists`)
     }
     
-    return { ok: errors.length === 0, created, errors }
+    // Summary
+    const totalFields = created.length + existing.length
+    console.log(`[Airtable] Field creation summary: ${created.length} created, ${existing.length} already existed, ${errors.length} errors`)
+    
+    // Success if all 3 fields exist (created now or already existed)
+    const allFieldsExist = totalFields === 3
+    return { ok: allFieldsExist && errors.length === 0, created, errors, existing }
   } catch (err: any) {
-    return { ok: false, created, errors: [`Metadata API check failed: ${err.message}`] }
+    console.error(`[Airtable] Metadata API failed with exception:`, err)
+    return { ok: false, created, errors: [`Metadata API failed: ${err.message}`], existing }
   }
 }
 

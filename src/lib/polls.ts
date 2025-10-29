@@ -329,10 +329,10 @@ function sanitizeFieldName(text: string, maxLength: number = 25): string {
  */
 export async function createAirtableFieldsForPoll(
   pollQuestion: string
-): Promise<{ questionField: string; responseField: string; notesField: string }> {
+): Promise<{ questionField: string; responseField: string; notesField: string; fieldsCreated: boolean }> {
   if (!ENV.AIRTABLE_API_KEY || !ENV.AIRTABLE_BASE_ID || !ENV.AIRTABLE_TABLE_NAME) {
     console.warn('[Polls] Airtable not configured, skipping field creation');
-    return { questionField: 'Question', responseField: 'Response', notesField: 'Notes' };
+    return { questionField: 'Question', responseField: 'Response', notesField: 'Notes', fieldsCreated: false };
   }
 
   try {
@@ -382,15 +382,37 @@ export async function createAirtableFieldsForPoll(
       console.log(`  - ${notesFieldName} (Long text)`)
     }
     
-    return {
-      questionField: questionFieldName,
-      responseField: responseFieldName,
-      notesField: notesFieldName
-    };
+      return {
+        questionField: questionFieldName,
+        responseField: responseFieldName,
+        notesField: notesFieldName,
+        fieldsCreated: result.ok && (result.created.length + result.existing.length) === 3
+      };
+    } else {
+      console.warn(`[Polls] ⚠️ AIRTABLE_TABLE_ID not set - cannot create fields automatically`)
+      console.warn(`[Polls] Get Table ID from Airtable URL: https://airtable.com/appecxe8XTHF7yA5a/tblXXXXXXXXXXXXXX/...`)
+      console.warn(`[Polls] Set AIRTABLE_TABLE_ID in Vercel environment variables`)
+      console.warn(`[Polls] Until then, manually create fields:`)
+      console.warn(`[Polls]   - ${questionFieldName} (Single line text)`)
+      console.warn(`[Polls]   - ${responseFieldName} (Single select: Yes, No, Maybe)`)
+      console.warn(`[Polls]   - ${notesFieldName} (Long text)`)
+      
+      return {
+        questionField: questionFieldName,
+        responseField: responseFieldName,
+        notesField: notesFieldName,
+        fieldsCreated: false
+      };
+    }
   } catch (err) {
     console.error('[Polls] Failed to create Airtable fields:', err);
-    // Fallback to generic names
-    return { questionField: 'Question', responseField: 'Response', notesField: 'Notes' };
+    // Return field names but mark as not created
+    return { 
+      questionField: questionFieldName || 'Question', 
+      responseField: responseFieldName || 'Response', 
+      notesField: notesFieldName || 'Notes',
+      fieldsCreated: false
+    };
   }
 }
 
@@ -762,36 +784,14 @@ export async function recordPollResponse(
       // Add poll fields to main fields object
       Object.assign(fields, pollFieldsToAdd)
 
-      // First try to upsert with all fields (including poll-specific)
-      let result = await upsertAirtableRecord(
+      // Upsert with all fields (including poll-specific)
+      // Fields should have been created when poll was sent, so this should work
+      const result = await upsertAirtableRecord(
         ENV.AIRTABLE_BASE_ID,
         ENV.AIRTABLE_TABLE_NAME,
         phone,
         fields
       );
-
-      // If it failed due to missing poll fields, retry with just Person and phone number
-      if (!result.ok && result.error?.includes('Fields do not exist') && Object.keys(pollFieldsToAdd).length > 0) {
-        console.warn(`[Polls] First attempt failed due to missing poll fields. Retrying with just Person and phone number...`)
-        
-        // Create minimal fields object with only Person and phone number
-        const minimalFields: Record<string, any> = {
-          [personFieldName]: personName || 'Unknown'
-        }
-        
-        // Retry with minimal fields
-        result = await upsertAirtableRecord(
-          ENV.AIRTABLE_BASE_ID,
-          ENV.AIRTABLE_TABLE_NAME,
-          phone,
-          minimalFields
-        )
-        
-        if (result.ok) {
-          console.warn(`[Polls] ⚠️ Created Airtable record with Person only. Poll response data NOT saved because fields don't exist.`)
-          console.warn(`[Polls] ⚠️ Manual action required: Create fields "${questionField}", "${responseField}" in Airtable and re-sync data.`)
-        }
-      }
 
       if (result.ok) {
         const fieldCount = Object.keys(fields).length
