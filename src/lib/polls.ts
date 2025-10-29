@@ -728,33 +728,39 @@ export async function recordPollResponse(
       // Get field names from env (with defaults)
       const personFieldName = ENV.AIRTABLE_PERSON_FIELD || 'Person'
       
-      // Build fields object - only include fields that exist (check poll for field names)
+      // Build fields object - start with required fields only
+      // We'll add poll-specific fields, but if they fail (don't exist), we'll create record with just Person
       const fields: Record<string, any> = {
         [personFieldName]: personName || 'Unknown'
       };
 
-      // Only add poll-specific fields if they were configured (don't use defaults blindly)
-      // This prevents errors when poll fields haven't been created yet
+      // Try to add poll-specific fields if they were configured
+      // If they don't exist in Airtable, the upsert will fail for those fields, but we can retry with just Person
+      const pollFieldsToAdd: Record<string, any> = {}
+      
       if (poll.airtable_question_field) {
-        fields[questionField] = poll.question; // Store the poll question
+        pollFieldsToAdd[questionField] = poll.question; // Store the poll question
         console.log(`[Polls] Including field: ${questionField} = "${poll.question.substring(0, 50)}..."`)
       } else {
         console.warn(`[Polls] Poll ${pollId} has no airtable_question_field configured - fields may not have been created when poll was sent`)
       }
       
       if (poll.airtable_response_field) {
-        fields[responseField] = option;
+        pollFieldsToAdd[responseField] = option;
         console.log(`[Polls] Including field: ${responseField} = "${option}"`)
       } else {
         console.warn(`[Polls] Poll ${pollId} has no airtable_response_field configured - fields may not have been created when poll was sent`)
       }
       
       if (poll.airtable_notes_field && notes) {
-        fields[notesField] = notes;
+        pollFieldsToAdd[notesField] = notes;
         console.log(`[Polls] Including field: ${notesField} = "${notes.substring(0, 50)}..."`)
       } else if (notes) {
         console.warn(`[Polls] Poll ${pollId} has no airtable_notes_field configured - notes will not be saved`)
       }
+      
+      // Add poll fields to main fields object
+      Object.assign(fields, pollFieldsToAdd)
 
       // Upsert using helper (normalizes phone, finds or creates record)
       const result = await upsertAirtableRecord(

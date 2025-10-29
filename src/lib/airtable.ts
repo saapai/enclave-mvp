@@ -221,8 +221,28 @@ export async function upsertAirtableRecord(
           return { ok: false, error: `Table "${tableName}" not found. Check table name matches exactly (case-sensitive). Current: "${tableName}"`, created: true }
         } else if (errorMsg.includes('Invalid permissions')) {
           return { ok: false, error: `API key lacks permission. Ensure it has access to base "${baseId}" and table "${tableName}"`, created: true }
-        } else if (errorMsg.includes('Unknown field')) {
-          return { ok: false, error: `Field "${Object.keys(createFields)[0]}" not found. Check field names match exactly.`, created: true }
+        } else if (errorMsg.includes('Unknown field') || createData?.error?.type === 'UNKNOWN_FIELD_NAME') {
+          const unknownFields: string[] = []
+          if (createData?.error?.message) {
+            // Extract field names from error message like "Unknown field name: 'field1' and 'field2'"
+            const matches = createData.error.message.match(/'([^']+)'/g)
+            if (matches) {
+              unknownFields.push(...matches.map(m => m.replace(/'/g, '')))
+            }
+          }
+          
+          const fieldList = unknownFields.length > 0 
+            ? unknownFields.join(', ')
+            : Object.keys(createFields).join(', ')
+          
+          console.error(`[Airtable] ❌ Fields do not exist in Airtable table: ${fieldList}`)
+          console.error(`[Airtable] These fields should have been created when the poll was sent.`)
+          console.error(`[Airtable] Possible causes:`)
+          console.error(`[Airtable]   1. AIRTABLE_TABLE_ID not set in environment variables`)
+          console.error(`[Airtable]   2. Metadata API field creation failed when poll was sent`)
+          console.error(`[Airtable]   3. Fields need to be created manually in Airtable`)
+          
+          return { ok: false, error: `Fields do not exist: ${fieldList}. These should have been created when the poll was sent. Check AIRTABLE_TABLE_ID is set and field creation succeeded.`, created: true }
         }
         
         return { ok: false, error: errorMsg, created: true }
