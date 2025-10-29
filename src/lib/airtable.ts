@@ -36,10 +36,12 @@ export async function airtableInsert(
   if (!apiKey) return { ok: false, error: 'Missing AIRTABLE_API_KEY' }
 
   try {
+    const trimmedApiKey = apiKey.trim()
+    
     const res = await fetch(`https://api.airtable.com/v0/${baseId}/${encodeURIComponent(tableName)}`, {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${apiKey}`,
+        'Authorization': `Bearer ${trimmedApiKey}`,
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({ records: [{ fields }] })
@@ -65,7 +67,15 @@ export async function upsertAirtableRecord(
   fields: Record<string, any>
 ): Promise<{ ok: boolean; id?: string; error?: string; created: boolean }> {
   const apiKey = process.env.AIRTABLE_API_KEY
-  if (!apiKey) return { ok: false, error: 'Missing AIRTABLE_API_KEY' }
+  if (!apiKey) {
+    console.error('[Airtable] Missing AIRTABLE_API_KEY environment variable')
+    return { ok: false, error: 'Missing AIRTABLE_API_KEY' }
+  }
+  
+  // Validate token format (should start with 'pat_' for PAT)
+  if (!apiKey.startsWith('pat_')) {
+    console.warn('[Airtable] API key does not start with "pat_" - may be using old API key instead of Personal Access Token')
+  }
 
   try {
     const normalizedPhone = normalizePhoneForAirtable(phone)
@@ -78,9 +88,12 @@ export async function upsertAirtableRecord(
     const searchUrl = `https://api.airtable.com/v0/${baseId}/${encodedTableName}?filterByFormula=${encodeURIComponent(`{${phoneFieldName}} = "${normalizedPhone}"`)}`
     console.log(`[Airtable] Searching for record. Base: ${baseId}, Table: "${tableName}" (encoded: ${encodedTableName})`)
     
+    // Trim whitespace from API key (common issue)
+    const trimmedApiKey = apiKey.trim()
+    
     const searchRes = await fetch(searchUrl, {
       headers: {
-        'Authorization': `Bearer ${apiKey}`,
+        'Authorization': `Bearer ${trimmedApiKey}`,
         'Content-Type': 'application/json'
       }
     })
@@ -90,6 +103,17 @@ export async function upsertAirtableRecord(
     if (searchData.error) {
       // API returned an error - log details
       console.error('[Airtable] Search error:', searchData.error)
+      
+      // Provide helpful error for authentication issues
+      if (searchData.error.type === 'AUTHENTICATION_REQUIRED') {
+        console.error('[Airtable] Authentication failed. Check:')
+        console.error('  1. AIRTABLE_API_KEY is set in environment variables')
+        console.error('  2. API key starts with "pat_" (Personal Access Token)')
+        console.error('  3. API key has no leading/trailing whitespace')
+        console.error('  4. API key has correct scopes (data.records:read, data.records:write)')
+        return { ok: false, error: 'Authentication required. Check API key is a valid Personal Access Token (starts with pat_)', created: false }
+      }
+      
       return { ok: false, error: searchData.error.message || searchData.error.type || 'Airtable search failed', created: false }
     }
     
@@ -104,10 +128,12 @@ export async function upsertAirtableRecord(
       const updateUrl = `https://api.airtable.com/v0/${baseId}/${encodeURIComponent(tableName)}`
       console.log(`[Airtable] Updating record at: ${updateUrl}`)
       
+      const trimmedApiKey = apiKey.trim()
+      
       const updateRes = await fetch(updateUrl, {
         method: 'PATCH',
         headers: {
-          'Authorization': `Bearer ${apiKey}`,
+          'Authorization': `Bearer ${trimmedApiKey}`,
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
@@ -150,10 +176,12 @@ export async function upsertAirtableRecord(
       console.log(`[Airtable] Creating record at: ${createUrl}`)
       console.log(`[Airtable] Fields to create:`, Object.keys(createFields).join(', '))
       
+      const trimmedApiKey = apiKey.trim()
+      
       const createRes = await fetch(createUrl, {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${apiKey}`,
+          'Authorization': `Bearer ${trimmedApiKey}`,
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({ records: [{ fields: createFields }] })
@@ -202,9 +230,11 @@ export async function createAirtableFields(
   try {
     // First, check if fields already exist
     const metaUrl = `https://api.airtable.com/v0/meta/bases/${baseId}/tables/${tableId}`
+    const trimmedApiKey = apiKey.trim()
+    
     const metaRes = await fetch(metaUrl, {
       headers: {
-        'Authorization': `Bearer ${apiKey}`,
+        'Authorization': `Bearer ${trimmedApiKey}`,
         'Content-Type': 'application/json'
       }
     })
@@ -218,7 +248,7 @@ export async function createAirtableFields(
         const createRes = await fetch(`${metaUrl}/fields`, {
           method: 'POST',
           headers: {
-            'Authorization': `Bearer ${apiKey}`,
+            'Authorization': `Bearer ${trimmedApiKey}`,
             'Content-Type': 'application/json'
           },
           body: JSON.stringify({
@@ -248,7 +278,7 @@ export async function createAirtableFields(
         const createRes = await fetch(`${metaUrl}/fields`, {
           method: 'POST',
           headers: {
-            'Authorization': `Bearer ${apiKey}`,
+            'Authorization': `Bearer ${trimmedApiKey}`,
             'Content-Type': 'application/json'
           },
           body: JSON.stringify({
@@ -285,7 +315,7 @@ export async function createAirtableFields(
         const createRes = await fetch(`${metaUrl}/fields`, {
           method: 'POST',
           headers: {
-            'Authorization': `Bearer ${apiKey}`,
+            'Authorization': `Bearer ${trimmedApiKey}`,
             'Content-Type': 'application/json'
           },
           body: JSON.stringify({
