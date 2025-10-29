@@ -322,29 +322,18 @@ export async function sendPoll(
       return { sentCount: 0 };
     }
 
-    // Get all recipients in workspace (excluding opted-out)
-    const { data: members } = await supabaseAdmin
-      .from('app_user')
-      .select('name, phone')
-      .eq('space_id', poll.space_id);
-
-    const allPhonesInSpace = (members || [])
-      .map(m => m.phone)
-      .filter(Boolean)
-      .map(p => String(p).replace(/\D/g, '').slice(-10));
-
-    const { data: optedOutPhones } = await supabaseAdmin
+    // Get all opted-in users (same as announcements)
+    const { data: optedInUsers } = await supabaseAdmin
       .from('sms_optin')
       .select('phone')
-      .eq('opted_out', true);
+      .eq('opted_out', false);
 
-    const optedOutSet = new Set((optedOutPhones || []).map(o => String(o.phone).replace(/\D/g, '').slice(-10)));
-    const recipients = Array.from(new Set(allPhonesInSpace.filter(p => !optedOutSet.has(p))));
-
-    if (recipients.length === 0) {
-      console.log('[Polls] No recipients found');
+    if (!optedInUsers || optedInUsers.length === 0) {
+      console.log('[Polls] No opted-in recipients found');
       return { sentCount: 0 };
     }
+
+    const recipients = optedInUsers.map(u => u.phone).filter(Boolean);
 
     // Create Airtable fields for this poll
     const airtableFields = await createAirtableFieldsForPoll(poll.question);
@@ -365,6 +354,7 @@ export async function sendPoll(
     // Send to each recipient
     for (const recipientPhone of recipients) {
       try {
+        // Ensure phone is in E.164 format
         const phoneE164 = recipientPhone.startsWith('+') ? recipientPhone : `+1${recipientPhone}`;
         
         const result = await twilioClient.messages.create({
@@ -373,18 +363,20 @@ export async function sendPoll(
           to: phoneE164
         });
 
+        console.log(`[Polls] Sent to ${phoneE164}, Twilio SID: ${result.sid}`);
+
         // Seed poll response (will collect name later)
         await supabaseAdmin
           .from('sms_poll_response')
-          .insert({
+          .upsert({
             poll_id: pollId,
-            phone: recipientPhone,
+            phone: phoneE164,
             option_index: -1,
             option_label: '',
             response_status: 'pending'
-          } as any)
-          .onConflict('poll_id,phone')
-          .ignore();
+          } as any, {
+            onConflict: 'poll_id,phone'
+          } as any);
 
         sentCount++;
       } catch (err) {
