@@ -69,7 +69,7 @@ export async function upsertAirtableRecord(
   const apiKey = process.env.AIRTABLE_API_KEY
   if (!apiKey) {
     console.error('[Airtable] Missing AIRTABLE_API_KEY environment variable')
-    return { ok: false, error: 'Missing AIRTABLE_API_KEY' }
+    return { ok: false, error: 'Missing AIRTABLE_API_KEY', created: false }
   }
   
   // Log diagnostic info (first few chars only for security)
@@ -227,7 +227,7 @@ export async function upsertAirtableRecord(
             // Extract field names from error message like "Unknown field name: 'field1' and 'field2'"
             const matches = createData.error.message.match(/'([^']+)'/g)
             if (matches) {
-              unknownFields.push(...matches.map(m => m.replace(/'/g, '')))
+              unknownFields.push(...matches.map((m: string) => m.replace(/'/g, '')))
             }
           }
           
@@ -420,55 +420,15 @@ export async function createAirtableFields(
     
     console.log(`[Airtable] ✓ Target table found: ${targetTable.name} (${tableId})`)
     
-    // Step 2: Get the specific table schema (to check existing fields)
-    const tableSchemaUrl = `https://api.airtable.com/v0/meta/bases/${baseId}/tables/${tableId}`
-    console.log(`[Airtable] Step 2: Getting table schema to check existing fields...`)
-    console.log(`[Airtable] Metadata API URL: ${tableSchemaUrl}`)
-    
-    // Get table schema to check existing fields
-    const metaRes = await fetch(tableSchemaUrl, {
-      headers: {
-        'Authorization': `Bearer ${trimmedApiKey}`,
-        'Content-Type': 'application/json'
-      }
-    })
-    
-    if (!metaRes.ok) {
-      let errorData: any = {}
-      try {
-        errorData = await metaRes.json()
-      } catch (e) {
-        // Response wasn't JSON, use status code
-      }
-      
-      const errorMsg = errorData?.error?.message || errorData?.error?.type || `HTTP ${metaRes.status}`
-      const status = metaRes.status
-      
-      console.error(`[Airtable] ❌ Failed to fetch table schema: ${errorMsg}`)
-      console.error(`[Airtable] HTTP Status: ${status}`)
-      console.error(`[Airtable] URL: ${tableSchemaUrl}`)
-      
-      if (status === 404) {
-        console.error(`[Airtable] 404 Error - Table not found`)
-        console.error(`[Airtable] We verified table exists in tables list, but schema endpoint fails`)
-        console.error(`[Airtable] This may indicate:`)
-        console.error(`[Airtable]   1. Table ID is correct but schema access is restricted`)
-        console.error(`[Airtable]   2. PAT needs additional permissions for schema access`)
-        console.error(`[Airtable]   3. Verify table ID: ${tableId}`)
-      } else if (status === 401 || status === 403) {
-        console.error(`[Airtable] Authentication/Permission Error`)
-        console.error(`[Airtable] This means PAT needs additional scope for schema access:`)
-        console.error(`[Airtable]   1. Verify PAT has scope: schema.bases:read`)
-        console.error(`[Airtable]   2. Check PAT has access to base "${baseId}"`)
-        console.error(`[Airtable]   3. May need schema.bases:write for field creation`)
-      }
-      
-      return { ok: false, created, errors: [`Failed to access table schema: ${errorMsg} (HTTP ${status})`], existing }
+    // Step 2: Check if tables list response includes fields
+    // The tables list endpoint might include field information in the response
+    const existingFields: string[] = []
+    if (targetTable.fields && Array.isArray(targetTable.fields)) {
+      existingFields.push(...targetTable.fields.map((f: any) => f.name))
+      console.log(`[Airtable] ✓ Found ${existingFields.length} existing fields from tables list`)
+    } else {
+      console.log(`[Airtable] Note: Tables list doesn't include field info, will check during creation`)
     }
-    
-    const metaData = await metaRes.json()
-    const existingFields = metaData?.schema?.fields?.map((f: any) => f.name) || []
-    console.log(`[Airtable] ✓ Step 2 passed: Found ${existingFields.length} existing fields in table`)
     
     // Step 3: Create fields (CORRECT endpoint: /tables/{tableId}/fields)
     const fieldsUrl = `https://api.airtable.com/v0/meta/bases/${baseId}/tables/${tableId}/fields`
@@ -499,8 +459,16 @@ export async function createAirtableFields(
           console.log(`[Airtable] ✓ Created field: "${fieldNames.question}"`)
         } else {
           const errorMsg = responseData?.error?.message || responseData?.error?.type || `HTTP ${createRes.status}`
-          console.error(`[Airtable] Failed to create "${fieldNames.question}":`, errorMsg)
-          errors.push(`${fieldNames.question}: ${errorMsg}`)
+          // If field already exists (duplicate name error), treat as existing
+          if (errorMsg.toLowerCase().includes('already exists') || 
+              errorMsg.toLowerCase().includes('duplicate') ||
+              responseData?.error?.type === 'DUPLICATE_FIELD_NAME') {
+            existing.push(fieldNames.question)
+            console.log(`[Airtable] Field "${fieldNames.question}" already exists (detected during creation)`)
+          } else {
+            console.error(`[Airtable] Failed to create "${fieldNames.question}":`, errorMsg)
+            errors.push(`${fieldNames.question}: ${errorMsg}`)
+          }
         }
       } catch (err: any) {
         console.error(`[Airtable] Exception creating "${fieldNames.question}":`, err.message)
@@ -543,8 +511,16 @@ export async function createAirtableFields(
           console.log(`[Airtable] ✓ Created field: "${fieldNames.response}"`)
         } else {
           const errorMsg = responseData?.error?.message || responseData?.error?.type || `HTTP ${createRes.status}`
-          console.error(`[Airtable] Failed to create "${fieldNames.response}":`, errorMsg)
-          errors.push(`${fieldNames.response}: ${errorMsg}`)
+          // If field already exists (duplicate name error), treat as existing
+          if (errorMsg.toLowerCase().includes('already exists') || 
+              errorMsg.toLowerCase().includes('duplicate') ||
+              responseData?.error?.type === 'DUPLICATE_FIELD_NAME') {
+            existing.push(fieldNames.response)
+            console.log(`[Airtable] Field "${fieldNames.response}" already exists (detected during creation)`)
+          } else {
+            console.error(`[Airtable] Failed to create "${fieldNames.response}":`, errorMsg)
+            errors.push(`${fieldNames.response}: ${errorMsg}`)
+          }
         }
       } catch (err: any) {
         console.error(`[Airtable] Exception creating "${fieldNames.response}":`, err.message)
@@ -580,8 +556,16 @@ export async function createAirtableFields(
           console.log(`[Airtable] ✓ Created field: "${fieldNames.notes}"`)
         } else {
           const errorMsg = responseData?.error?.message || responseData?.error?.type || `HTTP ${createRes.status}`
-          console.error(`[Airtable] Failed to create "${fieldNames.notes}":`, errorMsg)
-          errors.push(`${fieldNames.notes}: ${errorMsg}`)
+          // If field already exists (duplicate name error), treat as existing
+          if (errorMsg.toLowerCase().includes('already exists') || 
+              errorMsg.toLowerCase().includes('duplicate') ||
+              responseData?.error?.type === 'DUPLICATE_FIELD_NAME') {
+            existing.push(fieldNames.notes)
+            console.log(`[Airtable] Field "${fieldNames.notes}" already exists (detected during creation)`)
+          } else {
+            console.error(`[Airtable] Failed to create "${fieldNames.notes}":`, errorMsg)
+            errors.push(`${fieldNames.notes}: ${errorMsg}`)
+          }
         }
       } catch (err: any) {
         console.error(`[Airtable] Exception creating "${fieldNames.notes}":`, err.message)
