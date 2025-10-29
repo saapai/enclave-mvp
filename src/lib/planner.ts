@@ -13,7 +13,7 @@ import { searchResourcesHybrid } from './search'
 // ============================================================================
 
 export interface QueryPlan {
-  intent: 'event_lookup' | 'policy_lookup' | 'person_lookup' | 'doc_search' | 'clarify' | 'chat'
+  intent: 'event_lookup' | 'policy_lookup' | 'person_lookup' | 'doc_search' | 'clarify' | 'chat' | 'content_summary'
   confidence: number
   entities: {
     events?: string[]
@@ -71,6 +71,23 @@ export async function planQuery(
 function fallbackPlan(query: string): QueryPlan {
   const lowerQuery = query.toLowerCase()
 
+  // Detect casual/chat messages
+  const chatPatterns = [
+    /\b(what's up|what's new|hey|hi|hello|sup|wassup|how are you|how's it going|good morning|good afternoon|good evening)\b/,
+    /\b(bro|dude|yo|what's up bro|what's going on)\b/
+  ]
+  
+  const isChat = chatPatterns.some(pattern => pattern.test(lowerQuery))
+  
+  if (isChat) {
+    return {
+      intent: 'chat',
+      confidence: 0.9,
+      entities: {},
+      tools: [] // No tools for casual chat
+    }
+  }
+
   // Extract event names from queries like "when is active meeting"
   const eventMatch = lowerQuery.match(/when is (.+)|what time is (.+)|when's (.+)|when (.+) happening/i)
   const policyMatch = lowerQuery.match(/what is (.+)|how does (.+ work)|policy on (.+)/i)
@@ -89,7 +106,7 @@ function fallbackPlan(query: string): QueryPlan {
   }
 
   // Simple regex-based intent detection
-  if (lowerQuery.match(/when is|what time|where is|when's/)) {
+  if (lowerQuery.match(/when is|what time|where is|when's|what's happening|what's going on|what's upcoming/)) {
     return {
       intent: 'event_lookup',
       confidence: 0.8,
@@ -332,12 +349,37 @@ export async function composeResponse(
   }
 
   // Compose response based on intent
-  if (plan.intent === 'event_lookup') {
+  if (plan.intent === 'chat') {
+    return composeChatResponse(query)
+  } else if (plan.intent === 'event_lookup') {
     return composeEventResponse(bestResult)
   } else if (plan.intent === 'policy_lookup') {
     return composePolicyResponse(bestResult)
   } else {
     return composeDocResponse(bestResult)
+  }
+}
+
+/**
+ * Compose chat response
+ */
+function composeChatResponse(query: string): ComposedResponse {
+  // Friendly, casual responses
+  const responses = [
+    "Hey! What's up?",
+    "Not much, you?",
+    "Just here, ready to help! What do you need?",
+    "All good here! What can I help you with?",
+    "Hey! What's going on?",
+  ]
+  
+  const randomResponse = responses[Math.floor(Math.random() * responses.length)]
+  
+  return {
+    text: randomResponse,
+    sources: [],
+    confidence: 0.9,
+    needsClarification: false
   }
 }
 
