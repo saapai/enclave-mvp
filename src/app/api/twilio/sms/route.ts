@@ -286,15 +286,17 @@ export async function POST(request: NextRequest) {
         const question = (body || '').trim()
         const defaultOptions = ['Yes', 'No', 'Maybe']
 
-        // Find spaces for this phone
-        const digits = phoneNumber
-        const e164 = from
-        const { data: memberships } = await supabase
+        // Find spaces for this phone (robust match on last 10 digits)
+        const digits = phoneNumber // already last-10 US digits
+        const { data: membershipCandidates } = await supabase
           .from('app_user')
           .select('space_id, phone')
-          .or(`phone.eq.${digits},phone.eq.${e164}`)
-
-        const spaceIds = Array.from(new Set((memberships || []).map(m => m.space_id)))
+        const normalizeDigits = (p: any) => String(p || '').replace(/[^\d]/g, '').slice(-10)
+        const spaceIds = Array.from(new Set(
+          (membershipCandidates || [])
+            .filter(r => normalizeDigits(r.phone) === digits)
+            .map(r => r.space_id)
+        ))
         if (spaceIds.length === 0) {
           return new NextResponse(
             '<?xml version="1.0" encoding="UTF-8"?>' +
