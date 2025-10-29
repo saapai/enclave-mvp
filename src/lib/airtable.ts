@@ -273,12 +273,54 @@ export async function createAirtableFields(
   
   try {
     const trimmedApiKey = apiKey.trim()
-    const metaUrl = `https://api.airtable.com/v0/meta/bases/${baseId}/tables/${tableId}`
     
-    console.log(`[Airtable] Checking existing fields in table ${tableId}...`)
+    // First, verify PAT can access the base itself (this helps isolate the issue)
+    const baseMetaUrl = `https://api.airtable.com/v0/meta/bases/${baseId}`
+    console.log(`[Airtable] Step 1: Verifying PAT access to base ${baseId}...`)
+    
+    const baseCheckRes = await fetch(baseMetaUrl, {
+      headers: {
+        'Authorization': `Bearer ${trimmedApiKey}`,
+        'Content-Type': 'application/json'
+      }
+    })
+    
+    if (!baseCheckRes.ok) {
+      let baseErrorData: any = {}
+      try {
+        baseErrorData = await baseCheckRes.json()
+      } catch (e) {
+        // Response wasn't JSON
+      }
+      
+      const baseErrorMsg = baseErrorData?.error?.message || baseErrorData?.error?.type || `HTTP ${baseCheckRes.status}`
+      const baseStatus = baseCheckRes.status
+      
+      console.error(`[Airtable] ❌ CANNOT ACCESS BASE: ${baseErrorMsg} (HTTP ${baseStatus})`)
+      console.error(`[Airtable] This means your PAT cannot access base "${baseId}"`)
+      console.error(`[Airtable] SOLUTION:`)
+      console.error(`[Airtable]   1. Go to https://airtable.com/create/tokens`)
+      console.error(`[Airtable]   2. Find your PAT or create a new one`)
+      console.error(`[Airtable]   3. Under "Access" - select base "${baseId}" OR "All current and future bases"`)
+      console.error(`[Airtable]   4. Under "Scopes" - ensure you have: schema.bases:read`)
+      console.error(`[Airtable]   5. Save and update AIRTABLE_API_KEY in Vercel`)
+      
+      return { 
+        ok: false, 
+        created, 
+        errors: [`PAT cannot access base "${baseId}": ${baseErrorMsg} (HTTP ${baseStatus}). Check PAT permissions in https://airtable.com/create/tokens`], 
+        existing 
+      }
+    }
+    
+    const baseMeta = await baseCheckRes.json()
+    const baseName = baseMeta?.name || 'Unknown'
+    console.log(`[Airtable] ✓ Step 1 passed: PAT can access base "${baseName}" (${baseId})`)
+    
+    // Step 2: Now try to access the specific table
+    const metaUrl = `https://api.airtable.com/v0/meta/bases/${baseId}/tables/${tableId}`
+    console.log(`[Airtable] Step 2: Checking existing fields in table ${tableId}...`)
     console.log(`[Airtable] Metadata API URL: ${metaUrl}`)
-    console.log(`[Airtable] Base ID: ${baseId}`)
-    console.log(`[Airtable] Table ID: ${tableId}`)
     
     // First, check if fields already exist and get table schema
     const metaRes = await fetch(metaUrl, {
@@ -303,22 +345,25 @@ export async function createAirtableFields(
       console.error(`[Airtable] HTTP Status: ${status}`)
       
       if (status === 404) {
-        console.error(`[Airtable] 404 Error - Table not found. Possible causes:`)
-        console.error(`[Airtable]   1. Table ID "${tableId}" doesn't exist in base "${baseId}"`)
-        console.error(`[Airtable]   2. Check table ID in Airtable URL: https://airtable.com/${baseId}/${tableId}/...`)
-        console.error(`[Airtable]   3. Verify the table ID is correct (should start with "tbl" and be in the URL)`)
-        console.error(`[Airtable]   4. PAT may not have access to this base/table`)
-        console.error(`[Airtable]   5. Verify PAT has scope: schema.bases:read`)
-        console.error(`[Airtable]   6. Check if PAT has access to base "${baseId}"`)
-        console.error(`[Airtable]   📋 HOW TO FIND TABLE ID:`)
-        console.error(`[Airtable]      - Go to your Airtable table`)
-        console.error(`[Airtable]      - Look at URL: https://airtable.com/appXXXXXX/tblYYYYYYYY/...`)
-        console.error(`[Airtable]      - The "tblYYYYYYYY" part is your Table ID`)
+        console.error(`[Airtable] 404 Error - Table not found (but base access works!)`)
+        console.error(`[Airtable] Since base access succeeded, this means:`)
+        console.error(`[Airtable]   1. Table ID "${tableId}" might be wrong OR`)
+        console.error(`[Airtable]   2. Table doesn't exist in this base OR`)
+        console.error(`[Airtable]   3. PAT doesn't have access to this specific table`)
+        console.error(`[Airtable] VERIFICATION:`)
+        console.error(`[Airtable]   - Your URL shows: https://airtable.com/${baseId}/${tableId}/...`)
+        console.error(`[Airtable]   - Verify table ID in Vercel matches: ${tableId}`)
+        console.error(`[Airtable]   - Check if table name in Airtable matches "Enclave"`)
+        console.error(`[Airtable] SOLUTION:`)
+        console.error(`[Airtable]   1. Double-check table ID in Airtable URL (copy directly)`)
+        console.error(`[Airtable]   2. Verify PAT has access to ALL tables in base "${baseId}"`)
+        console.error(`[Airtable]   3. Try recreating PAT with "All current and future bases" access`)
       } else if (status === 401 || status === 403) {
-        console.error(`[Airtable] Authentication/Permission Error:`)
-        console.error(`[Airtable]   1. Check PAT is valid and not expired`)
-        console.error(`[Airtable]   2. Verify PAT has scope: schema.bases:read`)
-        console.error(`[Airtable]   3. Check PAT has access to base "${baseId}"`)
+        console.error(`[Airtable] Authentication/Permission Error (but base access works!)`)
+        console.error(`[Airtable] This means PAT needs additional scope for table access:`)
+        console.error(`[Airtable]   1. Verify PAT has scope: schema.bases:read`)
+        console.error(`[Airtable]   2. Check PAT has access to base "${baseId}" (should be OK since base check passed)`)
+        console.error(`[Airtable]   3. May need schema.bases:write for field creation`)
       }
       
       return { ok: false, created, errors: [`Failed to access Metadata API: ${errorMsg} (HTTP ${status})`], existing }
