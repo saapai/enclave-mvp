@@ -82,6 +82,12 @@ export async function upsertAirtableRecord(
     
     const searchData = await searchRes.json()
     
+    if (searchData.error) {
+      // API returned an error - log details
+      console.error('[Airtable] Search error:', searchData.error)
+      return { ok: false, error: searchData.error.message || searchData.error.type || 'Airtable search failed', created: false }
+    }
+    
     if (searchData.records && searchData.records.length > 0) {
       // Update existing record
       const recordId = searchData.records[0].id
@@ -107,7 +113,17 @@ export async function upsertAirtableRecord(
       const updateData = await updateRes.json()
       
       if (!updateRes.ok) {
-        return { ok: false, error: updateData?.error?.message || 'Airtable update failed', created: false }
+        console.error('[Airtable] Update error:', updateData?.error || updateData)
+        const errorMsg = updateData?.error?.message || updateData?.error?.type || 'Airtable update failed'
+        
+        // Provide helpful error messages
+        if (errorMsg.includes('Could not find') || errorMsg.includes('not found')) {
+          return { ok: false, error: `Table "${tableName}" or field not found. Check table name and field names match exactly.`, created: false }
+        } else if (errorMsg.includes('Invalid permissions')) {
+          return { ok: false, error: `API key lacks permission. Ensure it has access to base "${baseId}" and table "${tableName}"`, created: false }
+        }
+        
+        return { ok: false, error: errorMsg, created: false }
       }
       
       return { ok: true, id: recordId, created: false }
@@ -130,7 +146,19 @@ export async function upsertAirtableRecord(
       const createData = await createRes.json()
       
       if (!createRes.ok) {
-        return { ok: false, error: createData?.error?.message || 'Airtable create failed', created: true }
+        console.error('[Airtable] Create error:', createData?.error || createData)
+        const errorMsg = createData?.error?.message || createData?.error?.type || 'Airtable create failed'
+        
+        // Provide helpful error messages
+        if (errorMsg.includes('Could not find') || errorMsg.includes('not found')) {
+          return { ok: false, error: `Table "${tableName}" not found. Check table name matches exactly.`, created: true }
+        } else if (errorMsg.includes('Invalid permissions')) {
+          return { ok: false, error: `API key lacks permission. Ensure it has access to base "${baseId}" and table "${tableName}"`, created: true }
+        } else if (errorMsg.includes('Unknown field')) {
+          return { ok: false, error: `Field "${Object.keys(fields)[0]}" not found. Check field names match exactly.`, created: true }
+        }
+        
+        return { ok: false, error: errorMsg, created: true }
       }
       
       const id = createData?.records?.[0]?.id

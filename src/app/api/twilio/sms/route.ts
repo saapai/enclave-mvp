@@ -270,49 +270,7 @@ export async function POST(request: NextRequest) {
       )
     }
     
-    // ============ SEND AFFIRMATION FOR DRAFTS ============
-    // Check if there's an active draft and user is affirming to send
-    // Note: activePollDraft will be fetched in context check below
-    if (isSendAffirmation(body)) {
-      const activePollDraftCheck = await getActivePollDraft(phoneNumber)
-      const activeDraftCheck = await getActiveDraft(phoneNumber)
-      
-      if (activePollDraftCheck || activeDraftCheck) {
-        // Treat this as "send it" command
-        console.log(`[Twilio SMS] Send affirmation detected: "${body}" - triggering send`)
-        // This will fall through to the "SEND IT" handler below after setting command
-        // But we need to handle it here directly to avoid it being treated as edit
-        
-        // Determine which is more recent
-        let shouldSendPoll = false
-        if (activePollDraftCheck && activeDraftCheck) {
-          const pollTime = new Date(activePollDraftCheck.updatedAt || activePollDraftCheck.createdAt || 0).getTime()
-          const announcementTime = new Date(activeDraftCheck.updatedAt || 0).getTime()
-          shouldSendPoll = pollTime > announcementTime
-        } else if (activePollDraftCheck) {
-          shouldSendPoll = true
-        }
-        
-        if (shouldSendPoll && activePollDraftCheck && activePollDraftCheck.id) {
-          console.log(`[Twilio SMS] Sending poll ${activePollDraftCheck.id}`)
-          const twilioClient = twilio(ENV.TWILIO_ACCOUNT_SID, ENV.TWILIO_AUTH_TOKEN)
-          const { sentCount, airtableLink } = await sendPoll(activePollDraftCheck.id, twilioClient)
-          const linkText = airtableLink ? `\n\nview results: ${airtableLink}` : ''
-          return new NextResponse(
-            `<?xml version="1.0" encoding="UTF-8"?><Response><Message>sent poll to ${sentCount} people 📊${linkText}</Message></Response>`,
-            { headers: { 'Content-Type': 'application/xml' } }
-          )
-        } else if (activeDraftCheck && activeDraftCheck.id) {
-          console.log(`[Twilio SMS] Sending announcement ${activeDraftCheck.id}`)
-          const twilioClient = twilio(ENV.TWILIO_ACCOUNT_SID, ENV.TWILIO_AUTH_TOKEN)
-          const sentCount = await sendAnnouncement(activeDraftCheck.id, twilioClient)
-          return new NextResponse(
-            `<?xml version="1.0" encoding="UTF-8"?><Response><Message>sent to ${sentCount} people 📢</Message></Response>`,
-            { headers: { 'Content-Type': 'application/xml' } }
-          )
-        }
-      }
-    }
+    // Send affirmation handling moved to PRIORITY 0 above (after context detection)
 
     // Check if this is the "SEP" keyword (legacy, still supported but auto-opt-in is now automatic)
     if (command === 'SEP') {
@@ -811,9 +769,9 @@ export async function POST(request: NextRequest) {
     // Poll response handling moved to PRIORITY 1 above (removed duplicate)
     
     // ========================================================================
-    // PRIORITY 3: Poll/Announcement Requests (if NOT in draft context)
+    // PRIORITY 3: Poll/Announcement Requests (if NOT in draft/question context)
     // ========================================================================
-    if (!isPollDraftContext && !isAnnouncementDraftContext) {
+    if (!isPollDraftContext && !isAnnouncementDraftContext && !isPollQuestionInputContext) {
       // Poll request
       if (isPollRequest(textRaw)) {
         console.log(`[Twilio SMS] Poll request detected: "${textRaw}"`)

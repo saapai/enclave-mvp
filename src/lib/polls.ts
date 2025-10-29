@@ -716,18 +716,27 @@ export async function recordPollResponse(
 
     // Update or create Airtable record using new upsert helper
     if (ENV.AIRTABLE_API_KEY && ENV.AIRTABLE_BASE_ID && ENV.AIRTABLE_TABLE_NAME) {
-      // Use dynamic field names from poll
+      // Use dynamic field names from poll (if they exist), otherwise use defaults
       const questionField = poll.airtable_question_field || 'Question';
       const responseField = poll.airtable_response_field || 'Response';
       const notesField = poll.airtable_notes_field || 'Notes';
 
+      // Build fields object - only include fields that exist (check poll for field names)
       const fields: Record<string, any> = {
-        'Person': personName || 'Unknown',
-        [questionField]: poll.question, // Store the poll question
-        [responseField]: option
+        'Person': personName || 'Unknown'
       };
 
-      if (notes) {
+      // Only add poll-specific fields if they were configured (don't use defaults blindly)
+      // This prevents errors when poll fields haven't been created yet
+      if (poll.airtable_question_field) {
+        fields[questionField] = poll.question; // Store the poll question
+      }
+      
+      if (poll.airtable_response_field) {
+        fields[responseField] = option;
+      }
+      
+      if (poll.airtable_notes_field && notes) {
         fields[notesField] = notes;
       }
 
@@ -743,8 +752,12 @@ export async function recordPollResponse(
         console.log(`[Polls] ${result.created ? 'Created' : 'Updated'} Airtable record for ${phone} (${personName || 'Unknown'})`);
       } else {
         console.error(`[Polls] Failed to upsert Airtable record:`, result.error);
+        console.error(`[Polls] Base: ${ENV.AIRTABLE_BASE_ID}, Table: ${ENV.AIRTABLE_TABLE_NAME}`);
+        console.error(`[Polls] Fields attempted: ${Object.keys(fields).join(', ')}`);
         // Don't fail the whole operation if Airtable fails
       }
+    } else {
+      console.warn('[Polls] Airtable not configured - missing API key, base ID, or table name');
     }
 
     return true;
