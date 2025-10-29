@@ -288,9 +288,66 @@ export async function createAirtableFields(
       console.log(`[Airtable] ✓ PAT format valid (starts with "pat", length: ${trimmedApiKey.length})`)
     }
     
-    // First, verify PAT can access the base itself (this helps isolate the issue)
+    // Step 0: First, list all accessible bases to verify PAT works at all
+    console.log(`[Airtable] Step 0: Testing PAT authentication by listing accessible bases...`)
+    const listBasesUrl = `https://api.airtable.com/v0/meta/bases`
+    const listBasesRes = await fetch(listBasesUrl, {
+      headers: {
+        'Authorization': `Bearer ${trimmedApiKey}`,
+        'Content-Type': 'application/json'
+      }
+    })
+    
+    if (listBasesRes.ok) {
+      const basesData = await listBasesRes.json()
+      const bases = basesData?.bases || []
+      console.log(`[Airtable] ✓ PAT authentication works! Found ${bases.length} accessible base(s)`)
+      
+      // Check if our target base is in the list
+      const targetBase = bases.find((b: any) => b.id === baseId)
+      if (targetBase) {
+        console.log(`[Airtable] ✓ Target base "${baseId}" found in accessible bases`)
+        console.log(`[Airtable]   Base name: ${targetBase.name || 'Unknown'}`)
+      } else {
+        console.error(`[Airtable] ❌ Target base "${baseId}" NOT found in accessible bases`)
+        console.error(`[Airtable] This means the PAT doesn't have access to this base`)
+        console.error(`[Airtable] Available bases:`)
+        bases.forEach((b: any, i: number) => {
+          console.error(`[Airtable]   ${i + 1}. ${b.name} (${b.id})`)
+        })
+        console.error(`[Airtable] SOLUTION:`)
+        console.error(`[Airtable]   1. Go to https://airtable.com/create/tokens`)
+        console.error(`[Airtable]   2. Edit your PAT`)
+        console.error(`[Airtable]   3. Under "Access", add base "${baseId}" or enable "All current and future bases"`)
+        console.error(`[Airtable]   4. Save and update AIRTABLE_API_KEY in Vercel`)
+        
+        return { 
+          ok: false, 
+          created, 
+          errors: [`PAT cannot access base "${baseId}". Base not found in accessible bases list. Add base access in PAT settings.`], 
+          existing 
+        }
+      }
+    } else {
+      const listBasesError = await listBasesRes.json().catch(() => ({}))
+      console.error(`[Airtable] ❌ PAT authentication failed: ${listBasesError?.error?.message || `HTTP ${listBasesRes.status}`}`)
+      console.error(`[Airtable] This means the PAT itself is invalid or doesn't have required scopes`)
+      console.error(`[Airtable] SOLUTION:`)
+      console.error(`[Airtable]   1. Verify PAT is correct in Vercel`)
+      console.error(`[Airtable]   2. Check PAT has scope: schema.bases:read`)
+      console.error(`[Airtable]   3. Create a fresh PAT with all required scopes`)
+      
+      return { 
+        ok: false, 
+        created, 
+        errors: [`PAT authentication failed: ${listBasesError?.error?.message || `HTTP ${listBasesRes.status}`}. Verify PAT is correct and has schema.bases:read scope.`], 
+        existing 
+      }
+    }
+    
+    // Step 1: Now verify PAT can access the specific base via Metadata API
     const baseMetaUrl = `https://api.airtable.com/v0/meta/bases/${baseId}`
-    console.log(`[Airtable] Step 1: Verifying PAT access to base ${baseId}...`)
+    console.log(`[Airtable] Step 1: Testing Metadata API access to base ${baseId}...`)
     
     const baseCheckRes = await fetch(baseMetaUrl, {
       headers: {
