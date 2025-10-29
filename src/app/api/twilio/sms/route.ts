@@ -720,23 +720,11 @@ export async function POST(request: NextRequest) {
     
     // Check if user wants to send the draft
     if (command === 'SEND IT' || command === 'SEND NOW') {
-      const activeDraft = await getActiveDraft(phoneNumber)
+      // Check poll draft FIRST (more recent interaction pattern)
       const activePollDraft = await getActivePollDraft(phoneNumber)
+      const activeDraft = await getActiveDraft(phoneNumber)
       
-      if (activeDraft && activeDraft.id) {
-        console.log(`[Twilio SMS] Sending announcement ${activeDraft.id}`)
-        
-        // Get Twilio client
-        const twilioClient = twilio(ENV.TWILIO_ACCOUNT_SID, ENV.TWILIO_AUTH_TOKEN)
-        
-        // Send announcement
-        const sentCount = await sendAnnouncement(activeDraft.id, twilioClient)
-        
-        return new NextResponse(
-          `<?xml version="1.0" encoding="UTF-8"?><Response><Message>sent to ${sentCount} people 📢</Message></Response>`,
-          { headers: { 'Content-Type': 'application/xml' } }
-        )
-      } else if (activePollDraft && activePollDraft.id) {
+      if (activePollDraft && activePollDraft.id) {
         console.log(`[Twilio SMS] Sending poll ${activePollDraft.id}`)
         
         // Get Twilio client
@@ -751,6 +739,19 @@ export async function POST(request: NextRequest) {
           `<?xml version="1.0" encoding="UTF-8"?><Response><Message>sent poll to ${sentCount} people 📊${linkText}</Message></Response>`,
           { headers: { 'Content-Type': 'application/xml' } }
         )
+      } else if (activeDraft && activeDraft.id) {
+        console.log(`[Twilio SMS] Sending announcement ${activeDraft.id}`)
+        
+        // Get Twilio client
+        const twilioClient = twilio(ENV.TWILIO_ACCOUNT_SID, ENV.TWILIO_AUTH_TOKEN)
+        
+        // Send announcement
+        const sentCount = await sendAnnouncement(activeDraft.id, twilioClient)
+        
+        return new NextResponse(
+          `<?xml version="1.0" encoding="UTF-8"?><Response><Message>sent to ${sentCount} people 📢</Message></Response>`,
+          { headers: { 'Content-Type': 'application/xml' } }
+        )
       } else {
         return new NextResponse(
           `<?xml version="1.0" encoding="UTF-8"?><Response><Message>no draft found. create an announcement or poll first</Message></Response>`,
@@ -761,6 +762,38 @@ export async function POST(request: NextRequest) {
     
     // ============ POLL WORKFLOW ============
     
+    // Check if user is providing poll question content (after being asked)
+    // Look for a pending poll draft with empty/pending question
+    const pendingPollDraft = await getActivePollDraft(phoneNumber)
+    const isPendingPollQuestion = pendingPollDraft && 
+      (!pendingPollDraft.question || pendingPollDraft.question.trim().length === 0 || 
+       pendingPollDraft.question === 'pending')
+    
+    if (isPendingPollQuestion && !isPollRequest(body) && !isAnnouncementRequest(body)) {
+      // User is providing the poll question content
+      console.log(`[Twilio SMS] User providing poll question: "${body}"`)
+      
+      // Generate conversational poll question from their input
+      const pollQuestion = await generatePollQuestion({ question: body })
+      console.log(`[Twilio SMS] Generated poll question: "${pollQuestion}"`)
+      
+      // Update draft with question
+      const spaceIds = await getWorkspaceIds()
+      await savePollDraft(phoneNumber, {
+        id: pendingPollDraft.id,
+        question: pollQuestion,
+        options: pendingPollDraft.options || ['Yes', 'No', 'Maybe'],
+        workspaceId: pendingPollDraft.workspaceId
+      }, spaceIds[0])
+      
+      const response = `okay here's what the poll will say:\n\n${pollQuestion}\n\nreply "send it" to send or reply to edit the message`
+      
+      return new NextResponse(
+        `<?xml version="1.0" encoding="UTF-8"?><Response><Message>${response}</Message></Response>`,
+        { headers: { 'Content-Type': 'application/xml' } }
+      )
+    }
+    
     // Check if this is a poll request
     if (isPollRequest(body)) {
       console.log(`[Twilio SMS] Detected poll request from ${phoneNumber}`)
@@ -769,8 +802,16 @@ export async function POST(request: NextRequest) {
       const details = await extractPollDetails(body)
       console.log(`[Twilio SMS] Extracted poll details:`, details)
       
-      // If no question extracted, ask what they want to ask
+      // If no question extracted, create a pending draft and ask
       if (!details.question || details.question.trim().length === 0) {
+        // Create a pending poll draft
+        const spaceIds = await getWorkspaceIds()
+        await savePollDraft(phoneNumber, {
+          question: 'pending', // Mark as pending
+          options: ['Yes', 'No', 'Maybe'],
+          workspaceId: spaceIds[0]
+        }, spaceIds[0])
+        
         return new NextResponse(
           `<?xml version="1.0" encoding="UTF-8"?><Response><Message>what would you like to ask in the poll?</Message></Response>`,
           { headers: { 'Content-Type': 'application/xml' } }
@@ -800,7 +841,7 @@ export async function POST(request: NextRequest) {
     
     // Check if user is editing a poll draft
     const activePollDraft = await getActivePollDraft(phoneNumber)
-    if (activePollDraft && !isAnnouncementRequest(body) && !isPollRequest(body) && command !== 'SEND IT' && command !== 'SEND NOW') {
+    if (activePollDraft && activePollDraft.question !== 'pending' && !isAnnouncementRequest(body) && !isPollRequest(body) && command !== 'SEND IT' && command !== 'SEND NOW') {
       // User is editing the poll draft
       console.log(`[Twilio SMS] User editing poll draft: "${body}"`)
       

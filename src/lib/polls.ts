@@ -101,7 +101,20 @@ export async function generatePollQuestion(
       // Convert to conversational format
       let draft = question.replace(/^["']|["']$/g, ''); // Remove outer quotes
       
-      // Make it conversational - add "yo" prefix if not already conversational
+      // If it's already a complete question, just ensure it's conversational
+      if (draft.match(/\?$/)) {
+        // Already a question - just ensure it starts casually
+        if (!draft.match(/^(yo|hey|sup|u |are you|you |who)/i)) {
+          draft = `yo ${draft}`;
+        }
+        return draft;
+      }
+      
+      // If it looks like an event description, ask if they're coming
+      // Remove phrases like "are you coming to" if AI already added them
+      draft = draft.replace(/^(are you coming to|coming to|going to)\s*/i, '');
+      
+      // Make it conversational
       if (!draft.match(/^(yo|hey|sup)/i)) {
         draft = `yo are you coming to ${draft}`;
       }
