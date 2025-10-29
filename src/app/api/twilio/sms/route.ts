@@ -720,11 +720,23 @@ export async function POST(request: NextRequest) {
     
     // Check if user wants to send the draft
     if (command === 'SEND IT' || command === 'SEND NOW') {
-      // Check poll draft FIRST (more recent interaction pattern)
+      // Get both drafts and send the most recent one
       const activePollDraft = await getActivePollDraft(phoneNumber)
       const activeDraft = await getActiveDraft(phoneNumber)
       
-      if (activePollDraft && activePollDraft.id) {
+      // Determine which is more recent based on updated_at timestamp
+      let sendPoll = false
+      if (activePollDraft && activeDraft) {
+        // Both exist - compare timestamps
+        const pollTime = new Date(activePollDraft.updatedAt || activePollDraft.createdAt || 0).getTime()
+        const announcementTime = new Date(activeDraft.scheduledFor || activeDraft.updatedAt || 0).getTime()
+        sendPoll = pollTime > announcementTime
+        console.log(`[Twilio SMS] Both drafts exist - poll: ${pollTime}, announcement: ${announcementTime}, sending: ${sendPoll ? 'poll' : 'announcement'}`)
+      } else if (activePollDraft) {
+        sendPoll = true
+      }
+      
+      if (sendPoll && activePollDraft && activePollDraft.id) {
         console.log(`[Twilio SMS] Sending poll ${activePollDraft.id}`)
         
         // Get Twilio client

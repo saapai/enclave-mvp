@@ -12,6 +12,7 @@ export interface AnnouncementDraft {
   scheduledFor?: Date;
   targetAudience?: string;
   workspaceId?: string;
+  updatedAt?: string;
 }
 
 /**
@@ -271,7 +272,8 @@ export async function getActiveDraft(phoneNumber: string): Promise<AnnouncementD
       tone: data.tone,
       scheduledFor: data.scheduled_for ? new Date(data.scheduled_for) : undefined,
       targetAudience: data.target_audience,
-      workspaceId: data.workspace_id
+      workspaceId: data.workspace_id,
+      updatedAt: data.updated_at
     };
   } catch (err) {
     console.error('[Announcements] Failed to get draft:', err);

@@ -14,6 +14,8 @@ export interface PollDraft {
   tone?: string;
   workspaceId?: string;
   airtableQuestionField?: string; // Track the dynamic Airtable field name for this poll
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 /**
@@ -234,7 +236,9 @@ export async function getActivePollDraft(phoneNumber: string): Promise<PollDraft
       question: data.question,
       options: data.options,
       workspaceId: data.space_id,
-      airtableQuestionField: data.airtable_question_field
+      airtableQuestionField: data.airtable_question_field,
+      createdAt: data.created_at,
+      updatedAt: data.updated_at
     };
   } catch (err) {
     console.error('[Polls] Failed to get draft:', err);
