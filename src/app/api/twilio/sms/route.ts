@@ -563,21 +563,14 @@ export async function POST(request: NextRequest) {
     }
 
     console.log(`[Twilio SMS] Searching across ${spaceIds.length} workspaces for: "${query}"`)
-
-    // Get conversation history (last 3 messages)
-    const { data: conversationHistory } = await supabase
-      .from('sms_conversation_history')
-      .select('user_message, bot_response')
-      .eq('phone_number', phoneNumber)
-      .order('created_at', { ascending: false })
-      .limit(3)
     
-    console.log(`[Twilio SMS] Found ${conversationHistory?.length || 0} previous messages in conversation`)
+    // Use the conversation history we already fetched earlier
+    console.log(`[Twilio SMS] Found ${recentMessages?.length || 0} previous messages in conversation`)
     
     // Build conversation context for the AI
     let conversationContext = ''
-    if (conversationHistory && conversationHistory.length > 0) {
-      conversationContext = conversationHistory
+    if (recentMessages && recentMessages.length > 0) {
+      conversationContext = recentMessages
         .reverse() // Show in chronological order
         .map((msg: any) => `User: ${msg.user_message}\nBot: ${msg.bot_response}`)
         .join('\n\n') + '\n\nCurrent query:\n'
