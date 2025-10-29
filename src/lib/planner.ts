@@ -71,13 +71,17 @@ export async function planQuery(
 function fallbackPlan(query: string): QueryPlan {
   const lowerQuery = query.toLowerCase()
 
-  // Detect casual/chat messages
+  // Detect casual/chat messages (but exclude queries that mention SEP/org name as those are content queries)
   const chatPatterns = [
-    /\b(what's up|what's new|hey|hi|hello|sup|wassup|how are you|how's it going|good morning|good afternoon|good evening)\b/,
-    /\b(bro|dude|yo|what's up bro|what's going on)\b/
+    /\b(what's up\?|what's new\?|hey|hi|hello|sup\?|wassup|how are you|how's it going|good morning|good afternoon|good evening|how are things)\b/,
+    /\b(not much|doing well|all good)\b/,
+    /^[^a-z]*$/i // Only punctuation/short responses
   ]
   
-  const isChat = chatPatterns.some(pattern => pattern.test(lowerQuery))
+  const isChat = chatPatterns.some(pattern => pattern.test(lowerQuery)) && 
+                 !lowerQuery.includes('sep') && 
+                 !lowerQuery.includes('going on with') && 
+                 !lowerQuery.match(/what's\s+(happening|going on|new|upcoming)/i)
   
   if (isChat) {
     return {
@@ -350,7 +354,7 @@ export async function composeResponse(
 
   // Compose response based on intent
   if (plan.intent === 'chat') {
-    return composeChatResponse(query)
+    return composeChatResponse(query, bestResult ? [bestResult] : results)
   } else if (plan.intent === 'event_lookup') {
     return composeEventResponse(bestResult)
   } else if (plan.intent === 'policy_lookup') {
@@ -361,10 +365,15 @@ export async function composeResponse(
 }
 
 /**
- * Compose chat response
+ * Compose chat response with context awareness
  */
-function composeChatResponse(query: string): ComposedResponse {
-  // Friendly, casual responses
+function composeChatResponse(query: string, results?: ToolResult[]): ComposedResponse {
+  // If we have document results (user asked about something specific), provide info
+  if (results && results.length > 0 && results[0].data?.results && results[0].data.results.length > 0) {
+    return composeDocResponse(results[0])
+  }
+  
+  // Otherwise, friendly casual response
   const responses = [
     "Hey! What's up?",
     "Not much, you?",
