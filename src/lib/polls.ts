@@ -737,14 +737,23 @@ export async function recordPollResponse(
       // This prevents errors when poll fields haven't been created yet
       if (poll.airtable_question_field) {
         fields[questionField] = poll.question; // Store the poll question
+        console.log(`[Polls] Including field: ${questionField} = "${poll.question.substring(0, 50)}..."`)
+      } else {
+        console.warn(`[Polls] Poll ${pollId} has no airtable_question_field configured - fields may not have been created when poll was sent`)
       }
       
       if (poll.airtable_response_field) {
         fields[responseField] = option;
+        console.log(`[Polls] Including field: ${responseField} = "${option}"`)
+      } else {
+        console.warn(`[Polls] Poll ${pollId} has no airtable_response_field configured - fields may not have been created when poll was sent`)
       }
       
       if (poll.airtable_notes_field && notes) {
         fields[notesField] = notes;
+        console.log(`[Polls] Including field: ${notesField} = "${notes.substring(0, 50)}..."`)
+      } else if (notes) {
+        console.warn(`[Polls] Poll ${pollId} has no airtable_notes_field configured - notes will not be saved`)
       }
 
       // Upsert using helper (normalizes phone, finds or creates record)
