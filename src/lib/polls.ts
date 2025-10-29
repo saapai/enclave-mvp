@@ -359,29 +359,57 @@ export async function createAirtableFieldsForPoll(
         ENV.AIRTABLE_API_KEY
       )
       
-      if (result.ok && result.created.length > 0) {
-        console.log(`[Polls] ✓ Created ${result.created.length} Airtable fields:`, result.created)
+      const allFieldsExist = (result.created.length + result.existing.length) === 3
+      
+      if (result.ok && allFieldsExist) {
+        console.log(`[Polls] ✓ All 3 Airtable fields exist:`)
+        if (result.created.length > 0) {
+          console.log(`[Polls]   Created: ${result.created.join(', ')}`)
+        }
+        if (result.existing.length > 0) {
+          console.log(`[Polls]   Already existed: ${result.existing.join(', ')}`)
+        }
         if (result.errors.length > 0) {
-          console.warn(`[Polls] Some fields had errors:`, result.errors)
+          console.warn(`[Polls] ⚠️ Some fields had warnings (but all exist):`, result.errors)
         }
       } else {
-        console.error(`[Polls] ❌ Field creation failed or incomplete:`)
+        console.error(`[Polls] ❌ Field creation incomplete:`)
         console.error(`[Polls]   Created: ${result.created.length} fields`)
+        console.error(`[Polls]   Existing: ${result.existing.length} fields`)
         console.error(`[Polls]   Errors: ${result.errors.length} errors`)
+        console.error(`[Polls]   Total: ${result.created.length + result.existing.length}/3 fields exist`)
+        
         if (result.errors.length > 0) {
           console.error(`[Polls]   Error details:`, result.errors)
         }
-        console.error(`[Polls] This means fields "${questionFieldName}", "${responseFieldName}", "${notesFieldName}" may not exist in Airtable`)
-        console.error(`[Polls] Manual action required: Create these fields in Airtable or check AIRTABLE_TABLE_ID is set correctly`)
+        
+        const missingFields: string[] = []
+        if (!result.created.includes(questionFieldName) && !result.existing.includes(questionFieldName)) {
+          missingFields.push(questionFieldName)
+        }
+        if (!result.created.includes(responseFieldName) && !result.existing.includes(responseFieldName)) {
+          missingFields.push(responseFieldName)
+        }
+        if (!result.created.includes(notesFieldName) && !result.existing.includes(notesFieldName)) {
+          missingFields.push(notesFieldName)
+        }
+        
+        if (missingFields.length > 0) {
+          console.error(`[Polls] ❌ Missing fields: ${missingFields.join(', ')}`)
+          console.error(`[Polls] ACTION REQUIRED:`)
+          console.error(`[Polls]   1. Check AIRTABLE_TABLE_ID is set correctly in Vercel`)
+          console.error(`[Polls]   2. Verify PAT has schema.bases:write scope`)
+          console.error(`[Polls]   3. Check table ID matches: Get from URL: https://airtable.com/app.../tblXXXXXXXXXXXXXX/...`)
+          console.error(`[Polls]   4. Or manually create missing fields in Airtable:`)
+          missingFields.forEach(field => {
+            let fieldType = 'Single line text'
+            if (field.includes('Response')) fieldType = 'Single select (Yes, No, Maybe)'
+            if (field.includes('Notes')) fieldType = 'Long text'
+            console.error(`[Polls]      - ${field} (${fieldType})`)
+          })
+        }
       }
-    } else {
-      console.log(`[Polls] AIRTABLE_TABLE_ID not set, skipping Metadata API field creation`)
-      console.log(`[Polls] Admin should manually create these fields in Airtable:`)
-      console.log(`  - ${questionFieldName} (Single line text)`)
-      console.log(`  - ${responseFieldName} (Single select: Yes, No, Maybe)`)
-      console.log(`  - ${notesFieldName} (Long text)`)
-    }
-    
+      
       return {
         questionField: questionFieldName,
         responseField: responseFieldName,
@@ -464,9 +492,20 @@ export async function sendPoll(
 
     // Create Airtable fields for this poll BEFORE sending
     // This ensures fields exist when users respond
+    console.log(`[Polls] Creating Airtable fields for poll: "${poll.question.substring(0, 50)}..."`)
     const airtableFields = await createAirtableFieldsForPoll(poll.question);
     
-    // Update poll with Airtable field names
+    // Verify fields were created - if not, poll responses will fail
+    if (!airtableFields.fieldsCreated) {
+      console.error(`[Polls] ❌ CRITICAL: Fields were NOT created in Airtable. Poll responses will FAIL.`)
+      console.error(`[Polls] Poll will be sent but responses cannot be saved to Airtable until fields are created.`)
+      console.error(`[Polls] Check logs above for field creation errors and required actions.`)
+      // Continue anyway - Supabase will still work
+    } else {
+      console.log(`[Polls] ✓ All 3 fields confirmed to exist in Airtable`)
+    }
+    
+    // Update poll with Airtable field names (even if creation failed, store names for manual creation)
     await supabaseAdmin
       .from('sms_poll')
       .update({
