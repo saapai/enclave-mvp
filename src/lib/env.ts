@@ -33,6 +33,9 @@ export const ENV = {
   AIRTABLE_TABLE_ID: process.env.AIRTABLE_TABLE_ID || '', // Table ID for Metadata API
   AIRTABLE_TABLE_NAME: process.env.AIRTABLE_TABLE_NAME || '',
   AIRTABLE_PUBLIC_RESULTS_URL: process.env.AIRTABLE_PUBLIC_RESULTS_URL || '',
+  // Airtable field names (configurable - must match your Airtable table exactly)
+  AIRTABLE_PHONE_FIELD: process.env.AIRTABLE_PHONE_FIELD || 'phone number',
+  AIRTABLE_PERSON_FIELD: process.env.AIRTABLE_PERSON_FIELD || 'Person',
 }
 
 

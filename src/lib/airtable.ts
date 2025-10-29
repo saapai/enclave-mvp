@@ -70,8 +70,11 @@ export async function upsertAirtableRecord(
   try {
     const normalizedPhone = normalizePhoneForAirtable(phone)
     
+    // Get phone field name from env (defaults to "phone number")
+    const phoneFieldName = process.env.AIRTABLE_PHONE_FIELD || 'phone number'
+    
     // Search for existing record by phone number
-    const searchUrl = `https://api.airtable.com/v0/${baseId}/${encodeURIComponent(tableName)}?filterByFormula=${encodeURIComponent(`{phone number} = "${normalizedPhone}"`)}`
+    const searchUrl = `https://api.airtable.com/v0/${baseId}/${encodeURIComponent(tableName)}?filterByFormula=${encodeURIComponent(`{${phoneFieldName}} = "${normalizedPhone}"`)}`
     
     const searchRes = await fetch(searchUrl, {
       headers: {
@@ -129,8 +132,10 @@ export async function upsertAirtableRecord(
       return { ok: true, id: recordId, created: false }
     } else {
       // Create new record
+      // Get phone field name from env (defaults to "phone number")
+      const phoneFieldName = process.env.AIRTABLE_PHONE_FIELD || 'phone number'
       const createFields = {
-        'phone number': normalizedPhone,
+        [phoneFieldName]: normalizedPhone,
         ...fields
       }
       

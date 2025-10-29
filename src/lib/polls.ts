@@ -649,11 +649,12 @@ export async function updateNameEverywhere(phone: string, name: string): Promise
 
     // 3. Update Airtable record (upsert by phone number)
     if (ENV.AIRTABLE_API_KEY && ENV.AIRTABLE_BASE_ID && ENV.AIRTABLE_TABLE_NAME) {
+      const personFieldName = ENV.AIRTABLE_PERSON_FIELD || 'Person'
       const result = await upsertAirtableRecord(
         ENV.AIRTABLE_BASE_ID,
         ENV.AIRTABLE_TABLE_NAME,
         phone,
-        { 'Person': name }
+        { [personFieldName]: name }
       );
 
       if (result.ok) {
@@ -721,9 +722,12 @@ export async function recordPollResponse(
       const responseField = poll.airtable_response_field || 'Response';
       const notesField = poll.airtable_notes_field || 'Notes';
 
+      // Get field names from env (with defaults)
+      const personFieldName = ENV.AIRTABLE_PERSON_FIELD || 'Person'
+      
       // Build fields object - only include fields that exist (check poll for field names)
       const fields: Record<string, any> = {
-        'Person': personName || 'Unknown'
+        [personFieldName]: personName || 'Unknown'
       };
 
       // Only add poll-specific fields if they were configured (don't use defaults blindly)

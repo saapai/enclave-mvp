@@ -84,19 +84,25 @@ if (TABLE_NAME) {
         console.log(`   Fields: ${fields.length} fields found`)
         console.log(`   Field names: ${fields.slice(0, 5).join(', ')}${fields.length > 5 ? '...' : ''}`)
         
-        if (!fields.includes('phone number')) {
-          console.warn('⚠️  Field "phone number" not found!')
-          console.warn('   You need to create a field named "phone number" in Airtable.')
+        // Check for phone field (use env var if set, otherwise default to "phone number")
+        const phoneField = process.env.AIRTABLE_PHONE_FIELD || 'phone number'
+        if (!fields.includes(phoneField)) {
+          console.warn(`⚠️  Field "${phoneField}" not found!`)
+          console.warn(`   You need to create a field named "${phoneField}" in Airtable.`)
           console.warn('   This is the field used to find/update records by phone number.')
+          console.warn(`   Or set AIRTABLE_PHONE_FIELD env var to match your field name.`)
         } else {
-          console.log('✅ Field "phone number" exists')
+          console.log(`✅ Field "${phoneField}" exists`)
         }
         
-        if (!fields.includes('Person')) {
-          console.warn('⚠️  Field "Person" not found!')
-          console.warn('   You need to create a field named "Person" to store names.')
+        // Check for person field (use env var if set, otherwise default to "Person")
+        const personField = process.env.AIRTABLE_PERSON_FIELD || 'Person'
+        if (!fields.includes(personField)) {
+          console.warn(`⚠️  Field "${personField}" not found!`)
+          console.warn(`   You need to create a field named "${personField}" to store names.`)
+          console.warn(`   Or set AIRTABLE_PERSON_FIELD env var to match your field name.`)
         } else {
-          console.log('✅ Field "Person" exists')
+          console.log(`✅ Field "${personField}" exists`)
         }
       }
     }
