@@ -308,6 +308,18 @@ export async function createAirtableFields(
       if (targetBase) {
         console.log(`[Airtable] ✓ Target base "${baseId}" found in accessible bases`)
         console.log(`[Airtable]   Base name: ${targetBase.name || 'Unknown'}`)
+        
+        // Try to get tables list from base (if available in listing response)
+        if (targetBase.tables && targetBase.tables.length > 0) {
+          console.log(`[Airtable]   Found ${targetBase.tables.length} table(s) in base listing`)
+          const targetTable = targetBase.tables.find((t: any) => t.id === tableId)
+          if (targetTable) {
+            console.log(`[Airtable] ✓ Target table "${tableId}" found in base listing`)
+            console.log(`[Airtable]   Table name: ${targetTable.name || 'Unknown'}`)
+          } else {
+            console.warn(`[Airtable] ⚠️ Target table "${tableId}" not found in base listing`)
+          }
+        }
       } else {
         console.error(`[Airtable] ❌ Target base "${baseId}" NOT found in accessible bases`)
         console.error(`[Airtable] This means the PAT doesn't have access to this base`)
@@ -369,20 +381,28 @@ export async function createAirtableFields(
       
       console.error(`[Airtable] ❌ Metadata API access denied: ${baseErrorMsg} (HTTP ${baseStatus})`)
       console.error(`[Airtable] ⚠️ CRITICAL FINDING: Base IS accessible (found in list), but Metadata API endpoint fails`)
-      console.error(`[Airtable] This indicates Metadata API has different permission requirements than base listing`)
+      console.error(`[Airtable] Error type: ${baseErrorData?.error?.type || 'unknown'}`)
+      console.error(`[Airtable] This indicates Metadata API has different permission/plan requirements than base listing`)
+      console.error(`[Airtable] MOST LIKELY CAUSE: Metadata API requires PAID PLAN`)
       console.error(`[Airtable] POSSIBLE CAUSES:`)
-      console.error(`[Airtable]   1. Metadata API requires workspace admin permissions`)
-      console.error(`[Airtable]   2. Base is in a workspace with Metadata API restrictions`)
-      console.error(`[Airtable]   3. Account needs "Creator" or "Owner" role for Metadata API`)
-      console.error(`[Airtable]   4. Metadata API requires both schema.bases:read AND schema.bases:write simultaneously`)
-      console.error(`[Airtable]   5. Base-specific Metadata API access needs to be explicitly granted`)
-      console.error(`[Airtable] SOLUTION:`)
-      console.error(`[Airtable]   1. Verify your Airtable account is "Creator" or "Owner" of the workspace`)
-      console.error(`[Airtable]   2. Check workspace settings for Metadata API restrictions`)
+      console.error(`[Airtable]   1. 🚨 Metadata API requires PAID PLAN (Free/Team Trial may not support it)`)
+      console.error(`[Airtable]      - Team Trial workspaces may have Metadata API disabled`)
+      console.error(`[Airtable]      - Error "INVALID_PERMISSIONS_OR_MODEL_NOT_FOUND" often indicates plan limitation`)
+      console.error(`[Airtable]      - Upgrade to Pro/Business plan may be required`)
+      console.error(`[Airtable]   2. Metadata API requires workspace admin permissions`)
+      console.error(`[Airtable]   3. Base is in a workspace with Metadata API restrictions`)
+      console.error(`[Airtable]   4. Account needs "Creator" or "Owner" role for Metadata API`)
+      console.error(`[Airtable]   5. Metadata API requires both schema.bases:read AND schema.bases:write simultaneously`)
+      console.error(`[Airtable] SOLUTION - TRY THESE IN ORDER:`)
+      console.error(`[Airtable]   1. 🚨 CHECK PLAN: Upgrade workspace to paid plan (Pro/Business)`)
+      console.error(`[Airtable]      - Go to Workspace Settings → Billing`)
+      console.error(`[Airtable]      - Upgrade from Team Trial to paid plan`)
+      console.error(`[Airtable]      - Metadata API may only be available on paid plans`)
+      console.error(`[Airtable]   2. Contact Airtable Support to confirm if Team Trial supports Metadata API`)
       console.error(`[Airtable]   3. Verify PAT has BOTH scopes: schema.bases:read AND schema.bases:write`)
       console.error(`[Airtable]   4. Try explicitly granting base access (not just "All bases")`)
-      console.error(`[Airtable]   5. Contact Airtable support - this may be a workspace/account-level restriction`)
-      console.error(`[Airtable] WORKAROUND: Fields must be created manually in Airtable until Metadata API access is resolved`)
+      console.error(`[Airtable]   5. Check workspace settings → Security for IP restrictions`)
+      console.error(`[Airtable] WORKAROUND: Fields must be created manually in Airtable until plan is upgraded or Metadata API is enabled`)
       
       // Don't fail completely - we'll let the poll proceed, fields just won't be created
       console.warn(`[Airtable] ⚠️ Continuing without Metadata API - fields will need manual creation`)
