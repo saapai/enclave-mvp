@@ -440,27 +440,36 @@ export async function POST(request: NextRequest) {
         
         // Only do AI summarization for content queries, not chat
         if (plan.intent !== 'chat' && toolResults.length > 0 && toolResults[0].data?.results) {
-          // Use the old chunking approach for doc search to get AI summaries
-          const topResult = toolResults[0].data.results[0]
+          // Get ALL results, not just the top one
+          const allResults = toolResults[0].data.results
+          console.log(`[Twilio SMS] Processing ${allResults.length} results for AI summarization`)
           
-          if (topResult.body && topResult.body.length > 300) {
+          // Try each result in order until we find a good answer
+          for (const result of allResults) {
+            if (!result.body || result.body.length < 50) {
+              console.log(`[Twilio SMS] Skipping "${result.title}" - body too short`)
+              continue
+            }
+            
             // Chunk and get AI summary
             const chunks: string[] = []
             const chunkSize = 1500
             
-            if (topResult.body.length <= chunkSize) {
-              chunks.push(topResult.body)
+            if (result.body.length <= chunkSize) {
+              chunks.push(result.body)
             } else {
-              for (let i = 0; i < topResult.body.length; i += chunkSize - 200) {
-                chunks.push(topResult.body.substring(i, i + chunkSize))
+              for (let i = 0; i < result.body.length; i += chunkSize - 200) {
+                chunks.push(result.body.substring(i, i + chunkSize))
               }
             }
             
-            console.log(`[Twilio SMS] Summarizing ${chunks.length} chunks for doc search`)
+            console.log(`[Twilio SMS] Trying "${result.title}" with ${chunks.length} chunks`)
+            
+            let foundGoodAnswer = false
             
             // Try each chunk
             for (let i = 0; i < chunks.length; i++) {
-              const context = `Title: ${topResult.title}\nContent: ${chunks[i]}`
+              const context = `Title: ${result.title}\nContent: ${chunks[i]}`
               
               try {
                 const aiUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'https://www.tryenclave.com'}/api/ai`
@@ -484,22 +493,25 @@ export async function POST(request: NextRequest) {
                   
                   if (!hasNoInfo && response.length > 20) {
                     finalText = response
-                    console.log(`[Twilio SMS] ✓ Found answer in chunk ${i + 1}/${chunks.length}`)
+                    foundGoodAnswer = true
+                    console.log(`[Twilio SMS] ✓ Found answer in "${result.title}" chunk ${i + 1}/${chunks.length}`)
                     break
                   }
                 }
               } catch (err) {
-                console.error(`[Twilio SMS] AI call failed for chunk ${i + 1}:`, err)
+                console.error(`[Twilio SMS] AI call failed for "${result.title}" chunk ${i + 1}:`, err)
               }
             }
-          } else {
-            // Short content, use as-is
-            finalText = topResult.body || topResult.title
+            
+            // If we found a good answer, stop trying more results
+            if (foundGoodAnswer) {
+              break
+            }
           }
           
-          // If no AI summary was found, fall back to composed text or top result
+          // If no AI summary found across all results, use the top result's body
           if (!finalText || finalText === composed.text) {
-            finalText = topResult.body || topResult.title || composed.text
+            finalText = allResults[0]?.body || allResults[0]?.title || composed.text
           }
         }
         
