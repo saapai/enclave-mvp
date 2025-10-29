@@ -284,6 +284,17 @@ export async function POST(request: NextRequest) {
       return sepWorkspaces?.map(w => w.id) || []
     }
     
+    // Helper to check if message is a correction/intent to edit
+    const isCorrection = (msg: string): boolean => {
+      const lower = msg.toLowerCase();
+      return lower.includes('no just') || 
+             lower.includes('change it to') || 
+             lower.includes('make it') ||
+             lower.includes('actually') ||
+             (lower.includes('i want') && lower.includes('say')) ||
+             (msg.includes('"') && msg.length < 200); // Short message with quotes
+    };
+    
     // FIRST: Check if user has an active draft (for editing)
     const activeDraft = await getActiveDraft(phoneNumber)
     
@@ -306,6 +317,26 @@ export async function POST(request: NextRequest) {
       
       return new NextResponse(
         `<?xml version="1.0" encoding="UTF-8"?><Response><Message>updated:\n\n${newContent}\n\nreply "send it" to broadcast</Message></Response>`,
+        { headers: { 'Content-Type': 'application/xml' } }
+      )
+    }
+    
+    // Also check for corrections even without active draft
+    if (!activeDraft && !command && isCorrection(body)) {
+      console.log(`[Twilio SMS] Detected correction/correction text: "${body}"`)
+      
+      const announcementText = extractRawAnnouncementText(body)
+      
+      // Create draft
+      const spaceIds = await getWorkspaceIds()
+      const draftId = await saveDraft(phoneNumber, {
+        content: announcementText,
+        tone: 'casual',
+        workspaceId: spaceIds[0]
+      }, spaceIds[0])
+      
+      return new NextResponse(
+        `<?xml version="1.0" encoding="UTF-8"?><Response><Message>okay here's what the announcement will say:\n\n${announcementText}\n\nreply "send it" to broadcast or reply to edit the message</Message></Response>`,
         { headers: { 'Content-Type': 'application/xml' } }
       )
     }

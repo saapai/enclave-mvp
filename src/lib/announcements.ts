@@ -42,6 +42,18 @@ export function extractRawAnnouncementText(message: string): string {
     return quoteMatch[1];
   }
   
+  // Check for "no just", "actually", "change it to" etc - extract the actual text
+  const correctionMatch = message.match(/(?:no just|actually|change it to|make it|i want it to say|i want the announcement to say)\s+"?([^"]+)"?$/i);
+  if (correctionMatch) {
+    return correctionMatch[1].trim();
+  }
+  
+  // Check for "i want the announcement to say..."
+  const wantMatch = message.match(/i want (?:the announcement to say|it to say)\s+"?([^"]+)"?$/i);
+  if (wantMatch) {
+    return wantMatch[1].trim();
+  }
+  
   // Otherwise return the message as-is
   return message;
 }
@@ -119,6 +131,27 @@ export async function generateAnnouncementDraft(
   previousDraft?: string
 ): Promise<string> {
   try {
+    const content = details.content || '';
+    
+    // CRITICAL: If content has quotes or is short, use it EXACTLY (don't paraphrase)
+    const hasQuotes = content.includes('"');
+    const isShort = content.length < 200 && content.length > 5;
+    
+    if ((hasQuotes || isShort) && !previousDraft) {
+      // Use exact text - user is providing the exact message they want
+      let draft = content.replace(/^["']|["']$/g, ''); // Remove outer quotes only
+      
+      // Ensure first char is lowercase unless it's an acronym
+      if (draft.length > 0 && draft[0] === draft[0].toUpperCase() && draft[0] !== draft[0].toLowerCase()) {
+        if (!draft.match(/^[A-Z]{2,}/)) { // Not an all-caps acronym
+          draft = draft[0].toLowerCase() + draft.substring(1);
+        }
+      }
+      
+      return draft;
+    }
+    
+    // Otherwise, generate with AI based on tone
     const toneInstructions: Record<string, string> = {
       mean: "be direct and add 'or else' at the end",
       urgent: "make it urgent with urgency words like 'ASAP' or 'mandatory'",
@@ -135,7 +168,7 @@ export async function generateAnnouncementDraft(
 Original: "${previousDraft}"
 
 New announcement (keep it under 160 chars, no caps at start, natural like a text):`
-      : `Write an announcement for: "${details.content}"
+      : `Write an announcement for: "${content}"
 
 Style: ${toneInstruction}
 Keep it under 160 chars, no caps at start of sentences, natural like texting a friend.
@@ -155,7 +188,7 @@ Announcement:`;
 
     if (aiRes.ok) {
       const aiData = await aiRes.json();
-      let draft = aiData.response || details.content || 'announcement';
+      let draft = aiData.response || content || 'announcement';
       
       // Remove quotes if present
       draft = draft.replace(/^["']|["']$/g, '');
