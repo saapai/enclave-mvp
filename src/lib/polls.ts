@@ -762,16 +762,44 @@ export async function recordPollResponse(
       // Add poll fields to main fields object
       Object.assign(fields, pollFieldsToAdd)
 
-      // Upsert using helper (normalizes phone, finds or creates record)
-      const result = await upsertAirtableRecord(
+      // First try to upsert with all fields (including poll-specific)
+      let result = await upsertAirtableRecord(
         ENV.AIRTABLE_BASE_ID,
         ENV.AIRTABLE_TABLE_NAME,
         phone,
         fields
       );
 
+      // If it failed due to missing poll fields, retry with just Person and phone number
+      if (!result.ok && result.error?.includes('Fields do not exist') && Object.keys(pollFieldsToAdd).length > 0) {
+        console.warn(`[Polls] First attempt failed due to missing poll fields. Retrying with just Person and phone number...`)
+        
+        // Create minimal fields object with only Person and phone number
+        const minimalFields: Record<string, any> = {
+          [personFieldName]: personName || 'Unknown'
+        }
+        
+        // Retry with minimal fields
+        result = await upsertAirtableRecord(
+          ENV.AIRTABLE_BASE_ID,
+          ENV.AIRTABLE_TABLE_NAME,
+          phone,
+          minimalFields
+        )
+        
+        if (result.ok) {
+          console.warn(`[Polls] ⚠️ Created Airtable record with Person only. Poll response data NOT saved because fields don't exist.`)
+          console.warn(`[Polls] ⚠️ Manual action required: Create fields "${questionField}", "${responseField}" in Airtable and re-sync data.`)
+        }
+      }
+
       if (result.ok) {
-        console.log(`[Polls] ${result.created ? 'Created' : 'Updated'} Airtable record for ${phone} (${personName || 'Unknown'})`);
+        const fieldCount = Object.keys(fields).length
+        const pollFieldCount = Object.keys(pollFieldsToAdd).length
+        console.log(`[Polls] ${result.created ? 'Created' : 'Updated'} Airtable record for ${phone} (${personName || 'Unknown'})`)
+        if (pollFieldCount > 0) {
+          console.log(`[Polls] Record includes ${pollFieldCount} poll-specific fields out of ${fieldCount} total fields`)
+        }
       } else {
         console.error(`[Polls] Failed to upsert Airtable record:`, result.error);
         console.error(`[Polls] Base: ${ENV.AIRTABLE_BASE_ID}, Table: ${ENV.AIRTABLE_TABLE_NAME}`);
