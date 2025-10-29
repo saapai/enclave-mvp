@@ -98,8 +98,10 @@ export async function POST(request: NextRequest) {
       ;(options as string[]).forEach((opt: string, idx: number) => {
         lines.push(`${idx + 1}) ${opt}`)
       })
+      const rawResultsUrl = process.env.AIRTABLE_PUBLIC_RESULTS_URL
+      const sanitizedResultsUrl = rawResultsUrl?.replace(/^@+/, '')
       const publicResultsUrl =
-        process.env.AIRTABLE_PUBLIC_RESULTS_URL ||
+        sanitizedResultsUrl ||
         (process.env.AIRTABLE_BASE_ID ? `https://airtable.com/${process.env.AIRTABLE_BASE_ID}` : undefined)
       const resultsSuffix = publicResultsUrl ? `\nView results: ${publicResultsUrl} (search code ${code})` : ''
       finalMessage = `POLL (${code}): ${message}\nReply with number or option word:\n${lines.join('\n')}${resultsSuffix}`
