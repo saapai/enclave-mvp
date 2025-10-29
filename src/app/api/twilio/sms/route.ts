@@ -300,6 +300,25 @@ export async function POST(request: NextRequest) {
         poll = rows?.[0]?.sms_poll || null
       }
 
+      if (!poll) {
+        // Fallback: find latest poll_id we seeded for this phone
+        const { data: latestSeed } = await supabase
+          .from('sms_poll_response')
+          .select('poll_id')
+          .eq('phone', phoneE164)
+          .order('received_at', { ascending: false })
+          .limit(1)
+          .maybeSingle()
+        if (latestSeed?.poll_id) {
+          const { data: p2 } = await supabase
+            .from('sms_poll')
+            .select('id, space_id, question, options, code, created_at')
+            .eq('id', latestSeed.poll_id)
+            .maybeSingle()
+          poll = p2
+        }
+      }
+
       if (poll && Array.isArray(poll.options)) {
         const normalize = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '')
         const options: string[] = poll.options as string[]
@@ -353,9 +372,14 @@ export async function POST(request: NextRequest) {
             })
           }
 
+          const rawResultsUrl = process.env.AIRTABLE_PUBLIC_RESULTS_URL
+          const sanitizedResultsUrl = rawResultsUrl?.replace(/^@+/, '')
+          const publicResultsUrl = sanitizedResultsUrl || (process.env.AIRTABLE_BASE_ID ? `https://airtable.com/${process.env.AIRTABLE_BASE_ID}` : undefined)
+          const linkLine = publicResultsUrl ? `\nView results: ${publicResultsUrl} (code ${poll.code})` : ''
+          const reply = `Thanks! Recorded your response: ${label}${linkLine}`
           return new NextResponse(
             '<?xml version="1.0" encoding="UTF-8"?>' +
-            `<Response><Message>Thanks! Recorded your response: ${label}</Message></Response>`,
+            `<Response><Message>${reply}</Message></Response>`,
             { headers: { 'Content-Type': 'application/xml' } }
           )
         } else {
