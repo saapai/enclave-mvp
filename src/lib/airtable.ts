@@ -445,10 +445,8 @@ export async function createAirtableFields(
             'Content-Type': 'application/json'
           },
           body: JSON.stringify({
-            fields: [{
-              name: fieldNames.question,
-              type: 'singleLineText'
-            }]
+            name: fieldNames.question,
+            type: 'singleLineText'
           })
         })
         
@@ -459,6 +457,7 @@ export async function createAirtableFields(
           console.log(`[Airtable] ✓ Created field: "${fieldNames.question}"`)
         } else {
           const errorMsg = responseData?.error?.message || responseData?.error?.type || `HTTP ${createRes.status}`
+          console.error(`[Airtable] Full error response:`, JSON.stringify(responseData, null, 2))
           // If field already exists (duplicate name error), treat as existing
           if (errorMsg.toLowerCase().includes('already exists') || 
               errorMsg.toLowerCase().includes('duplicate') ||
@@ -490,17 +489,15 @@ export async function createAirtableFields(
             'Content-Type': 'application/json'
           },
           body: JSON.stringify({
-            fields: [{
-              name: fieldNames.response,
-              type: 'singleSelect',
-              options: {
-                choices: [
-                  { name: 'Yes' },
-                  { name: 'No' },
-                  { name: 'Maybe' }
-                ]
-              }
-            }]
+            name: fieldNames.response,
+            type: 'singleSelect',
+            options: {
+              choices: [
+                { name: 'Yes' },
+                { name: 'No' },
+                { name: 'Maybe' }
+              ]
+            }
           })
         })
         
@@ -511,6 +508,7 @@ export async function createAirtableFields(
           console.log(`[Airtable] ✓ Created field: "${fieldNames.response}"`)
         } else {
           const errorMsg = responseData?.error?.message || responseData?.error?.type || `HTTP ${createRes.status}`
+          console.error(`[Airtable] Full error response:`, JSON.stringify(responseData, null, 2))
           // If field already exists (duplicate name error), treat as existing
           if (errorMsg.toLowerCase().includes('already exists') || 
               errorMsg.toLowerCase().includes('duplicate') ||
@@ -542,10 +540,8 @@ export async function createAirtableFields(
             'Content-Type': 'application/json'
           },
           body: JSON.stringify({
-            fields: [{
-              name: fieldNames.notes,
-              type: 'multilineText'
-            }]
+            name: fieldNames.notes,
+            type: 'multilineText'
           })
         })
         
@@ -556,6 +552,7 @@ export async function createAirtableFields(
           console.log(`[Airtable] ✓ Created field: "${fieldNames.notes}"`)
         } else {
           const errorMsg = responseData?.error?.message || responseData?.error?.type || `HTTP ${createRes.status}`
+          console.error(`[Airtable] Full error response:`, JSON.stringify(responseData, null, 2))
           // If field already exists (duplicate name error), treat as existing
           if (errorMsg.toLowerCase().includes('already exists') || 
               errorMsg.toLowerCase().includes('duplicate') ||
