@@ -376,6 +376,26 @@ export async function POST(request: NextRequest) {
 
     console.log(`[Twilio SMS] Searching across ${spaceIds.length} workspaces for: "${query}"`)
 
+    // Get conversation history (last 3 messages)
+    const { data: conversationHistory } = await supabase
+      .from('sms_conversation_history')
+      .select('user_message, bot_response')
+      .eq('phone_number', phoneNumber)
+      .order('created_at', { ascending: false })
+      .limit(3)
+    
+    console.log(`[Twilio SMS] Found ${conversationHistory?.length || 0} previous messages in conversation`)
+    
+    // Build conversation context for the AI
+    let conversationContext = ''
+    if (conversationHistory && conversationHistory.length > 0) {
+      conversationContext = conversationHistory
+        .reverse() // Show in chronological order
+        .map((msg: any) => `User: ${msg.user_message}\nBot: ${msg.bot_response}`)
+        .join('\n\n') + '\n\nCurrent query:\n'
+      console.log(`[Twilio SMS] Conversation context: ${conversationContext.substring(0, 100)}...`)
+    }
+
     // Execute search
     const allResults = []
     for (const spaceId of spaceIds) {
@@ -469,7 +489,10 @@ export async function POST(request: NextRequest) {
             
             // Try each chunk
             for (let i = 0; i < chunks.length; i++) {
-              const context = `Title: ${result.title}\nContent: ${chunks[i]}`
+              // Combine conversation context with document content
+              const context = conversationContext 
+                ? `${conversationContext}Title: ${result.title}\nContent: ${chunks[i]}`
+                : `Title: ${result.title}\nContent: ${chunks[i]}`
               
               try {
                 const aiUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'https://www.tryenclave.com'}/api/ai`
@@ -525,6 +548,15 @@ export async function POST(request: NextRequest) {
         
         // Add main response
         responseMessage += finalText
+        
+        // Save conversation history
+        await supabase
+          .from('sms_conversation_history')
+          .insert({
+            phone_number: phoneNumber,
+            user_message: query,
+            bot_response: finalText || composed.text
+          })
         
         // Split and send
         const messages = splitLongMessage(responseMessage, 1600)
