@@ -161,18 +161,34 @@ function extractDetails(body: string, query: string): string {
 }
 
 /**
+ * Remove auto-capitalization to make responses feel like teenage texts
+ */
+function removeAutoCaps(text: string): string {
+  if (!text || text.length === 0) return text;
+  
+  // Don't lowercase if first word is an acronym (all caps)
+  const firstWord = text.split(/\s+/)[0];
+  if (firstWord && firstWord === firstWord.toUpperCase() && firstWord.length > 1) {
+    return text; // Keep acronyms like "SEP" or "IM"
+  }
+  
+  // Lowercase first character
+  return text[0].toLowerCase() + text.substring(1);
+}
+
+/**
  * Render answer to SMS text
  */
 export function renderAnswer(answer: Answer): string {
-  const parts: string[] = [answer.headline];
+  const parts: string[] = [removeAutoCaps(answer.headline)];
   
   if (answer.details) {
-    parts.push(answer.details);
+    parts.push(removeAutoCaps(answer.details));
   }
   
   // Add source if meaningful
   if (answer.sources && answer.sources.length > 0 && answer.sources[0].tag.startsWith('§')) {
-    parts.push(`Source: ${answer.sources[0].title}`);
+    parts.push(`source: ${answer.sources[0].title}`);
   }
   
   return parts.filter(Boolean).join('\n');

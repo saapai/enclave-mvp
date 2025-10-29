@@ -4,6 +4,16 @@ import { supabase } from '@/lib/supabase'
 import { searchResourcesHybrid } from '@/lib/search'
 import { ENV } from '@/lib/env'
 import { planQuery, executePlan, composeResponse } from '@/lib/planner'
+import { 
+  isAnnouncementRequest, 
+  isDraftModification, 
+  extractAnnouncementDetails, 
+  generateAnnouncementDraft, 
+  saveDraft, 
+  getActiveDraft,
+  sendAnnouncement,
+  getPreviousAnnouncements
+} from '@/lib/announcements'
 
 // Feature flag: Enable new planner-based flow
 const USE_PLANNER = true
@@ -258,6 +268,112 @@ export async function POST(request: NextRequest) {
           headers: { 'Content-Type': 'application/xml' }
         }
       )
+    }
+
+    // ========================================================================
+    // ANNOUNCEMENT FLOW
+    // ========================================================================
+    
+    // Check if this is an announcement request
+    if (isAnnouncementRequest(body)) {
+      console.log(`[Twilio SMS] Detected announcement request from ${phoneNumber}`)
+      
+      // Extract announcement details
+      const details = await extractAnnouncementDetails(body)
+      console.log(`[Twilio SMS] Extracted details:`, details)
+      
+      // Generate draft
+      const draft = await generateAnnouncementDraft(details)
+      console.log(`[Twilio SMS] Generated draft: "${draft}"`)
+      
+      // Save draft
+      const spaceIds = await getWorkspaceIds()
+      const draftId = await saveDraft(phoneNumber, {
+        content: draft,
+        tone: details.tone,
+        scheduledFor: details.scheduledFor ? new Date(details.scheduledFor) : undefined,
+        targetAudience: details.targetAudience,
+        workspaceId: spaceIds[0]
+      }, spaceIds[0])
+      
+      const response = details.scheduledFor
+        ? `okay here's what the announcement will say:\n\n${draft}\n\nscheduled for ${new Date(details.scheduledFor).toLocaleString()}. reply to edit or "send now" to send immediately`
+        : `okay here's what the announcement will say:\n\n${draft}\n\nreply "send it" to broadcast or reply to edit the message`
+      
+      return new NextResponse(
+        `<?xml version="1.0" encoding="UTF-8"?><Response><Message>${response}</Message></Response>`,
+        { headers: { 'Content-Type': 'application/xml' } }
+      )
+    }
+    
+    // Check if user is editing a draft
+    if (isDraftModification(body)) {
+      const activeDraft = await getActiveDraft(phoneNumber)
+      
+      if (activeDraft) {
+        console.log(`[Twilio SMS] Modifying draft for ${phoneNumber}`)
+        
+        // Determine tone modification
+        let newTone = activeDraft.tone || 'casual'
+        if (body.toLowerCase().includes('meaner')) newTone = 'mean'
+        if (body.toLowerCase().includes('nicer')) newTone = 'casual'
+        if (body.toLowerCase().includes('urgent')) newTone = 'urgent'
+        
+        // Regenerate draft with new tone
+        const newDraft = await generateAnnouncementDraft(
+          { content: activeDraft.content, tone: newTone },
+          activeDraft.content
+        )
+        
+        // Update draft
+        await saveDraft(phoneNumber, {
+          id: activeDraft.id,
+          content: newDraft,
+          tone: newTone,
+          scheduledFor: activeDraft.scheduledFor,
+          targetAudience: activeDraft.targetAudience,
+          workspaceId: activeDraft.workspaceId
+        }, activeDraft.workspaceId!)
+        
+        return new NextResponse(
+          `<?xml version="1.0" encoding="UTF-8"?><Response><Message>updated:\n\n${newDraft}\n\nreply "send it" to broadcast</Message></Response>`,
+          { headers: { 'Content-Type': 'application/xml' } }
+        )
+      }
+    }
+    
+    // Check if user wants to send the draft
+    if (command === 'SEND IT' || command === 'SEND NOW') {
+      const activeDraft = await getActiveDraft(phoneNumber)
+      
+      if (activeDraft && activeDraft.id) {
+        console.log(`[Twilio SMS] Sending announcement ${activeDraft.id}`)
+        
+        // Get Twilio client
+        const twilioClient = twilio(ENV.TWILIO_ACCOUNT_SID, ENV.TWILIO_AUTH_TOKEN)
+        
+        // Send announcement
+        const sentCount = await sendAnnouncement(activeDraft.id, twilioClient)
+        
+        return new NextResponse(
+          `<?xml version="1.0" encoding="UTF-8"?><Response><Message>sent to ${sentCount} people 📢</Message></Response>`,
+          { headers: { 'Content-Type': 'application/xml' } }
+        )
+      } else {
+        return new NextResponse(
+          `<?xml version="1.0" encoding="UTF-8"?><Response><Message>no announcement draft found. create one first by saying "create an announcement..."</Message></Response>`,
+          { headers: { 'Content-Type': 'application/xml' } }
+        )
+      }
+    }
+    
+    // Helper to get workspace IDs
+    async function getWorkspaceIds() {
+      const { data: sepWorkspaces } = await supabase
+        .from('space')
+        .select('id, name')
+        .ilike('name', '%SEP%')
+      return sepWorkspaces?.map(w => w.id) || []
     }
 
     // Check if user is in sms_optin table to determine if they're truly new
