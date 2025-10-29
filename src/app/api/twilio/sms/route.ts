@@ -284,111 +284,56 @@ export async function POST(request: NextRequest) {
       return sepWorkspaces?.map(w => w.id) || []
     }
     
-    // Helper to check if message is a correction/intent to edit
-    const isCorrection = (msg: string): boolean => {
-      const lower = msg.toLowerCase();
-      return lower.includes('no just') || 
-             lower.includes('change it to') || 
-             lower.includes('make it') ||
-             lower.includes('actually') ||
-             (lower.includes('i want') && lower.includes('say')) ||
-             (msg.includes('"') && msg.length < 200); // Short message with quotes
-    };
+    // ========================================================================
+    // CONTEXT-AWARE ROUTING
+    // ========================================================================
     
-    // FIRST: Check if user has an active draft (for editing)
-    const activeDraft = await getActiveDraft(phoneNumber)
-    
-    // If user has an active draft and message is not a command, treat it as draft edit
-    if (activeDraft && !command) {
-      console.log(`[Twilio SMS] Active draft found, treating as edit for ${phoneNumber}`)
-      
-      // Extract new content from message
-      const newContent = extractRawAnnouncementText(body)
-      
-      // Update draft with new content
-      await saveDraft(phoneNumber, {
-        id: activeDraft.id,
-        content: newContent,
-        tone: activeDraft.tone,
-        scheduledFor: activeDraft.scheduledFor,
-        targetAudience: activeDraft.targetAudience,
-        workspaceId: activeDraft.workspaceId
-      }, activeDraft.workspaceId!)
-      
-      return new NextResponse(
-        `<?xml version="1.0" encoding="UTF-8"?><Response><Message>updated:\n\n${newContent}\n\nreply "send it" to broadcast</Message></Response>`,
-        { headers: { 'Content-Type': 'application/xml' } }
-      )
-    }
-    
-    // Also check for corrections even without active draft
-    if (!activeDraft && !command && isCorrection(body)) {
-      console.log(`[Twilio SMS] Detected correction/correction text: "${body}"`)
-      
-      const announcementText = extractRawAnnouncementText(body)
-      
-      // Create draft
-      const spaceIds = await getWorkspaceIds()
-      const draftId = await saveDraft(phoneNumber, {
-        content: announcementText,
-        tone: 'casual',
-        workspaceId: spaceIds[0]
-      }, spaceIds[0])
-      
-      return new NextResponse(
-        `<?xml version="1.0" encoding="UTF-8"?><Response><Message>okay here's what the announcement will say:\n\n${announcementText}\n\nreply "send it" to broadcast or reply to edit the message</Message></Response>`,
-        { headers: { 'Content-Type': 'application/xml' } }
-      )
-    }
-    
-    // Check conversation history to see if we just asked "what would you like the announcement to say?"
+    // Check conversation history for context
     const { data: conversationHistory } = await supabase
       .from('sms_conversation_history')
-      .select('bot_response')
+      .select('user_message, bot_response')
       .eq('phone_number', phoneNumber)
       .order('created_at', { ascending: false })
-      .limit(1)
-      .maybeSingle()
+      .limit(3)
     
-    const lastBotMessage = conversationHistory?.bot_response || ''
-    const justAskedForAnnouncement = lastBotMessage.toLowerCase().includes('what would you like')
+    const recentMessages = conversationHistory || []
+    const lastBotMessage = recentMessages[0]?.bot_response || ''
+    const lastUserMessages = recentMessages.map(m => m.user_message).join(' ').toLowerCase()
     
-    // If we just asked for announcement text AND user has no active draft, treat this as announcement text
-    if (justAskedForAnnouncement && !activeDraft && !command && body && body.length < 500) {
-      console.log(`[Twilio SMS] Follow-up to announcement prompt, treating as announcement text: "${body}"`)
+    // Determine if this is a follow-up and what context
+    const isAnnouncementContext = 
+      lastBotMessage.includes('what would you like') ||
+      lastBotMessage.includes('announcement') ||
+      lastUserMessages.includes('announcement') ||
+      lastBotMessage.includes('reply "send it"')
+    
+    const activeDraft = await getActiveDraft(phoneNumber)
+    
+    // If follow-up in announcement context, treat as announcement
+    if (isAnnouncementContext && !command && body && body.length < 500) {
+      console.log(`[Twilio SMS] Follow-up in announcement context: "${body}"`)
       
-      // Extract text
       const announcementText = extractRawAnnouncementText(body)
       
-      // Create draft
-      const spaceIds = await getWorkspaceIds()
-      const draftId = await saveDraft(phoneNumber, {
-        content: announcementText,
-        tone: 'casual',
-        workspaceId: spaceIds[0]
-      }, spaceIds[0])
-      
-      return new NextResponse(
-        `<?xml version="1.0" encoding="UTF-8"?><Response><Message>okay here's what the announcement will say:\n\n${announcementText}\n\nreply "send it" to broadcast or reply to edit the message</Message></Response>`,
-        { headers: { 'Content-Type': 'application/xml' } }
-      )
-    }
-    
-    // If NO active draft but message looks like raw announcement text, create draft from it
-    if (!activeDraft && !command && body && body.length > 10 && body.length < 500) {
-      // Heuristic: If message has quotes or looks like announcement text, treat as new draft
-      const hasQuotes = body.includes('"');
-      const looksLikeAnnouncement = body.charAt(0).toUpperCase() === body.charAt(0); // Starts with capital (like "Ash is...")
-      
-      if (hasQuotes || looksLikeAnnouncement) {
-        console.log(`[Twilio SMS] Treating message as raw announcement text: "${body}"`)
+      if (activeDraft) {
+        // Edit existing draft
+        await saveDraft(phoneNumber, {
+          id: activeDraft.id,
+          content: announcementText,
+          tone: activeDraft.tone,
+          scheduledFor: activeDraft.scheduledFor,
+          targetAudience: activeDraft.targetAudience,
+          workspaceId: activeDraft.workspaceId
+        }, activeDraft.workspaceId!)
         
-        // Extract text
-        const announcementText = extractRawAnnouncementText(body)
-        
-        // Create draft
+        return new NextResponse(
+          `<?xml version="1.0" encoding="UTF-8"?><Response><Message>updated:\n\n${announcementText}\n\nreply "send it" to broadcast</Message></Response>`,
+          { headers: { 'Content-Type': 'application/xml' } }
+        )
+      } else {
+        // Create new draft
         const spaceIds = await getWorkspaceIds()
-        const draftId = await saveDraft(phoneNumber, {
+        await saveDraft(phoneNumber, {
           content: announcementText,
           tone: 'casual',
           workspaceId: spaceIds[0]
