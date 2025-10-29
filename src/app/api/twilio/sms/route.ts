@@ -341,6 +341,39 @@ export async function POST(request: NextRequest) {
       )
     }
     
+    // Check conversation history to see if we just asked "what would you like the announcement to say?"
+    const { data: conversationHistory } = await supabase
+      .from('sms_conversation_history')
+      .select('bot_response')
+      .eq('phone_number', phoneNumber)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    
+    const lastBotMessage = conversationHistory?.bot_response || ''
+    const justAskedForAnnouncement = lastBotMessage.toLowerCase().includes('what would you like')
+    
+    // If we just asked for announcement text AND user has no active draft, treat this as announcement text
+    if (justAskedForAnnouncement && !activeDraft && !command && body && body.length < 500) {
+      console.log(`[Twilio SMS] Follow-up to announcement prompt, treating as announcement text: "${body}"`)
+      
+      // Extract text
+      const announcementText = extractRawAnnouncementText(body)
+      
+      // Create draft
+      const spaceIds = await getWorkspaceIds()
+      const draftId = await saveDraft(phoneNumber, {
+        content: announcementText,
+        tone: 'casual',
+        workspaceId: spaceIds[0]
+      }, spaceIds[0])
+      
+      return new NextResponse(
+        `<?xml version="1.0" encoding="UTF-8"?><Response><Message>okay here's what the announcement will say:\n\n${announcementText}\n\nreply "send it" to broadcast or reply to edit the message</Message></Response>`,
+        { headers: { 'Content-Type': 'application/xml' } }
+      )
+    }
+    
     // If NO active draft but message looks like raw announcement text, create draft from it
     if (!activeDraft && !command && body && body.length > 10 && body.length < 500) {
       // Heuristic: If message has quotes or looks like announcement text, treat as new draft
