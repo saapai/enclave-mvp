@@ -420,13 +420,13 @@ export async function createAirtableFields(
     
     console.log(`[Airtable] ✓ Target table found: ${targetTable.name} (${tableId})`)
     
-    // Step 2: Now get the specific table schema (to check existing fields)
-    const metaUrl = `https://api.airtable.com/v0/meta/bases/${baseId}/tables/${tableId}`
+    // Step 2: Get the specific table schema (to check existing fields)
+    const tableSchemaUrl = `https://api.airtable.com/v0/meta/bases/${baseId}/tables/${tableId}`
     console.log(`[Airtable] Step 2: Getting table schema to check existing fields...`)
-    console.log(`[Airtable] Metadata API URL: ${metaUrl}`)
+    console.log(`[Airtable] Metadata API URL: ${tableSchemaUrl}`)
     
     // Get table schema to check existing fields
-    const metaRes = await fetch(metaUrl, {
+    const metaRes = await fetch(tableSchemaUrl, {
       headers: {
         'Authorization': `Bearer ${trimmedApiKey}`,
         'Content-Type': 'application/json'
@@ -446,41 +446,39 @@ export async function createAirtableFields(
       
       console.error(`[Airtable] ❌ Failed to fetch table schema: ${errorMsg}`)
       console.error(`[Airtable] HTTP Status: ${status}`)
+      console.error(`[Airtable] URL: ${tableSchemaUrl}`)
       
       if (status === 404) {
-        console.error(`[Airtable] 404 Error - Table not found (but base access works!)`)
-        console.error(`[Airtable] Since base access succeeded, this means:`)
-        console.error(`[Airtable]   1. Table ID "${tableId}" might be wrong OR`)
-        console.error(`[Airtable]   2. Table doesn't exist in this base OR`)
-        console.error(`[Airtable]   3. PAT doesn't have access to this specific table`)
-        console.error(`[Airtable] VERIFICATION:`)
-        console.error(`[Airtable]   - Your URL shows: https://airtable.com/${baseId}/${tableId}/...`)
-        console.error(`[Airtable]   - Verify table ID in Vercel matches: ${tableId}`)
-        console.error(`[Airtable]   - Check if table name in Airtable matches "Enclave"`)
-        console.error(`[Airtable] SOLUTION:`)
-        console.error(`[Airtable]   1. Double-check table ID in Airtable URL (copy directly)`)
-        console.error(`[Airtable]   2. Verify PAT has access to ALL tables in base "${baseId}"`)
-        console.error(`[Airtable]   3. Try recreating PAT with "All current and future bases" access`)
+        console.error(`[Airtable] 404 Error - Table not found`)
+        console.error(`[Airtable] We verified table exists in tables list, but schema endpoint fails`)
+        console.error(`[Airtable] This may indicate:`)
+        console.error(`[Airtable]   1. Table ID is correct but schema access is restricted`)
+        console.error(`[Airtable]   2. PAT needs additional permissions for schema access`)
+        console.error(`[Airtable]   3. Verify table ID: ${tableId}`)
       } else if (status === 401 || status === 403) {
-        console.error(`[Airtable] Authentication/Permission Error (but base access works!)`)
-        console.error(`[Airtable] This means PAT needs additional scope for table access:`)
+        console.error(`[Airtable] Authentication/Permission Error`)
+        console.error(`[Airtable] This means PAT needs additional scope for schema access:`)
         console.error(`[Airtable]   1. Verify PAT has scope: schema.bases:read`)
-        console.error(`[Airtable]   2. Check PAT has access to base "${baseId}" (should be OK since base check passed)`)
+        console.error(`[Airtable]   2. Check PAT has access to base "${baseId}"`)
         console.error(`[Airtable]   3. May need schema.bases:write for field creation`)
       }
       
-      return { ok: false, created, errors: [`Failed to access Metadata API: ${errorMsg} (HTTP ${status})`], existing }
+      return { ok: false, created, errors: [`Failed to access table schema: ${errorMsg} (HTTP ${status})`], existing }
     }
     
     const metaData = await metaRes.json()
     const existingFields = metaData?.schema?.fields?.map((f: any) => f.name) || []
-    console.log(`[Airtable] Found ${existingFields.length} existing fields in table`)
+    console.log(`[Airtable] ✓ Step 2 passed: Found ${existingFields.length} existing fields in table`)
+    
+    // Step 3: Create fields (CORRECT endpoint: /tables/{tableId}/fields)
+    const fieldsUrl = `https://api.airtable.com/v0/meta/bases/${baseId}/tables/${tableId}/fields`
     
     // Create Question field (singleLineText)
     if (!existingFields.includes(fieldNames.question)) {
       try {
-        console.log(`[Airtable] Creating field: "${fieldNames.question}" (singleLineText)`)
-        const createRes = await fetch(`${metaUrl}/fields`, {
+        console.log(`[Airtable] Step 3a: Creating field: "${fieldNames.question}" (singleLineText)`)
+        console.log(`[Airtable] Using endpoint: ${fieldsUrl}`)
+        const createRes = await fetch(fieldsUrl, {
           method: 'POST',
           headers: {
             'Authorization': `Bearer ${trimmedApiKey}`,
@@ -516,8 +514,8 @@ export async function createAirtableFields(
     // Create Response field (singleSelect with Yes/No/Maybe options)
     if (!existingFields.includes(fieldNames.response)) {
       try {
-        console.log(`[Airtable] Creating field: "${fieldNames.response}" (singleSelect: Yes, No, Maybe)`)
-        const createRes = await fetch(`${metaUrl}/fields`, {
+        console.log(`[Airtable] Step 3b: Creating field: "${fieldNames.response}" (singleSelect: Yes, No, Maybe)`)
+        const createRes = await fetch(fieldsUrl, {
           method: 'POST',
           headers: {
             'Authorization': `Bearer ${trimmedApiKey}`,
@@ -560,8 +558,8 @@ export async function createAirtableFields(
     // Create Notes field (multilineText for longer notes)
     if (!existingFields.includes(fieldNames.notes)) {
       try {
-        console.log(`[Airtable] Creating field: "${fieldNames.notes}" (multilineText)`)
-        const createRes = await fetch(`${metaUrl}/fields`, {
+        console.log(`[Airtable] Step 3c: Creating field: "${fieldNames.notes}" (multilineText)`)
+        const createRes = await fetch(fieldsUrl, {
           method: 'POST',
           headers: {
             'Authorization': `Bearer ${trimmedApiKey}`,
