@@ -534,12 +534,17 @@ export async function POST(request: NextRequest) {
     // POLL RESPONSE HANDLING (RSVP)
     // ========================================================================
     // Only check for poll responses if the message could be a response
-    // Skip if it's clearly a command or query
+    // Skip if it's clearly a command or query OR if they have an active poll draft
     const textRaw = (body || '').trim()
     const lowerBody = textRaw.toLowerCase()
     
+    // Check if there's an active poll draft (creating/editing a poll)
+    const activePollDraftCheck = await getActivePollDraft(phoneNumber)
+    const hasActivePollDraft = activePollDraftCheck && activePollDraftCheck.status !== 'sent'
+    
     // These patterns indicate it's NOT a poll response
     const isCommand = 
+      hasActivePollDraft ||  // If creating/editing a poll, don't treat as response
       isPollRequest(textRaw) || 
       isAnnouncementRequest(textRaw) ||
       lowerBody.startsWith('i want') ||
@@ -606,13 +611,15 @@ export async function POST(request: NextRequest) {
         // ========== NAME COLLECTION ==========
         // Get their name from sms_optin table (already collected on first contact)
         const dbClient = supabaseAdmin || supabase
+        const normalizedPhone = phoneE164.replace('+1', '').replace('+', '')
         const { data: optinData } = await dbClient
           .from('sms_optin')
           .select('name')
-          .eq('phone', phoneE164.replace('+1', ''))
+          .eq('phone', normalizedPhone)
           .maybeSingle()
         
         let personName = optinData?.name || 'Unknown'
+        console.log(`[Twilio SMS] Poll response from ${normalizedPhone}, name: ${personName}`)
         
         // ========== SMART RESPONSE PARSING ==========
         const parsed = await parseResponseWithNotes(body, options)

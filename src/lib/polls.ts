@@ -126,11 +126,31 @@ export async function generatePollQuestion(
         return draft;
       }
       
-      // Remove verbose phrases that AI might have added
-      draft = draft.replace(/^(are you coming to|if people are coming to|if you are coming to|coming to|going to|people are coming to)\s*/i, '');
+      // Check if it's a statement/topic that needs to be converted to a question
+      // Use pattern matching to extract the core topic
+      const topicMatch = draft.match(/^(if |whether |do |does )?(.+?)(\s+is\s+.+|\s+are\s+.+)?$/i);
       
-      // Make it conversational
-      if (!draft.match(/^(yo|hey|sup)/i)) {
+      if (topicMatch) {
+        // Extract just the subject matter
+        let topic = topicMatch[2] || draft;
+        
+        // Common patterns to strip
+        topic = topic.replace(/^(people (think|believe|say|are saying|are thinking)|you think|we think)\s+/i, '');
+        
+        // If there's a predicate (is/are), keep it
+        const predicate = topicMatch[3] || '';
+        const fullTopic = (topic + predicate).trim();
+        
+        // Make it conversational
+        if (fullTopic.match(/^(ash|saathvik|[A-Z][a-z]+)\s+(is|are)/i)) {
+          // It's about a person/thing with a quality: "ash is hot" -> "is ash hot"
+          draft = `yo is ${fullTopic.toLowerCase()}`;
+        } else {
+          // It's an event/activity: "active meeting" -> "are you coming to active meeting"
+          draft = `yo are you coming to ${fullTopic}`;
+        }
+      } else {
+        // Fallback: just make it conversational
         draft = `yo are you coming to ${draft}`;
       }
       
