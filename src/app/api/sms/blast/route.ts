@@ -62,10 +62,11 @@ export async function POST(request: NextRequest) {
       .select('phone, opted_out')
       .in('phone', uniquePhones)
 
-    const optedInSet = new Set((optins || []).filter(o => !o.opted_out).map(o => o.phone))
-    const recipients = uniquePhones.filter(p => optedInSet.has(p))
+    // Send to all registered phones in the space, except those who have explicitly opted out
+    const optedOutSet = new Set((optins || []).filter(o => o.opted_out).map(o => o.phone))
+    const recipients = uniquePhones.filter(p => !optedOutSet.has(p))
     if (recipients.length === 0) {
-      return NextResponse.json({ error: 'No opted-in recipients in this space' }, { status: 400 })
+      return NextResponse.json({ error: 'No eligible recipients (all opted out) in this space' }, { status: 400 })
     }
 
     const dbClient = supabaseAdmin || supabase
