@@ -167,11 +167,17 @@ export async function generatePollQuestion(
         
         // Make it conversational
         if (fullTopic.match(/^(ash|saathvik|[A-Z][a-z]+)\s+(is|are)/i)) {
-          // It's about a person/thing with a quality: "ash is hot" -> "is ash hot"
-          draft = `yo is ${fullTopic.toLowerCase()}`;
+          // It's about a person/thing with a quality: "ash is hot" -> "yo is ash hot?"
+          // Rearrange: "ash is hot" -> "is ash hot"
+          const parts = fullTopic.match(/^(.+?)\s+(is|are)\s+(.+)$/i)
+          if (parts && parts.length === 4) {
+            draft = `yo is ${parts[1].toLowerCase()} ${parts[3]}?`
+          } else {
+            draft = `yo is ${fullTopic.toLowerCase()}?`
+          }
         } else {
           // It's an event/activity: "active meeting" -> "are you coming to active meeting"
-          draft = `yo are you coming to ${fullTopic}`;
+          draft = `yo are you coming to ${fullTopic}?`;
         }
       } else {
         // Fallback: just make it conversational

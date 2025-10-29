@@ -34,10 +34,13 @@ import {
 // Feature flag: Enable new planner-based flow
 const USE_PLANNER = true
 
-// Check if message is a send affirmation
-const isSendAffirmation = (message: string): boolean => {
+// Check if message is a send affirmation (but NOT if it's a poll response)
+const isSendAffirmation = (message: string, isPollResponseContext: boolean = false): boolean => {
+  if (isPollResponseContext) return false // Never treat poll responses as send commands
   const lower = message.trim().toLowerCase()
-  return ['send', 'yep', 'yes', 'yea', 'yeah', 'ok', 'okay', 'go', 'do it', 'all good', 'looks good', 'perfect', 'good'].includes(lower)
+  // Exclude "yes" if it's likely a poll response (short, single word)
+  if (lower === 'yes' || lower === 'no' || lower === 'maybe') return false
+  return ['send', 'yep', 'yea', 'yeah', 'ok', 'okay', 'go', 'do it', 'all good', 'looks good', 'perfect', 'good'].includes(lower)
 }
 
 // Check if message is name declaration using AI
@@ -524,8 +527,11 @@ export async function POST(request: NextRequest) {
       lastBotMessage.includes('what the poll will say') ||
       lastBotMessage.includes('reply "send it" to send') ||
       lastBotMessage.includes('reply to edit') ||
-      contextMessages.includes('poll will say') ||
-      contextMessages.includes('make a poll')
+      contextMessages.includes('poll will say')
+    
+    const isPollQuestionInputContext =
+      lastBotMessage.includes('what would you like to ask in the poll') ||
+      lastBotMessage === 'what would you like to ask in the poll?'
     
     const isAnnouncementDraftContext =
       lastBotMessage.includes('what the announcement will say') ||
@@ -533,10 +539,25 @@ export async function POST(request: NextRequest) {
       contextMessages.includes('announcement will say') ||
       contextMessages.includes('make an announcement')
     
-    const isPollResponseContext =
+    // Check if user has an active poll waiting for response
+    const phoneE164 = from.startsWith('+') ? from : `+1${phoneNumber}`
+    const { data: pendingPollResponse } = await supabase
+      .from('sms_poll_response')
+      .select('sms_poll!inner(id, question, options, code, created_at, sent_at)')
+      .eq('phone', phoneE164)
+      .eq('response_status', 'pending')
+      .order('sms_poll(created_at)', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    
+    const hasActivePoll = pendingPollResponse?.sms_poll && pendingPollResponse.sms_poll.sent_at
+    
+    // Check if last bot message was actually a poll (check for poll question format)
+    const isPollResponseContext = 
+      hasActivePoll ||
       lastBotMessage.includes('POLL') ||
       lastBotMessage.includes('Reply with') ||
-      contextMessages.includes('poll (') ||
+      lastBotMessage.match(/yo (are you|is|do you|will you)/i) ||
       (lastBotMessage.includes('sent poll to') && !contextMessages.includes('what the poll will say'))
     
     const textRaw = (body || '').trim()
@@ -545,7 +566,176 @@ export async function POST(request: NextRequest) {
     const activeDraft = await getActiveDraft(phoneNumber)
     
     // ========================================================================
-    // PRIORITY 0: Query Detection - Answer queries even if drafts exist
+    // PRIORITY 0: Send command (HIGHEST - before everything else, but NOT if responding to poll)
+    // ========================================================================
+    if ((command === 'SEND IT' || command === 'SEND NOW' || isSendAffirmation(textRaw, isPollResponseContext)) && !isPollResponseContext && !isPollQuestionInputContext) {
+      // Get both drafts and send the most recent one
+      const pollDraftCheck = activePollDraft || await getActivePollDraft(phoneNumber)
+      const announcementDraftCheck = activeDraft || await getActiveDraft(phoneNumber)
+      
+      // Determine which is more recent
+      let shouldSendPoll = false
+      if (pollDraftCheck && announcementDraftCheck) {
+        const pollTime = new Date(pollDraftCheck.updatedAt || pollDraftCheck.createdAt || 0).getTime()
+        const announcementTime = new Date(announcementDraftCheck.scheduledFor || announcementDraftCheck.updatedAt || 0).getTime()
+        shouldSendPoll = pollTime > announcementTime
+      } else if (pollDraftCheck) {
+        shouldSendPoll = true
+      }
+      
+      if (shouldSendPoll && pollDraftCheck && pollDraftCheck.id) {
+        console.log(`[Twilio SMS] Sending poll ${pollDraftCheck.id}`)
+        const twilioClient = twilio(ENV.TWILIO_ACCOUNT_SID, ENV.TWILIO_AUTH_TOKEN)
+        const { sentCount, airtableLink } = await sendPoll(pollDraftCheck.id, twilioClient)
+        const linkText = airtableLink ? `\n\nview results: ${airtableLink}` : ''
+        return new NextResponse(
+          `<?xml version="1.0" encoding="UTF-8"?><Response><Message>sent poll to ${sentCount} people 📊${linkText}</Message></Response>`,
+          { headers: { 'Content-Type': 'application/xml' } }
+        )
+      } else if (announcementDraftCheck && announcementDraftCheck.id) {
+        console.log(`[Twilio SMS] Sending announcement ${announcementDraftCheck.id}`)
+        const twilioClient = twilio(ENV.TWILIO_ACCOUNT_SID, ENV.TWILIO_AUTH_TOKEN)
+        const sentCount = await sendAnnouncement(announcementDraftCheck.id, twilioClient)
+        return new NextResponse(
+          `<?xml version="1.0" encoding="UTF-8"?><Response><Message>sent to ${sentCount} people 📢</Message></Response>`,
+          { headers: { 'Content-Type': 'application/xml' } }
+        )
+      } else {
+        return new NextResponse(
+          `<?xml version="1.0" encoding="UTF-8"?><Response><Message>no draft found. create an announcement or poll first</Message></Response>`,
+          { headers: { 'Content-Type': 'application/xml' } }
+        )
+      }
+    }
+    
+    // ========================================================================
+    // PRIORITY 1: Poll Response (HIGH - before queries)
+    // ========================================================================
+    if (isPollResponseContext && !isPollDraftContext && !isPollQuestionInputContext && !isPollRequest(textRaw) && !isAnnouncementRequest(textRaw)) {
+      try {
+        const upper = textRaw.toUpperCase()
+        const codeMatch = upper.match(/\b([A-Z0-9]{4})\b/)
+        
+        // Find poll by code or use pending poll
+        let poll: any = null
+        if (codeMatch) {
+          const dbClient = supabaseAdmin || supabase
+          const { data: p } = await dbClient
+            .from('sms_poll')
+            .select('id, space_id, question, options, code, created_at')
+            .eq('code', codeMatch[1])
+            .maybeSingle()
+          poll = p
+        } else if (pendingPollResponse?.sms_poll) {
+          poll = pendingPollResponse.sms_poll
+        } else {
+          // Fallback: find latest poll for this phone
+          const dbClient = supabaseAdmin || supabase
+          const { data: rows } = await dbClient
+            .from('sms_poll_response')
+            .select('poll_id, sms_poll!inner(id, space_id, question, options, code, created_at)')
+            .eq('phone', phoneE164)
+            .order('sms_poll(created_at)', { ascending: false })
+            .limit(1)
+            .maybeSingle()
+          poll = rows?.sms_poll || null
+        }
+        
+        if (poll && Array.isArray(poll.options)) {
+          const options: string[] = poll.options as string[]
+          
+          // Get name
+          const normalizedPhone = phoneE164.replace('+1', '').replace('+', '')
+          const { data: optinData } = await supabase
+            .from('sms_optin')
+            .select('name')
+            .eq('phone', normalizedPhone)
+            .maybeSingle()
+          
+          let personName = optinData?.name || 'Unknown'
+          console.log(`[Twilio SMS] Poll response from ${normalizedPhone}, name: ${personName}`)
+          
+          // Parse response
+          const parsed = await parseResponseWithNotes(body, options)
+          
+          if (parsed.option) {
+            // Successfully parsed - record it
+            const success = await recordPollResponse(
+              poll.id,
+              phoneE164,
+              parsed.option,
+              parsed.notes,
+              personName
+            )
+            
+            if (!success) {
+              return new NextResponse(
+                '<?xml version="1.0" encoding="UTF-8"?>' +
+                '<Response><Message>Sorry, there was an error recording your response. Please try again.</Message></Response>',
+                { headers: { 'Content-Type': 'application/xml' } }
+              )
+            }
+            
+            const rawResultsUrl = process.env.AIRTABLE_PUBLIC_RESULTS_URL
+            const sanitizedResultsUrl = rawResultsUrl?.replace(/^@+/, '')
+            const publicResultsUrl = sanitizedResultsUrl || undefined
+            const linkLine = publicResultsUrl ? `\n\nView results: ${publicResultsUrl}` : ''
+            const notesText = parsed.notes ? ` (note: ${parsed.notes})` : ''
+            const reply = `Thanks ${personName}! Recorded: ${parsed.option}${notesText}${linkLine}`
+            
+            return new NextResponse(
+              '<?xml version="1.0" encoding="UTF-8"?>' +
+              `<Response><Message>${reply}</Message></Response>`,
+              { headers: { 'Content-Type': 'application/xml' } }
+            )
+          } else {
+            // Couldn't parse - might be a command, fall through
+            console.log('[Twilio SMS] Could not parse poll response, falling through')
+          }
+        }
+      } catch (err) {
+        console.error('[Twilio SMS] Poll response handling error:', err)
+        // Fall through to other handlers
+      }
+    }
+    
+    // ========================================================================
+    // PRIORITY 2: Poll Question Input (after "what would you like to ask in the poll?")
+    // ========================================================================
+    if (isPollQuestionInputContext && !isPollRequest(textRaw) && !isAnnouncementRequest(textRaw) && textRaw.length < 200) {
+      console.log(`[Twilio SMS] Poll question input detected: "${textRaw}"`)
+      
+      // Extract question - check for quotes
+      const quoteMatch = textRaw.match(/"([^"]+)"/)
+      let question = quoteMatch ? quoteMatch[1] : textRaw.trim()
+      
+      if (!question || question.length === 0) {
+        return new NextResponse(
+          `<?xml version="1.0" encoding="UTF-8"?><Response><Message>what would you like to ask in the poll?</Message></Response>`,
+          { headers: { 'Content-Type': 'application/xml' } }
+        )
+      }
+      
+      // Generate conversational question
+      const draftQuestion = await generatePollQuestion({ question, tone: 'casual' })
+      
+      // Save draft
+      const spaceIds = await getWorkspaceIds()
+      const draftId = await savePollDraft(phoneNumber, {
+        question: draftQuestion,
+        options: ['Yes', 'No', 'Maybe'],
+        tone: 'casual',
+        workspaceId: spaceIds[0]
+      }, spaceIds[0])
+      
+      return new NextResponse(
+        `<?xml version="1.0" encoding="UTF-8"?><Response><Message>okay here's what the poll will say:\n\n${draftQuestion}\n\nreply "send it" to send or reply to edit the message</Message></Response>`,
+        { headers: { 'Content-Type': 'application/xml' } }
+      )
+    }
+    
+    // ========================================================================
+    // PRIORITY 3: Query Detection - Answer queries even if drafts exist
     // ========================================================================
     // Check if this looks like a content query (not draft-related)
     const looksLikeQuery = 
@@ -563,13 +753,13 @@ export async function POST(request: NextRequest) {
     let queryAnswer: string | null = null
     let pendingPollFollowUp: string | null = null
     
-    if (looksLikeQuery && !isPollDraftContext && !isAnnouncementDraftContext && !isPollResponseContext) {
+    // Only treat as query if NOT in poll/question/draft contexts
+    if (looksLikeQuery && !isPollDraftContext && !isAnnouncementDraftContext && !isPollResponseContext && !isPollQuestionInputContext) {
       // This is a query - handle it normally (code continues below to query handling)
       // We'll set a flag to add draft follow-up after
       console.log(`[Twilio SMS] Detected query "${textRaw}", will answer then check for drafts`)
       
       // Check for pending poll that user hasn't responded to
-      const phoneE164 = from.startsWith('+') ? from : `+1${phoneNumber}`
       const { data: pendingPoll } = await supabase
         .from('sms_poll_response')
         .select('sms_poll!inner(question, code, created_at)')
@@ -618,140 +808,7 @@ export async function POST(request: NextRequest) {
     
     // Announcement draft editing - handled in announcement context block below
     
-    // ========================================================================
-    // PRIORITY 2: Poll response (only if in poll response context, NOT draft)
-    // ========================================================================
-    if (isPollResponseContext && !isPollDraftContext && !isPollRequest(textRaw) && !isAnnouncementRequest(textRaw)) {
-      try {
-        const upper = textRaw.toUpperCase()
-        const codeMatch = upper.match(/\b([A-Z0-9]{4})\b/)
-        const phoneE164 = from.startsWith('+') ? from : `+1${phoneNumber}`
-
-        // Find poll by code or latest for this phone
-        let poll: any = null
-        if (codeMatch) {
-          const dbClient = supabaseAdmin || supabase
-          const { data: p } = await dbClient
-            .from('sms_poll')
-            .select('id, space_id, question, options, code, created_at')
-            .eq('code', codeMatch[1])
-            .maybeSingle()
-          poll = p
-        } else {
-        const dbClient = supabaseAdmin || supabase
-        const { data: rows } = await dbClient
-          .from('sms_poll_response')
-          .select('poll_id, sms_poll!inner(id, space_id, question, options, code, created_at)')
-          .eq('phone', phoneE164)
-          .order('sms_poll(created_at)', { ascending: false })
-          .limit(1)
-        poll = rows?.[0]?.sms_poll || null
-      }
-
-      if (!poll) {
-        // Fallback: find latest poll_id we seeded for this phone
-        const dbClient = supabaseAdmin || supabase
-        const { data: latestSeed } = await dbClient
-          .from('sms_poll_response')
-          .select('poll_id')
-          .eq('phone', phoneE164)
-          .order('received_at', { ascending: false })
-          .limit(1)
-          .maybeSingle()
-        if (latestSeed?.poll_id) {
-          const { data: p2 } = await dbClient
-            .from('sms_poll')
-            .select('id, space_id, question, options, code, created_at')
-            .eq('id', latestSeed.poll_id)
-            .maybeSingle()
-          poll = p2
-        }
-      }
-
-      if (poll && Array.isArray(poll.options)) {
-        const options: string[] = poll.options as string[]
-        
-        // ========== NAME COLLECTION ==========
-        // Get their name from sms_optin table (already collected on first contact)
-        const dbClient = supabaseAdmin || supabase
-        const normalizedPhone = phoneE164.replace('+1', '').replace('+', '')
-        const { data: optinData } = await dbClient
-          .from('sms_optin')
-          .select('name')
-          .eq('phone', normalizedPhone)
-          .maybeSingle()
-        
-        let personName = optinData?.name || 'Unknown'
-        console.log(`[Twilio SMS] Poll response from ${normalizedPhone}, name: ${personName}`)
-        
-        // ========== SMART RESPONSE PARSING ==========
-        const parsed = await parseResponseWithNotes(body, options)
-        
-        if (!parsed.option) {
-          // Check if this looks like a command/query instead of a poll response
-          const lowerMsg = body.toLowerCase().trim()
-          const looksLikeCommand = 
-            lowerMsg.startsWith('i want') ||
-            lowerMsg.startsWith('create') ||
-            lowerMsg.startsWith('make') ||
-            lowerMsg.includes('when is') ||
-            lowerMsg.includes('what is') ||
-            lowerMsg.includes('who is') ||
-            lowerMsg.includes('where is') ||
-            lowerMsg.includes('tell me') ||
-            lowerMsg.includes('show me') ||
-            lowerMsg.length > 50
-          
-          if (looksLikeCommand) {
-            // They're trying to do something else - break out of poll mode
-            console.log('[Twilio SMS] User sent command instead of poll response, breaking out')
-            // Don't return - fall through to normal query handling
-          } else {
-            // Couldn't parse and doesn't look like a command - ask them to clarify
-            return new NextResponse(
-              '<?xml version="1.0" encoding="UTF-8"?>' +
-              `<Response><Message>Sorry, I didn't understand. Please reply with: ${options.join(', ')}</Message></Response>`,
-              { headers: { 'Content-Type': 'application/xml' } }
-            )
-          }
-        } else {
-          // Successfully parsed the poll response
-          // ========== RECORD RESPONSE ==========
-          const success = await recordPollResponse(
-            poll.id,
-            phoneE164,
-            parsed.option,
-            parsed.notes,
-            personName
-          )
-          
-          if (!success) {
-            return new NextResponse(
-              '<?xml version="1.0" encoding="UTF-8"?>' +
-              '<Response><Message>Sorry, there was an error recording your response. Please try again.</Message></Response>',
-              { headers: { 'Content-Type': 'application/xml' } }
-            )
-          }
-          
-          const rawResultsUrl = process.env.AIRTABLE_PUBLIC_RESULTS_URL
-          const sanitizedResultsUrl = rawResultsUrl?.replace(/^@+/, '')
-          const publicResultsUrl = sanitizedResultsUrl || undefined
-          const linkLine = publicResultsUrl ? `\n\nView results: ${publicResultsUrl}` : ''
-          const notesText = parsed.notes ? ` (note: ${parsed.notes})` : ''
-          const reply = `Thanks ${personName}! Recorded: ${parsed.option}${notesText}${linkLine}`
-          
-          return new NextResponse(
-            '<?xml version="1.0" encoding="UTF-8"?>' +
-            `<Response><Message>${reply}</Message></Response>`,
-            { headers: { 'Content-Type': 'application/xml' } }
-          )
-        }
-      }
-      } catch (err) {
-        console.error('[Twilio SMS] Poll response handling error:', err)
-        // fall through to other handlers
-      }
-    }
+    // Poll response handling moved to PRIORITY 1 above (removed duplicate)
     
     // ========================================================================
     // PRIORITY 3: Poll/Announcement Requests (if NOT in draft context)
@@ -1410,11 +1467,11 @@ export async function POST(request: NextRequest) {
         // Add main response
         responseMessage += finalText
         
-        // Check for abandoned drafts to mention
+        // Check for abandoned drafts to mention (but NOT if actively creating a poll/question)
         let draftFollowUp = ''
-        if (activePollDraft) {
+        if (activePollDraft && !isPollDraftContext && !isPollQuestionInputContext) {
           draftFollowUp = `\n\nbtw you have a poll draft ready: "${activePollDraft.question}" - reply "send it" to send`
-        } else if (activeDraft) {
+        } else if (activeDraft && !isAnnouncementDraftContext) {
           draftFollowUp = `\n\nbtw you have an announcement draft ready - reply "send it" to send`
         }
         
@@ -1641,10 +1698,10 @@ ${messageXml}
     
     // Add follow-ups for queries (if this was a query)
     if (looksLikeQuery && (summary || queryAnswer)) {
-      // Check for abandoned drafts
-      if (activePollDraft) {
+      // Check for abandoned drafts (but NOT if actively creating)
+      if (activePollDraft && !isPollDraftContext && !isPollQuestionInputContext) {
         responseMessage += `\n\nbtw you have a poll draft ready: "${activePollDraft.question}" - reply "send it" to send`
-      } else if (activeDraft) {
+      } else if (activeDraft && !isAnnouncementDraftContext) {
         responseMessage += `\n\nbtw you have an announcement draft ready - reply "send it" to send`
       }
       
