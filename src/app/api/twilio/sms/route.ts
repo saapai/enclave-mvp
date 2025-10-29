@@ -12,7 +12,8 @@ import {
   saveDraft, 
   getActiveDraft,
   sendAnnouncement,
-  getPreviousAnnouncements
+  getPreviousAnnouncements,
+  extractRawAnnouncementText
 } from '@/lib/announcements'
 
 // Feature flag: Enable new planner-based flow
@@ -291,7 +292,7 @@ export async function POST(request: NextRequest) {
       console.log(`[Twilio SMS] Active draft found, treating as edit for ${phoneNumber}`)
       
       // Extract new content from message
-      const newContent = body
+      const newContent = extractRawAnnouncementText(body)
       
       // Update draft with new content
       await saveDraft(phoneNumber, {
@@ -309,6 +310,33 @@ export async function POST(request: NextRequest) {
       )
     }
     
+    // If NO active draft but message looks like raw announcement text, create draft from it
+    if (!activeDraft && !command && body && body.length > 10 && body.length < 500) {
+      // Heuristic: If message has quotes or looks like announcement text, treat as new draft
+      const hasQuotes = body.includes('"');
+      const looksLikeAnnouncement = body.charAt(0).toUpperCase() === body.charAt(0); // Starts with capital (like "Ash is...")
+      
+      if (hasQuotes || looksLikeAnnouncement) {
+        console.log(`[Twilio SMS] Treating message as raw announcement text: "${body}"`)
+        
+        // Extract text
+        const announcementText = extractRawAnnouncementText(body)
+        
+        // Create draft
+        const spaceIds = await getWorkspaceIds()
+        const draftId = await saveDraft(phoneNumber, {
+          content: announcementText,
+          tone: 'casual',
+          workspaceId: spaceIds[0]
+        }, spaceIds[0])
+        
+        return new NextResponse(
+          `<?xml version="1.0" encoding="UTF-8"?><Response><Message>okay here's what the announcement will say:\n\n${announcementText}\n\nreply "send it" to broadcast or reply to edit the message</Message></Response>`,
+          { headers: { 'Content-Type': 'application/xml' } }
+        )
+      }
+    }
+    
     // Check if this is an announcement request
     if (isAnnouncementRequest(body)) {
       console.log(`[Twilio SMS] Detected announcement request from ${phoneNumber}`)
@@ -316,6 +344,14 @@ export async function POST(request: NextRequest) {
       // Extract announcement details
       const details = await extractAnnouncementDetails(body)
       console.log(`[Twilio SMS] Extracted details:`, details)
+      
+      // If no content extracted, ask what they want to say
+      if (!details.content || details.content.trim().length === 0) {
+        return new NextResponse(
+          `<?xml version="1.0" encoding="UTF-8"?><Response><Message>what would you like the announcement to say?</Message></Response>`,
+          { headers: { 'Content-Type': 'application/xml' } }
+        )
+      }
       
       // Generate draft
       const draft = await generateAnnouncementDraft(details)

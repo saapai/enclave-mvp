@@ -23,10 +23,27 @@ export function isAnnouncementRequest(message: string): boolean {
     lowerMsg.includes('create an announcement') ||
     lowerMsg.includes('send an announcement') ||
     lowerMsg.includes('make an announcement') ||
+    lowerMsg.includes('i want to send an announcement') ||
+    lowerMsg.includes('i want to make an announcement') ||
     lowerMsg.includes('announce') ||
     lowerMsg.includes('send announcement') ||
     lowerMsg.includes('broadcast')
   );
+}
+
+/**
+ * Extract raw announcement text from message
+ * Used when user just says "Ash is going to get touched" after being asked what to say
+ */
+export function extractRawAnnouncementText(message: string): string {
+  // If message has quotes, extract from quotes
+  const quoteMatch = message.match(/"([^"]+)"/);
+  if (quoteMatch) {
+    return quoteMatch[1];
+  }
+  
+  // Otherwise return the message as-is
+  return message;
 }
 
 /**
@@ -266,10 +283,13 @@ export async function sendAnnouncement(
     // Send to each recipient
     for (const recipient of recipients) {
       try {
+        // Ensure phone is in E.164 format (already has +1 or just needs it)
+        const phoneNumber = recipient.phone.startsWith('+') ? recipient.phone : `+1${recipient.phone}`;
+        
         const result = await twilioClient.messages.create({
           body: message,
           from: process.env.TWILIO_PHONE_NUMBER,
-          to: `+1${recipient.phone}`
+          to: phoneNumber
         });
 
         // Log delivery
