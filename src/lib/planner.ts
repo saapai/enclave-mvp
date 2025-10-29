@@ -71,19 +71,63 @@ export async function planQuery(
 function fallbackPlan(query: string): QueryPlan {
   const lowerQuery = query.toLowerCase()
 
-  // Detect casual/chat messages (but exclude queries that mention SEP/org name as those are content queries)
-  const chatPatterns = [
-    /\b(what's up\?|what's new\?|hey|hi|hello|sup\?|wassup|how are you|how's it going|good morning|good afternoon|good evening|how are things)\b/,
-    /\b(not much|doing well|all good)\b/,
-    /^[^a-z]*$/i // Only punctuation/short responses
+  // 1. DETECT CONTENT/INFO QUERIES (these need actual search, NOT chat)
+  const contentPatterns = [
+    /what's\s+(going on|happening|upcoming|new|coming up)/i,
+    /what's up with/i,
+    /tell me (about|more)/i,
+    /what are/i,
+    /what is/i,
+    /when is/i,
+    /where is/i,
+    /when are/i,
+    /when's/i,
+    /upcoming events/i,
+    /what's this week/i
   ]
   
-  const isChat = chatPatterns.some(pattern => pattern.test(lowerQuery)) && 
-                 !lowerQuery.includes('sep') && 
-                 !lowerQuery.includes('going on with') && 
-                 !lowerQuery.match(/what's\s+(happening|going on|new|upcoming)/i)
+  const isContentQuery = contentPatterns.some(pattern => pattern.test(lowerQuery))
   
-  if (isChat) {
+  if (isContentQuery) {
+    // Extract event names if specific
+    const eventMatch = lowerQuery.match(/when (?:is|are) (.+)|what time is (.+)/i)
+    const eventName = eventMatch ? (eventMatch[1] || eventMatch[2] || '').trim() : ''
+    
+    if (eventName && eventName.length < 50) {
+      // Specific event lookup
+      return {
+        intent: 'event_lookup',
+        confidence: 0.9,
+        entities: { events: [eventName] },
+        tools: [
+          { tool: 'search_docs', params: { query }, priority: 1 }
+        ]
+      }
+    } else {
+      // Broad info query - search for comprehensive answer
+      return {
+        intent: 'content',
+        confidence: 0.9,
+        entities: {},
+        tools: [
+          { tool: 'search_docs', params: { query }, priority: 1 }
+        ]
+      }
+    }
+  }
+
+  // 2. DETECT CASUAL CHAT (only pure greetings, no info requests)
+  const chatPatterns = [
+    /^(hey|hi|hello|sup|wassup)\s*$/i,
+    /^what's up\s*\?*$/i,
+    /^what's new\s*\?*$/i,
+    /^(how are you|how are things)\s*$/i,
+    /^(not much|doing well|all good|you?)\s*$/i
+  ]
+  
+  const isPureChat = chatPatterns.some(pattern => pattern.test(lowerQuery.trim()))
+  
+  if (isPureChat) {
     return {
       intent: 'chat',
       confidence: 0.9,
@@ -92,52 +136,10 @@ function fallbackPlan(query: string): QueryPlan {
     }
   }
 
-  // Extract event names from queries like "when is active meeting"
-  const eventMatch = lowerQuery.match(/when is (.+)|what time is (.+)|when's (.+)|when (.+) happening/i)
-  const policyMatch = lowerQuery.match(/what is (.+)|how does (.+ work)|policy on (.+)/i)
-  
-  let eventName = ''
-  let policyName = ''
-  
-  if (eventMatch) {
-    eventName = eventMatch[1] || eventMatch[2] || eventMatch[3] || eventMatch[4] || ''
-    eventName = eventName.trim()
-  }
-  
-  if (policyMatch) {
-    policyName = policyMatch[1] || policyMatch[2] || policyMatch[3] || ''
-    policyName = policyName.trim()
-  }
-
-  // Simple regex-based intent detection
-  if (lowerQuery.match(/when is|what time|where is|when's|what's happening|what's going on|what's upcoming/)) {
-    return {
-      intent: 'event_lookup',
-      confidence: 0.8,
-      entities: { events: eventName ? [eventName] : [query] },
-      tools: [
-        { tool: 'search_knowledge', params: { type: 'event', query: eventName || query }, priority: 1 },
-        { tool: 'search_docs', params: { query }, priority: 2 }
-      ]
-    }
-  }
-
-  if (lowerQuery.match(/what is|how does|policy|rule/)) {
-    return {
-      intent: 'policy_lookup',
-      confidence: 0.8,
-      entities: { policies: policyName ? [policyName] : [query] },
-      tools: [
-        { tool: 'search_knowledge', params: { type: 'policy', query: policyName || query }, priority: 1 },
-        { tool: 'search_docs', params: { query }, priority: 2 }
-      ]
-    }
-  }
-
-  // Default to doc search for everything else
+  // 3. DEFAULT: Treat as content query (if not pure chat and not explicit content)
   return {
-    intent: 'doc_search',
-    confidence: 0.6,
+    intent: 'content',
+    confidence: 0.7,
     entities: {},
     tools: [
       { tool: 'search_docs', params: { query }, priority: 1 }
@@ -359,6 +361,9 @@ export async function composeResponse(
     return composeEventResponse(bestResult)
   } else if (plan.intent === 'policy_lookup') {
     return composePolicyResponse(bestResult)
+  } else if (plan.intent === 'content') {
+    // Content queries should always use doc search results with AI summarization
+    return composeDocResponse(bestResult)
   } else {
     return composeDocResponse(bestResult)
   }
