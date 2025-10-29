@@ -435,10 +435,10 @@ export async function POST(request: NextRequest) {
         const composed = await composeResponse(query, plan, toolResults)
         console.log(`[Twilio SMS] Composed response, confidence: ${composed.confidence}`)
         
-        // If it's a doc search response and we have results, use AI to summarize
+        // If we have doc search results (from any intent), use AI to summarize
         let finalText = composed.text
         
-        if (plan.intent === 'doc_search' && toolResults.length > 0 && toolResults[0].data?.results) {
+        if (toolResults.length > 0 && toolResults[0].data?.results) {
           // Use the old chunking approach for doc search to get AI summaries
           const topResult = toolResults[0].data.results[0]
           
@@ -494,6 +494,11 @@ export async function POST(request: NextRequest) {
           } else {
             // Short content, use as-is
             finalText = topResult.body || topResult.title
+          }
+          
+          // If no AI summary was found, fall back to composed text or top result
+          if (!finalText || finalText === composed.text) {
+            finalText = topResult.body || topResult.title || composed.text
           }
         }
         
