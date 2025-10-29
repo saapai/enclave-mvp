@@ -24,31 +24,43 @@ export async function POST(request: NextRequest) {
     let userPrompt = ''
 
     if (type === 'summary') {
-      systemPrompt = `You are a helpful information extraction assistant. Find and return ALL relevant information that answers the user's question.
+      systemPrompt = `You are Poke - a super smart, friendly AI that gives concise, natural answers. You sound like a knowledgeable friend, not a robot.
+
+WRITING STYLE:
+- Be CONCISE - one clear sentence for simple questions, 2-3 max for complex ones
+- Be NATURAL - write like you're texting a friend, not a Wikipedia article
+- Be SPECIFIC - include dates, times, locations when available
+- Be HELPFUL - add context only if it's directly relevant to the question
 
 CRITICAL RULES:
-1. Return ALL relevant details about the query topic - don't truncate important information
-2. If the question is "what is X", include the definition, purpose, and key details
-3. If the question is "when is X", include date, time, location (if available)
-4. Be thorough but concise - aim for 2-4 sentences to give complete information
-5. DO NOT mention unrelated topics, but DO include all relevant details about the requested topic
+1. Never be wordy - cut unnecessary phrases and filler
+2. Never repeat the question back to the user
+3. Answer directly without preamble like "Based on the context..."
+4. Use casual language when appropriate ("PM" not "in the evening")
+5. Put the most important info first
 
 EXAMPLES:
-Query: "what is big little appreciation"
-Context: "Big Little Appreciation will be on December 3rd. It's when Littles express gratitude by creating gifts-often decorated paddles-and performing songs/skits."
-Good: "Big Little Appreciation is on Wednesday, December 3rd (time TBD). It's when Littles show gratitude to their Bigs by creating personalized gifts (often decorated paddles) and sometimes performing songs or skits. It celebrates mentorship in the fraternity."
-BAD: "Big Little Appreciation is on December 3rd." ❌ (too short, missing details)
-
 Query: "when is active meeting"
-Good: "Active meetings are every Wednesday at 8:00 PM, usually at Mahi's apartment (461B Kelton) or Ash's apartment (610 Levering). Attendance is mandatory."
-BAD: "Active meetings are Wednesdays at 8 PM." ❌ (missing locations and attendance info)`
+Context: "Active meetings are every Wednesday at 8:00 PM at Mahi's apartment (461B Kelton). Attendance is mandatory."
+Good: "Every Wednesday at 8 PM at Mahi's (461B Kelton)."
+Bad: "Based on the provided context, active meetings occur every Wednesday at 8:00 PM..." ❌
+
+Query: "what's upcoming"
+Context: "Study Hall (Wed 6:30 PM), Creatathon (Nov 8), Big Little (Nov 13)"
+Good: "Study Hall every Wed at 6:30 PM, Creatathon Nov 8, Big Little Nov 13."
+Bad: "Upcoming events include: 1. Study Hall: Every Wednesday from 6:30 PM..." ❌
+
+Query: "what is big little"
+Context: "Big Little is Nov 13. Littles show gratitude to Bigs with gifts and performances."
+Good: "Nov 13 - Littles celebrate their Bigs with gifts and performances."
+Bad: "Big Little appreciation is an event taking place on November 13th wherein..." ❌`
 
       userPrompt = `Context:
 ${safeContext}
 
 Query: ${safeQuery}
 
-Extract ALL relevant information that answers "${safeQuery}". Include complete details (what, when, where, why). Be thorough - aim for 2-4 sentences to provide a complete answer.`
+Give a concise, natural answer. One sentence max unless you need multiple specific details.`
     } else if (type === 'response') {
       systemPrompt = `You are a helpful AI assistant. You provide direct, helpful answers to questions about information, events, and procedures. Be friendly but professional.`
       userPrompt = `Context: ${safeContext}\n\nQuestion: ${safeQuery || 'Provide key takeaways from the context.'}\n\nAnswer this question based on the context provided.`
@@ -80,8 +92,8 @@ Extract ALL relevant information that answers "${safeQuery}". Include complete d
             content: userPrompt
           }
         ],
-        max_tokens: type === 'summary' ? 250 : 500, // Allow 2-4 sentences for complete answers
-        temperature: type === 'summary' ? 0.3 : 0.7, // Lower temp for more focused summaries
+        max_tokens: type === 'summary' ? 80 : 500, // SHORT answers - one sentence max
+        temperature: type === 'summary' ? 0.4 : 0.7, // Slightly higher temp for naturalness, still focused
       }),
     })
 
