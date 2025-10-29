@@ -77,10 +77,17 @@ export async function upsertAirtableRecord(
   const keyLength = apiKey.length
   console.log(`[Airtable] API key preview: "${keyPreview}" (length: ${keyLength})`)
   
-  // Validate token format (should start with 'pat_' for PAT)
+  // Validate token format
+  if (keyLength < 30) {
+    console.error(`[Airtable] API key is too short (${keyLength} chars). Personal Access Tokens are typically 40-60 characters long.`)
+    console.error(`[Airtable] The token appears to be incomplete. Please check your Vercel environment variable.`)
+  }
+  
+  // Validate token format (should start with 'pat_' for PAT - lowercase)
   if (!apiKey.startsWith('pat_')) {
-    console.warn('[Airtable] API key does not start with "pat_" - may be using old API key instead of Personal Access Token')
+    console.warn('[Airtable] API key does not start with "pat_" (lowercase) - may be using old API key instead of Personal Access Token')
     console.warn(`[Airtable] First 20 chars of key: "${apiKey.substring(0, 20)}"`)
+    console.warn(`[Airtable] Expected format: "pat_" followed by 40+ characters`)
   }
 
   try {
