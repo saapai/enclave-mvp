@@ -17,6 +17,18 @@ import {
   getPreviousAnnouncements,
   extractRawAnnouncementText
 } from '@/lib/announcements'
+import {
+  isPollRequest,
+  extractPollDetails,
+  generatePollQuestion,
+  savePollDraft,
+  getActivePollDraft,
+  sendPoll,
+  parseResponseWithNotes,
+  getOrAskForName,
+  saveName,
+  recordPollResponse
+} from '@/lib/polls'
 
 // Feature flag: Enable new planner-based flow
 const USE_PLANNER = true
@@ -360,7 +372,7 @@ export async function POST(request: NextRequest) {
             const res = await sendSms(to, finalMessage)
             await dbClient.from('sms_message_log').insert({ phone: to, message: finalMessage, status: res.ok ? 'queued' : 'failed', twilio_sid: res.sid || null } as any)
             if (wantsPoll && pollId) {
-              await dbClient.from('sms_poll_response').insert({ poll_id: pollId, phone: to, option_index: 0, option_label: '' } as any).onConflict('poll_id,phone').ignore()
+              await dbClient.from('sms_poll_response').upsert({ poll_id: pollId, phone: to, option_index: 0, option_label: '' } as any, { onConflict: 'poll_id,phone' } as any)
             }
           }
 
@@ -435,76 +447,111 @@ export async function POST(request: NextRequest) {
       }
 
       if (poll && Array.isArray(poll.options)) {
-        const normalize = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '')
         const options: string[] = poll.options as string[]
-        const digitsMatch = upper.match(/\b([1-9])\b/)
-        const letters = 'ABCDEFGHI'
-        const letterMatch = upper.match(/\b([A-I])\b/)
-
-        let idx = -1
-        // 1) Prefer numeric reply (1..n)
-        if (digitsMatch) {
-          const n = parseInt(digitsMatch[1], 10)
-          if (n >= 1 && n <= options.length) idx = n - 1
+        
+        // ========== NAME COLLECTION ==========
+        // Check if we have their name
+        let personName = await getOrAskForName(phoneE164)
+        
+        // If no name and they haven't been asked, check if they already answered
+        const dbClient = supabaseAdmin || supabase
+        const { data: existingResponse } = await dbClient
+          .from('sms_poll_response')
+          .select('person_name, response_status')
+          .eq('poll_id', poll.id)
+          .eq('phone', phoneE164)
+          .maybeSingle()
+        
+        // If they don't have a name and this is their first time responding, ask for it
+        if (!personName && (!existingResponse || existingResponse.response_status === 'pending')) {
+          // Check if the message looks like a name (not a yes/no/maybe)
+          const lowerMsg = body.toLowerCase().trim()
+          const isResponseToken = ['yes','no','maybe'].some(opt => lowerMsg.includes(opt)) || /^[1-9]$/.test(lowerMsg)
+          
+          if (!isResponseToken && body.trim().length > 2 && body.trim().length < 50) {
+            // They sent a name! Save it
+            await saveName(phoneE164, body.trim())
+            personName = body.trim()
+            
+            return new NextResponse(
+              '<?xml version="1.0" encoding="UTF-8"?>' +
+              `<Response><Message>Thanks ${personName}! Now reply with your response to the poll</Message></Response>`,
+              { headers: { 'Content-Type': 'application/xml' } }
+            )
+          } else if (!isResponseToken) {
+            // They sent something else, ask again
+            return new NextResponse(
+              '<?xml version="1.0" encoding="UTF-8"?>' +
+              '<Response><Message>What\'s your name? (just reply with your first name)</Message></Response>',
+              { headers: { 'Content-Type': 'application/xml' } }
+            )
+          }
+          // Otherwise, they sent a response token without giving name first - ask for name after
         }
-        // 2) Try exact option text (case/punctuation-insensitive)
-        if (idx === -1) {
-          const normText = normalize(textRaw)
-          idx = options.findIndex(opt => normalize(opt) === normText)
+        
+        // ========== SMART RESPONSE PARSING ==========
+        const parsed = await parseResponseWithNotes(body, options)
+        
+        if (!parsed.option) {
+          // Couldn't parse - ask them to clarify
+          return new NextResponse(
+            '<?xml version="1.0" encoding="UTF-8"?>' +
+            `<Response><Message>Sorry, I didn't understand. Please reply with: ${options.join(', ')}</Message></Response>`,
+            { headers: { 'Content-Type': 'application/xml' } }
+          )
         }
-        // 3) Fallback: letters A..I (backward compatibility)
-        if (idx === -1 && letterMatch) {
-          const replyLetter = letterMatch[1]
-          idx = letters.indexOf(replyLetter)
-        }
-
-        if (idx >= 0 && idx < options.length) {
-          const label = String(options[idx])
-          // Upsert response
-          const dbClient = supabaseAdmin || supabase
+        
+        // If we still don't have their name, ask now
+        if (!personName) {
+          // Save their response temporarily
           await dbClient
             .from('sms_poll_response')
             .upsert({
               poll_id: poll.id,
               phone: phoneE164,
-              option_index: idx,
-              option_label: label,
+              option_index: options.indexOf(parsed.option),
+              option_label: parsed.option,
+              notes: parsed.notes || null,
+              response_status: 'needs_name',
               received_at: new Date().toISOString()
             } as any, { onConflict: 'poll_id,phone' } as any)
-
-          // Record to Airtable (optional, if configured)
-          const baseId = process.env.AIRTABLE_BASE_ID
-          const tableName = process.env.AIRTABLE_TABLE_NAME || 'RSVP Responses'
-          if (baseId) {
-            await airtableInsert(baseId, tableName, {
-              PollId: poll.id,
-              PollCode: poll.code,
-              SpaceId: poll.space_id,
-              Question: poll.question,
-              Phone: phoneE164,
-              OptionIndex: idx,
-              Option: label,
-              ReceivedAt: new Date().toISOString()
-            })
-          }
-
-          const rawResultsUrl = process.env.AIRTABLE_PUBLIC_RESULTS_URL
-          const sanitizedResultsUrl = rawResultsUrl?.replace(/^@+/, '')
-          const publicResultsUrl = sanitizedResultsUrl || (process.env.AIRTABLE_BASE_ID ? `https://airtable.com/${process.env.AIRTABLE_BASE_ID}` : undefined)
-          const linkLine = publicResultsUrl ? `\nView results: ${publicResultsUrl} (code ${poll.code})` : ''
-          const reply = `Thanks! Recorded your response: ${label}${linkLine}`
+          
           return new NextResponse(
             '<?xml version="1.0" encoding="UTF-8"?>' +
-            `<Response><Message>${reply}</Message></Response>`,
-            { headers: { 'Content-Type': 'application/xml' } }
-          )
-        } else {
-          return new NextResponse(
-            '<?xml version="1.0" encoding="UTF-8"?>' +
-            '<Response><Message>Sorry, invalid option. Reply with the number (1..n) or the option word shown in the poll.</Message></Response>',
+            '<Response><Message>Got it! What\'s your name? (just reply with your first name)</Message></Response>',
             { headers: { 'Content-Type': 'application/xml' } }
           )
         }
+        
+        // ========== RECORD RESPONSE ==========
+        const success = await recordPollResponse(
+          poll.id,
+          phoneE164,
+          parsed.option,
+          parsed.notes,
+          personName
+        )
+        
+        if (!success) {
+          return new NextResponse(
+            '<?xml version="1.0" encoding="UTF-8"?>' +
+            '<Response><Message>Sorry, there was an error recording your response. Please try again.</Message></Response>',
+            { headers: { 'Content-Type': 'application/xml' } }
+          )
+        }
+        
+        const rawResultsUrl = process.env.AIRTABLE_PUBLIC_RESULTS_URL
+        const sanitizedResultsUrl = rawResultsUrl?.replace(/^@+/, '')
+        const publicResultsUrl = sanitizedResultsUrl || undefined
+        const linkLine = publicResultsUrl ? `\n\nView results: ${publicResultsUrl}` : ''
+        const notesText = parsed.notes ? ` (note: ${parsed.notes})` : ''
+        const reply = `Thanks ${personName}! Recorded: ${parsed.option}${notesText}${linkLine}`
+        
+        return new NextResponse(
+          '<?xml version="1.0" encoding="UTF-8"?>' +
+          `<Response><Message>${reply}</Message></Response>`,
+          { headers: { 'Content-Type': 'application/xml' } }
+        )
       }
     } catch (err) {
       console.error('[Twilio SMS] Poll handling error:', err)
@@ -674,6 +721,7 @@ export async function POST(request: NextRequest) {
     // Check if user wants to send the draft
     if (command === 'SEND IT' || command === 'SEND NOW') {
       const activeDraft = await getActiveDraft(phoneNumber)
+      const activePollDraft = await getActivePollDraft(phoneNumber)
       
       if (activeDraft && activeDraft.id) {
         console.log(`[Twilio SMS] Sending announcement ${activeDraft.id}`)
@@ -688,9 +736,116 @@ export async function POST(request: NextRequest) {
           `<?xml version="1.0" encoding="UTF-8"?><Response><Message>sent to ${sentCount} people 📢</Message></Response>`,
           { headers: { 'Content-Type': 'application/xml' } }
         )
+      } else if (activePollDraft && activePollDraft.id) {
+        console.log(`[Twilio SMS] Sending poll ${activePollDraft.id}`)
+        
+        // Get Twilio client
+        const twilioClient = twilio(ENV.TWILIO_ACCOUNT_SID, ENV.TWILIO_AUTH_TOKEN)
+        
+        // Send poll
+        const { sentCount, airtableLink } = await sendPoll(activePollDraft.id, twilioClient)
+        
+        const linkText = airtableLink ? `\n\nview results: ${airtableLink}` : ''
+        
+        return new NextResponse(
+          `<?xml version="1.0" encoding="UTF-8"?><Response><Message>sent poll to ${sentCount} people 📊${linkText}</Message></Response>`,
+          { headers: { 'Content-Type': 'application/xml' } }
+        )
       } else {
         return new NextResponse(
-          `<?xml version="1.0" encoding="UTF-8"?><Response><Message>no announcement draft found. create one first by saying "create an announcement..."</Message></Response>`,
+          `<?xml version="1.0" encoding="UTF-8"?><Response><Message>no draft found. create an announcement or poll first</Message></Response>`,
+          { headers: { 'Content-Type': 'application/xml' } }
+        )
+      }
+    }
+    
+    // ============ POLL WORKFLOW ============
+    
+    // Check if this is a poll request
+    if (isPollRequest(body)) {
+      console.log(`[Twilio SMS] Detected poll request from ${phoneNumber}`)
+      
+      // Extract poll details
+      const details = await extractPollDetails(body)
+      console.log(`[Twilio SMS] Extracted poll details:`, details)
+      
+      // If no question extracted, ask what they want to ask
+      if (!details.question || details.question.trim().length === 0) {
+        return new NextResponse(
+          `<?xml version="1.0" encoding="UTF-8"?><Response><Message>what would you like to ask in the poll?</Message></Response>`,
+          { headers: { 'Content-Type': 'application/xml' } }
+        )
+      }
+      
+      // Generate conversational poll question
+      const pollQuestion = await generatePollQuestion(details)
+      console.log(`[Twilio SMS] Generated poll question: "${pollQuestion}"`)
+      
+      // Save draft
+      const spaceIds = await getWorkspaceIds()
+      const draftId = await savePollDraft(phoneNumber, {
+        question: pollQuestion,
+        options: details.options || ['Yes', 'No', 'Maybe'],
+        tone: details.tone,
+        workspaceId: spaceIds[0]
+      }, spaceIds[0])
+      
+      const response = `okay here's what the poll will say:\n\n${pollQuestion}\n\nreply "send it" to send or reply to edit the message`
+      
+      return new NextResponse(
+        `<?xml version="1.0" encoding="UTF-8"?><Response><Message>${response}</Message></Response>`,
+        { headers: { 'Content-Type': 'application/xml' } }
+      )
+    }
+    
+    // Check if user is editing a poll draft
+    const activePollDraft = await getActivePollDraft(phoneNumber)
+    if (activePollDraft && !isAnnouncementRequest(body) && !isPollRequest(body) && command !== 'SEND IT' && command !== 'SEND NOW') {
+      // User is editing the poll draft
+      console.log(`[Twilio SMS] User editing poll draft: "${body}"`)
+      
+      // If user says "be meaner/nicer/urgent", modify tone
+      if (isDraftModification(body)) {
+        let newTone = activePollDraft.tone || 'casual'
+        if (body.toLowerCase().includes('meaner')) newTone = 'urgent'
+        if (body.toLowerCase().includes('nicer')) newTone = 'casual'
+        if (body.toLowerCase().includes('urgent')) newTone = 'urgent'
+        
+        // Regenerate question with new tone
+        const newQuestion = await generatePollQuestion(
+          { question: activePollDraft.question, tone: newTone },
+          activePollDraft.question
+        )
+        
+        // Update draft
+        const spaceIds = await getWorkspaceIds()
+        await savePollDraft(phoneNumber, {
+          id: activePollDraft.id,
+          question: newQuestion,
+          options: activePollDraft.options,
+          tone: newTone,
+          workspaceId: activePollDraft.workspaceId
+        }, spaceIds[0])
+        
+        return new NextResponse(
+          `<?xml version="1.0" encoding="UTF-8"?><Response><Message>updated:\n\n${newQuestion}\n\nreply "send it" to send</Message></Response>`,
+          { headers: { 'Content-Type': 'application/xml' } }
+        )
+      } else {
+        // User provided new text directly
+        const newQuestion = extractRawAnnouncementText(body) // Reuse this helper
+        
+        // Update draft with exact text
+        const spaceIds = await getWorkspaceIds()
+        await savePollDraft(phoneNumber, {
+          id: activePollDraft.id,
+          question: newQuestion,
+          options: activePollDraft.options,
+          workspaceId: activePollDraft.workspaceId
+        }, spaceIds[0])
+        
+        return new NextResponse(
+          `<?xml version="1.0" encoding="UTF-8"?><Response><Message>updated:\n\n${newQuestion}\n\nreply "send it" to send</Message></Response>`,
           { headers: { 'Content-Type': 'application/xml' } }
         )
       }
@@ -838,7 +993,7 @@ export async function POST(request: NextRequest) {
         spaceId,
         {},
         { limit: 5, offset: 0 },
-        null // No specific userId for SMS searches
+        undefined // No specific userId for SMS searches
       )
       allResults.push(...results)
     }
