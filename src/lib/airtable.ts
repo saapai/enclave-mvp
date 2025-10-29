@@ -367,19 +367,29 @@ export async function createAirtableFields(
       const baseErrorMsg = baseErrorData?.error?.message || baseErrorData?.error?.type || `HTTP ${baseCheckRes.status}`
       const baseStatus = baseCheckRes.status
       
-      console.error(`[Airtable] ❌ CANNOT ACCESS BASE: ${baseErrorMsg} (HTTP ${baseStatus})`)
-      console.error(`[Airtable] This means your PAT cannot access base "${baseId}"`)
+      console.error(`[Airtable] ❌ Metadata API access denied: ${baseErrorMsg} (HTTP ${baseStatus})`)
+      console.error(`[Airtable] ⚠️ CRITICAL FINDING: Base IS accessible (found in list), but Metadata API endpoint fails`)
+      console.error(`[Airtable] This indicates Metadata API has different permission requirements than base listing`)
+      console.error(`[Airtable] POSSIBLE CAUSES:`)
+      console.error(`[Airtable]   1. Metadata API requires workspace admin permissions`)
+      console.error(`[Airtable]   2. Base is in a workspace with Metadata API restrictions`)
+      console.error(`[Airtable]   3. Account needs "Creator" or "Owner" role for Metadata API`)
+      console.error(`[Airtable]   4. Metadata API requires both schema.bases:read AND schema.bases:write simultaneously`)
+      console.error(`[Airtable]   5. Base-specific Metadata API access needs to be explicitly granted`)
       console.error(`[Airtable] SOLUTION:`)
-      console.error(`[Airtable]   1. Go to https://airtable.com/create/tokens`)
-      console.error(`[Airtable]   2. Find your PAT or create a new one`)
-      console.error(`[Airtable]   3. Under "Access" - select base "${baseId}" OR "All current and future bases"`)
-      console.error(`[Airtable]   4. Under "Scopes" - ensure you have: schema.bases:read`)
-      console.error(`[Airtable]   5. Save and update AIRTABLE_API_KEY in Vercel`)
+      console.error(`[Airtable]   1. Verify your Airtable account is "Creator" or "Owner" of the workspace`)
+      console.error(`[Airtable]   2. Check workspace settings for Metadata API restrictions`)
+      console.error(`[Airtable]   3. Verify PAT has BOTH scopes: schema.bases:read AND schema.bases:write`)
+      console.error(`[Airtable]   4. Try explicitly granting base access (not just "All bases")`)
+      console.error(`[Airtable]   5. Contact Airtable support - this may be a workspace/account-level restriction`)
+      console.error(`[Airtable] WORKAROUND: Fields must be created manually in Airtable until Metadata API access is resolved`)
       
+      // Don't fail completely - we'll let the poll proceed, fields just won't be created
+      console.warn(`[Airtable] ⚠️ Continuing without Metadata API - fields will need manual creation`)
       return { 
         ok: false, 
         created, 
-        errors: [`PAT cannot access base "${baseId}": ${baseErrorMsg} (HTTP ${baseStatus}). Check PAT permissions in https://airtable.com/create/tokens`], 
+        errors: [`Metadata API access denied for base "${baseId}": ${baseErrorMsg} (HTTP ${baseStatus}). Base is accessible but Metadata API requires additional permissions. Fields must be created manually.`], 
         existing 
       }
     }
