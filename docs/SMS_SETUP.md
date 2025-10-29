@@ -71,6 +71,7 @@ TWILIO_PHONE_NUMBER=your_twilio_phone_number
 AIRTABLE_API_KEY=your_airtable_api_key
 AIRTABLE_BASE_ID=appXXXXXXXXXXXXXX
 AIRTABLE_TABLE_NAME=RSVP Responses
+AIRTABLE_PUBLIC_RESULTS_URL=https://airtable.com/appXXXXXXXXXXXXXX/tblYYYYYYYYYYYYY
 
 # Supabase Configuration (should already exist)
 NEXT_PUBLIC_SUPABASE_URL=your_supabase_url
@@ -190,6 +191,7 @@ Notes:
 - Sends to app users in the space who are opted-in via sms_optin.
 - Polls include a 4-char code. Members reply with the letter (A, B, C...).
 - Replies are recorded to Supabase (sms_poll_response) and, if configured, to Airtable.
+ - If AIRTABLE_PUBLIC_RESULTS_URL is set, poll texts include a "View results" link to Airtable. Otherwise, they link to the base URL if AIRTABLE_BASE_ID is set.
 
 ## Twilio Integration (TODO)
 

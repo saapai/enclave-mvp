@@ -99,7 +99,11 @@ export async function POST(request: NextRequest) {
       ;(options as string[]).forEach((opt: string, idx: number) => {
         lines.push(`${letters[idx]}) ${opt}`)
       })
-      finalMessage = `POLL (${code}): ${message}\nReply with letter:\n${lines.join('\n')}`
+      const publicResultsUrl =
+        process.env.AIRTABLE_PUBLIC_RESULTS_URL ||
+        (process.env.AIRTABLE_BASE_ID ? `https://airtable.com/${process.env.AIRTABLE_BASE_ID}` : undefined)
+      const resultsSuffix = publicResultsUrl ? `\nView results: ${publicResultsUrl} (search code ${code})` : ''
+      finalMessage = `POLL (${code}): ${message}\nReply with letter:\n${lines.join('\n')}${resultsSuffix}`
     }
 
     // Send messages
@@ -125,13 +129,17 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    return NextResponse.json({
+    const responsePayload: any = {
       success: true,
       type,
       recipients: results,
       pollId,
       code
-    })
+    }
+    if (type === 'poll') {
+      responsePayload.resultsUrl = process.env.AIRTABLE_PUBLIC_RESULTS_URL || (process.env.AIRTABLE_BASE_ID ? `https://airtable.com/${process.env.AIRTABLE_BASE_ID}` : undefined)
+    }
+    return NextResponse.json(responsePayload)
   } catch (e) {
     console.error('SMS blast error:', e)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
