@@ -30,6 +30,7 @@ export const ENV = {
   // Airtable
   AIRTABLE_API_KEY: process.env.AIRTABLE_API_KEY || '',
   AIRTABLE_BASE_ID: process.env.AIRTABLE_BASE_ID || '',
+  AIRTABLE_TABLE_ID: process.env.AIRTABLE_TABLE_ID || '', // Table ID for Metadata API
   AIRTABLE_TABLE_NAME: process.env.AIRTABLE_TABLE_NAME || '',
   AIRTABLE_PUBLIC_RESULTS_URL: process.env.AIRTABLE_PUBLIC_RESULTS_URL || '',
 }

@@ -27,6 +27,7 @@ import {
   parseResponseWithNotes,
   getOrAskForName,
   saveName,
+  updateNameEverywhere,
   recordPollResponse
 } from '@/lib/polls'
 
@@ -257,37 +258,8 @@ export async function POST(request: NextRequest) {
     if (nameCheck.isName && nameCheck.name) {
       console.log(`[Twilio SMS] Name declared: ${nameCheck.name} for ${phoneNumber}`)
       
-      // Save name in all poll responses for this phone
-      await saveName(from, nameCheck.name)
-      
-      // Update Airtable if configured
-      if (ENV.AIRTABLE_API_KEY && ENV.AIRTABLE_BASE_ID && ENV.AIRTABLE_TABLE_NAME) {
-        try {
-          const Airtable = (await import('airtable')).default
-          const base = new Airtable({ apiKey: ENV.AIRTABLE_API_KEY }).base(ENV.AIRTABLE_BASE_ID)
-          
-          // Find existing record by phone
-          const records = await base(ENV.AIRTABLE_TABLE_NAME)
-            .select({ filterByFormula: `{phone number} = "${from}"` })
-            .firstPage()
-          
-          if (records.length > 0) {
-            // Update existing record
-            await base(ENV.AIRTABLE_TABLE_NAME).update([
-              { id: records[0].id, fields: { Person: nameCheck.name } }
-            ])
-            console.log(`[Airtable] Updated name for ${from} to ${nameCheck.name}`)
-          } else {
-            // Create new record
-            await base(ENV.AIRTABLE_TABLE_NAME).create([
-              { fields: { Person: nameCheck.name, 'phone number': from } }
-            ])
-            console.log(`[Airtable] Created record for ${from} with name ${nameCheck.name}`)
-          }
-        } catch (err) {
-          console.error('[Airtable] Failed to update name:', err)
-        }
-      }
+      // Update name everywhere (Supabase + Airtable)
+      await updateNameEverywhere(from, nameCheck.name)
       
       return new NextResponse(
         `<?xml version="1.0" encoding="UTF-8"?><Response><Message>got it! i'll call you ${nameCheck.name}</Message></Response>`,
@@ -1105,7 +1077,7 @@ export async function POST(request: NextRequest) {
           .eq('phone', phoneNumber)
         
         // Also save to poll responses
-        await saveName(from, body.trim())
+        await updateNameEverywhere(from, body.trim())
         
         // Send welcome message
         const sassyMessages = [

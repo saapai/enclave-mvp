@@ -6,6 +6,7 @@
 import { supabaseAdmin } from './supabase';
 import Airtable from 'airtable';
 import { ENV } from './env';
+import { createAirtableFields, normalizePhoneForAirtable, upsertAirtableRecord } from './airtable';
 
 export interface PollDraft {
   id?: string;
@@ -280,6 +281,21 @@ export async function getActivePollDraft(phoneNumber: string): Promise<PollDraft
 }
 
 /**
+ * Sanitize question text for use in Airtable field names
+ */
+function sanitizeFieldName(text: string, maxLength: number = 25): string {
+  // Lowercase, replace spaces with underscores, remove special chars
+  let sanitized = text
+    .toLowerCase()
+    .replace(/\s+/g, '_')
+    .replace(/[^a-z0-9_]/g, '')
+    .substring(0, maxLength)
+    .replace(/_+$/, ''); // Remove trailing underscores
+  
+  return sanitized || 'poll'
+}
+
+/**
  * Create dynamic Airtable fields for a new poll
  */
 export async function createAirtableFieldsForPoll(
@@ -291,23 +307,48 @@ export async function createAirtableFieldsForPoll(
   }
 
   try {
-    const base = new Airtable({ apiKey: ENV.AIRTABLE_API_KEY }).base(ENV.AIRTABLE_BASE_ID);
+    // Sanitize question for field name
+    const sanitized = sanitizeFieldName(pollQuestion, 25)
+    const timestamp = new Date().toISOString().split('T')[0].replace(/-/g, '_'); // YYYY_MM_DD
     
-    // Shorten question for field name (max 50 chars)
-    const shortQuestion = pollQuestion.length > 40 
-      ? pollQuestion.substring(0, 40).trim() + '...' 
-      : pollQuestion;
-    
-    const timestamp = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
-    const questionFieldName = `${shortQuestion} (${timestamp})`;
-    const responseFieldName = `${shortQuestion} Response`;
-    const notesFieldName = `${shortQuestion} Notes`;
+    const questionFieldName = `${sanitized}_Question_${timestamp}`
+    const responseFieldName = `${sanitized}_Response_${timestamp}`
+    const notesFieldName = `${sanitized}_Notes_${timestamp}`
 
-    // Create fields via Airtable Metadata API
-    // Note: This requires Airtable Enterprise or using the web API
-    // For now, we'll store the field names and let Airtable auto-create them on first insert
-    
-    console.log(`[Polls] Will use Airtable fields: ${questionFieldName}, ${responseFieldName}, ${notesFieldName}`);
+    // Try to create fields via Metadata API if table ID is provided
+    if (ENV.AIRTABLE_TABLE_ID && ENV.AIRTABLE_API_KEY) {
+      console.log(`[Polls] Attempting to create Airtable fields via Metadata API...`)
+      
+      const result = await createAirtableFields(
+        ENV.AIRTABLE_BASE_ID,
+        ENV.AIRTABLE_TABLE_ID,
+        {
+          question: questionFieldName,
+          response: responseFieldName,
+          notes: notesFieldName
+        },
+        ENV.AIRTABLE_API_KEY
+      )
+      
+      if (result.ok) {
+        console.log(`[Polls] ✓ Created ${result.created.length} Airtable fields:`, result.created)
+        if (result.errors.length > 0) {
+          console.warn(`[Polls] Some fields had errors:`, result.errors)
+        }
+      } else {
+        console.warn(`[Polls] Field creation had errors (will continue with field names):`, result.errors)
+        console.log(`[Polls] Admin should manually create these fields in Airtable:`)
+        console.log(`  - ${questionFieldName} (Single line text)`)
+        console.log(`  - ${responseFieldName} (Single select: Yes, No, Maybe)`)
+        console.log(`  - ${notesFieldName} (Long text)`)
+      }
+    } else {
+      console.log(`[Polls] AIRTABLE_TABLE_ID not set, skipping Metadata API field creation`)
+      console.log(`[Polls] Admin should manually create these fields in Airtable:`)
+      console.log(`  - ${questionFieldName} (Single line text)`)
+      console.log(`  - ${responseFieldName} (Single select: Yes, No, Maybe)`)
+      console.log(`  - ${notesFieldName} (Long text)`)
+    }
     
     return {
       questionField: questionFieldName,
@@ -367,7 +408,8 @@ export async function sendPoll(
     
     console.log(`[Polls] Sending to ${recipients.length} unique recipients`);
 
-    // Create Airtable fields for this poll
+    // Create Airtable fields for this poll BEFORE sending
+    // This ensures fields exist when users respond
     const airtableFields = await createAirtableFieldsForPoll(poll.question);
     
     // Update poll with Airtable field names
@@ -379,6 +421,8 @@ export async function sendPoll(
         airtable_notes_field: airtableFields.notesField
       } as any)
       .eq('id', pollId);
+    
+    console.log(`[Polls] Airtable fields configured: ${airtableFields.questionField}, ${airtableFields.responseField}, ${airtableFields.notesField}`);
 
     const conversationalMessage = poll.question; // Already conversational from generatePollQuestion
     let sentCount = 0;
@@ -556,6 +600,47 @@ export async function saveName(phone: string, name: string): Promise<void> {
 }
 
 /**
+ * Update name everywhere (Supabase + Airtable)
+ * Exported for use in SMS handler
+ */
+export async function updateNameEverywhere(phone: string, name: string): Promise<void> {
+  try {
+    // 1. Update sms_optin table
+    const normalizedPhone = normalizePhoneForAirtable(phone).replace('+', '')
+    await supabaseAdmin
+      .from('sms_optin')
+      .update({ name: name, needs_name: false, updated_at: new Date().toISOString() } as any)
+      .eq('phone', normalizedPhone);
+
+    // 2. Update all sms_poll_response records for this phone
+    await supabaseAdmin
+      .from('sms_poll_response')
+      .update({ person_name: name } as any)
+      .eq('phone', phone);
+
+    // 3. Update Airtable record (upsert by phone number)
+    if (ENV.AIRTABLE_API_KEY && ENV.AIRTABLE_BASE_ID && ENV.AIRTABLE_TABLE_NAME) {
+      const result = await upsertAirtableRecord(
+        ENV.AIRTABLE_BASE_ID,
+        ENV.AIRTABLE_TABLE_NAME,
+        phone,
+        { 'Person': name }
+      );
+
+      if (result.ok) {
+        console.log(`[Polls] Updated name in Airtable for ${phone} to "${name}"`);
+      } else {
+        console.warn(`[Polls] Failed to update name in Airtable:`, result.error);
+      }
+    }
+
+    console.log(`[Polls] ✓ Updated name "${name}" everywhere for phone ${phone}`);
+  } catch (err) {
+    console.error('[Polls] Failed to update name everywhere:', err);
+  }
+}
+
+/**
  * Record poll response in Supabase and Airtable
  */
 export async function recordPollResponse(
@@ -600,25 +685,16 @@ export async function recordPollResponse(
         onConflict: 'poll_id,phone'
       });
 
-    // Update or create Airtable record
+    // Update or create Airtable record using new upsert helper
     if (ENV.AIRTABLE_API_KEY && ENV.AIRTABLE_BASE_ID && ENV.AIRTABLE_TABLE_NAME) {
-      const base = new Airtable({ apiKey: ENV.AIRTABLE_API_KEY }).base(ENV.AIRTABLE_BASE_ID);
-      
-      // Use dynamic field names or defaults
-      const questionField = poll.airtable_question_field || `${poll.question.substring(0, 30)} Question`;
-      const responseField = poll.airtable_response_field || `${poll.question.substring(0, 30)} Response`;
-      const notesField = poll.airtable_notes_field || `${poll.question.substring(0, 30)} Notes`;
-
-      // Check if record exists by phone number
-      const records = await base(ENV.AIRTABLE_TABLE_NAME)
-        .select({
-          filterByFormula: `{phone number} = "${phone}"`
-        })
-        .firstPage();
+      // Use dynamic field names from poll
+      const questionField = poll.airtable_question_field || 'Question';
+      const responseField = poll.airtable_response_field || 'Response';
+      const notesField = poll.airtable_notes_field || 'Notes';
 
       const fields: Record<string, any> = {
-        Person: personName || 'Unknown',
-        'phone number': phone,
+        'Person': personName || 'Unknown',
+        [questionField]: poll.question, // Store the poll question
         [responseField]: option
       };
 
@@ -626,24 +702,19 @@ export async function recordPollResponse(
         fields[notesField] = notes;
       }
 
-      if (records.length > 0) {
-        // Update existing record - update name if provided and different
-        const updateFields = { ...fields };
-        if (personName && records[0].fields.Person !== personName) {
-          updateFields.Person = personName;
-        }
-        
-        await base(ENV.AIRTABLE_TABLE_NAME).update([
-          {
-            id: records[0].id,
-            fields: updateFields
-          }
-        ]);
-        console.log(`[Polls] Updated Airtable record for ${phone} (${personName || 'Unknown'})`);
+      // Upsert using helper (normalizes phone, finds or creates record)
+      const result = await upsertAirtableRecord(
+        ENV.AIRTABLE_BASE_ID,
+        ENV.AIRTABLE_TABLE_NAME,
+        phone,
+        fields
+      );
+
+      if (result.ok) {
+        console.log(`[Polls] ${result.created ? 'Created' : 'Updated'} Airtable record for ${phone} (${personName || 'Unknown'})`);
       } else {
-        // Create new record
-        await base(ENV.AIRTABLE_TABLE_NAME).create([{ fields }]);
-        console.log(`[Polls] Created Airtable record for ${phone} (${personName || 'Unknown'})`);
+        console.error(`[Polls] Failed to upsert Airtable record:`, result.error);
+        // Don't fail the whole operation if Airtable fails
       }
     }
 
