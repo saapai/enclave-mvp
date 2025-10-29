@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import twilio from 'twilio'
-import { supabase } from '@/lib/supabase'
+import { supabase, supabaseAdmin } from '@/lib/supabase'
 import { airtableInsert } from '@/lib/airtable'
 import { searchResourcesHybrid } from '@/lib/search'
 import { ENV } from '@/lib/env'
+import { sendSms, normalizeE164 } from '@/lib/sms'
 import { planQuery, executePlan, composeResponse } from '@/lib/planner'
 import { 
   isAnnouncementRequest, 
@@ -273,6 +274,114 @@ export async function POST(request: NextRequest) {
     }
 
     // ========================================================================
+    // COMMAND: CREATE POLL / ANNOUNCEMENT BLAST FROM SMS
+    // ========================================================================
+    try {
+      const lower = (body || '').trim().toLowerCase()
+      const wantsPoll = lower.includes('poll') || lower.includes('rsvp')
+      const wantsBlast = lower.includes('blast') || lower.includes('text blast') || lower.includes('send to everyone')
+      const wantsAnnouncement = lower.includes('announcement') && !wantsPoll
+
+      if (wantsBlast && (wantsPoll || wantsAnnouncement)) {
+        const question = (body || '').trim()
+        const defaultOptions = ['Yes', 'No', 'Maybe']
+
+        // Find spaces for this phone
+        const digits = phoneNumber
+        const e164 = from
+        const { data: memberships } = await supabase
+          .from('app_user')
+          .select('space_id, phone')
+          .or(`phone.eq.${digits},phone.eq.${e164}`)
+
+        const spaceIds = Array.from(new Set((memberships || []).map(m => m.space_id)))
+        if (spaceIds.length === 0) {
+          return new NextResponse(
+            '<?xml version="1.0" encoding="UTF-8"?>' +
+            '<Response><Message>No space found for your phone. Add your phone to your group settings.</Message></Response>',
+            { headers: { 'Content-Type': 'application/xml' } }
+          )
+        }
+
+        const dbClient = supabaseAdmin || supabase
+        let totalRecipients = 0
+        let lastCode: string | null = null
+
+        for (const spaceId of spaceIds) {
+          const { data: members } = await supabase
+            .from('app_user')
+            .select('phone')
+            .eq('space_id', spaceId)
+          const phones = (members || []).map(m => m.phone).filter(Boolean).map(p => normalizeE164(String(p)))
+          const unique = Array.from(new Set(phones))
+          const { data: optins } = await supabase
+            .from('sms_optin')
+            .select('phone, opted_out')
+            .in('phone', unique)
+          const optedOut = new Set((optins || []).filter(o => o.opted_out).map(o => o.phone))
+          const recipients = unique.filter(p => !optedOut.has(p))
+          if (recipients.length === 0) continue
+
+          let finalMessage = question
+          let pollId: string | null = null
+          let code: string | null = null
+          if (wantsPoll) {
+            const makeCode = () => Math.random().toString(36).slice(2, 6).toUpperCase()
+            for (let i = 0; i < 3; i++) {
+              const tryCode = makeCode()
+              const { data: exists } = await supabase
+                .from('sms_poll')
+                .select('id')
+                .eq('code', tryCode)
+                .maybeSingle()
+              if (!exists) { code = tryCode; break }
+            }
+            if (!code) code = makeCode()
+            const { data: created } = await dbClient
+              .from('sms_poll')
+              .insert({ space_id: spaceId, question, options: defaultOptions, code, created_by: 'sms' } as any)
+              .select('id, code')
+              .single()
+            pollId = created?.id || null
+            lastCode = created?.code || code
+
+            const lines = defaultOptions.map((opt, idx) => `${idx + 1}) ${opt}`)
+            const rawResultsUrl = process.env.AIRTABLE_PUBLIC_RESULTS_URL
+            const sanitizedResultsUrl = rawResultsUrl?.replace(/^@+/, '')
+            const publicResultsUrl = sanitizedResultsUrl || (process.env.AIRTABLE_BASE_ID ? `https://airtable.com/${process.env.AIRTABLE_BASE_ID}` : undefined)
+            const link = publicResultsUrl ? `\nView results: ${publicResultsUrl} (search code ${lastCode})` : ''
+            finalMessage = `POLL (${lastCode}): ${question}\nReply with number or option word:\n${lines.join('\n')}${link}`
+          }
+
+          for (const to of recipients) {
+            const res = await sendSms(to, finalMessage)
+            await dbClient.from('sms_message_log').insert({ phone: to, message: finalMessage, status: res.ok ? 'queued' : 'failed', twilio_sid: res.sid || null } as any)
+            if (wantsPoll && pollId) {
+              await dbClient.from('sms_poll_response').insert({ poll_id: pollId, phone: to, option_index: 0, option_label: '' } as any).onConflict('poll_id,phone').ignore()
+            }
+          }
+
+          totalRecipients += recipients.length
+        }
+
+        const rawResultsUrl = process.env.AIRTABLE_PUBLIC_RESULTS_URL
+        const sanitizedResultsUrl = rawResultsUrl?.replace(/^@+/, '')
+        const publicResultsUrl = sanitizedResultsUrl || (process.env.AIRTABLE_BASE_ID ? `https://airtable.com/${process.env.AIRTABLE_BASE_ID}` : undefined)
+        const summary = wantsPoll
+          ? `Poll sent to ${totalRecipients} members. Code ${lastCode || ''}.${publicResultsUrl ? `\nView results: ${publicResultsUrl}` : ''}`
+          : `Announcement sent to ${totalRecipients} members.`
+
+        return new NextResponse(
+          '<?xml version="1.0" encoding="UTF-8"?>' +
+          `<Response><Message>${summary}</Message></Response>`,
+          { headers: { 'Content-Type': 'application/xml' } }
+        )
+      }
+    } catch (e) {
+      console.error('[Twilio SMS] Blast command failed:', e)
+    }
+
+    // ========================================================================
     // POLL RESPONSE HANDLING (RSVP)
     // ========================================================================
     try {
@@ -394,6 +503,19 @@ export async function POST(request: NextRequest) {
       console.error('[Twilio SMS] Poll handling error:', err)
       // fall through to normal assistant flow
     }
+
+    // If user sent a likely RSVP token but we couldn't find an active poll, avoid planner noise
+    try {
+      const token = (body || '').trim().toLowerCase()
+      const looksLikeRsvp = ['yes','no','maybe'].includes(token) || /^\s*[1-9]\s*$/.test(token)
+      if (looksLikeRsvp) {
+        return new NextResponse(
+          '<?xml version="1.0" encoding="UTF-8"?>' +
+          '<Response><Message>No active poll found for your number. Ask me to "create a poll text blast" first.</Message></Response>',
+          { headers: { 'Content-Type': 'application/xml' } }
+        )
+      }
+    } catch {}
 
     // ========================================================================
     // ANNOUNCEMENT FLOW
