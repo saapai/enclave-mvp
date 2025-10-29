@@ -60,106 +60,42 @@ export async function planQuery(
 ): Promise<QueryPlan> {
   console.log(`[Planner] Planning query: "${query}"`)
 
-  if (!ENV.MISTRAL_API_KEY) {
-    console.error('[Planner] MISTRAL_API_KEY not set, using fallback')
-    return fallbackPlan(query)
-  }
-
-  const systemPrompt = `You are a query planner. Analyze the user's query and create an execution plan.
-
-INTENTS:
-- event_lookup: "when is X", "where is X", "what time is X"
-- policy_lookup: "what is the policy on X", "how does X work"
-- person_lookup: "who is X", "what's X's role"
-- doc_search: general questions requiring document search
-- clarify: ambiguous query needing clarification
-- chat: casual conversation
-
-ENTITIES TO EXTRACT:
-- events: meeting names, event names
-- policies: policy/program names
-- people: person names, roles
-- dates: specific dates or time references
-- locations: places, buildings, rooms
-
-TOOLS AVAILABLE:
-1. search_knowledge: Query knowledge graph (events, policies, people)
-2. search_docs: Full-text + vector search across documents
-3. calendar_find: Query calendar events
-4. linkify_sources: Get source citations
-5. compose_response: Format final answer
-
-RULES:
-- Prefer knowledge graph (high confidence, fast)
-- Fallback to doc search if graph fails
-- Request clarification if ambiguous
-- Confidence > 0.7 = execute, < 0.5 = clarify
-
-Return JSON with: intent, confidence, entities, tools (ordered by priority), reasoning`
-
-  const userPrompt = `Query: "${query}"
-
-Workspace context: ${spaceId}
-
-Create execution plan (JSON only):`
-
-  try {
-    const response = await fetch('https://api.mistral.ai/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${ENV.MISTRAL_API_KEY}`
-      },
-      body: JSON.stringify({
-        model: 'mistral-small-latest',
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userPrompt }
-        ],
-        temperature: 0.3,
-        max_tokens: 500,
-        response_format: { type: 'json_object' }
-      })
-    })
-
-    if (!response.ok) {
-      console.error('[Planner] API error:', response.status)
-      return fallbackPlan(query)
-    }
-
-    const data = await response.json()
-    const content = data.choices?.[0]?.message?.content
-
-    if (!content) {
-      return fallbackPlan(query)
-    }
-
-    const plan: QueryPlan = JSON.parse(content)
-    console.log(`[Planner] Intent: ${plan.intent}, Confidence: ${plan.confidence}`)
-    console.log(`[Planner] Tools: ${plan.tools.map(t => t.tool).join(', ')}`)
-
-    return plan
-
-  } catch (error) {
-    console.error('[Planner] Error:', error)
-    return fallbackPlan(query)
-  }
+  // Always use fallback plan - it's more reliable than LLM
+  return fallbackPlan(query)
 }
 
 /**
  * Fallback plan when LLM is unavailable
+ * This is actually the MAIN planner now
  */
 function fallbackPlan(query: string): QueryPlan {
   const lowerQuery = query.toLowerCase()
 
+  // Extract event names from queries like "when is active meeting"
+  const eventMatch = lowerQuery.match(/when is (.+)|what time is (.+)|when's (.+)|when (.+) happening/i)
+  const policyMatch = lowerQuery.match(/what is (.+)|how does (.+ work)|policy on (.+)/i)
+  
+  let eventName = ''
+  let policyName = ''
+  
+  if (eventMatch) {
+    eventName = eventMatch[1] || eventMatch[2] || eventMatch[3] || eventMatch[4] || ''
+    eventName = eventName.trim()
+  }
+  
+  if (policyMatch) {
+    policyName = policyMatch[1] || policyMatch[2] || policyMatch[3] || ''
+    policyName = policyName.trim()
+  }
+
   // Simple regex-based intent detection
-  if (lowerQuery.match(/when is|what time|where is/)) {
+  if (lowerQuery.match(/when is|what time|where is|when's/)) {
     return {
       intent: 'event_lookup',
-      confidence: 0.7,
-      entities: { events: [query] },
+      confidence: 0.8,
+      entities: { events: eventName ? [eventName] : [query] },
       tools: [
-        { tool: 'search_knowledge', params: { type: 'event', query }, priority: 1 },
+        { tool: 'search_knowledge', params: { type: 'event', query: eventName || query }, priority: 1 },
         { tool: 'search_docs', params: { query }, priority: 2 }
       ]
     }
@@ -168,16 +104,16 @@ function fallbackPlan(query: string): QueryPlan {
   if (lowerQuery.match(/what is|how does|policy|rule/)) {
     return {
       intent: 'policy_lookup',
-      confidence: 0.7,
-      entities: { policies: [query] },
+      confidence: 0.8,
+      entities: { policies: policyName ? [policyName] : [query] },
       tools: [
-        { tool: 'search_knowledge', params: { type: 'policy', query }, priority: 1 },
+        { tool: 'search_knowledge', params: { type: 'policy', query: policyName || query }, priority: 1 },
         { tool: 'search_docs', params: { query }, priority: 2 }
       ]
     }
   }
 
-  // Default to doc search
+  // Default to doc search for everything else
   return {
     intent: 'doc_search',
     confidence: 0.6,
@@ -213,6 +149,7 @@ async function executeTool(
         return await executeCalendarFind(tool.params, spaceId)
 
       default:
+        console.log(`[Tool Executor] Unknown tool: ${tool.tool}`)
         return {
           tool: tool.tool,
           success: false,
@@ -240,8 +177,11 @@ async function executeSearchKnowledge(
 ): Promise<ToolResult> {
   const { type, query } = params
 
+  console.log(`[search_knowledge] Searching for ${type}: "${query}"`)
+
   if (type === 'event') {
     const events = await findEventByName(query, spaceId)
+    console.log(`[search_knowledge] Found ${events.length} events`)
     
     if (events.length > 0) {
       const event = events[0]
@@ -256,6 +196,7 @@ async function executeSearchKnowledge(
     }
   } else if (type === 'policy') {
     const policies = await findPolicyByTitle(query, spaceId)
+    console.log(`[search_knowledge] Found ${policies.length} policies`)
     
     if (policies.length > 0) {
       const policy = policies[0]
@@ -270,6 +211,7 @@ async function executeSearchKnowledge(
     }
   }
 
+  console.log(`[search_knowledge] No results for ${type}: "${query}"`)
   return {
     tool: 'search_knowledge',
     success: false,
@@ -287,7 +229,11 @@ async function executeSearchDocs(
 ): Promise<ToolResult> {
   const { query } = params
 
+  console.log(`[search_docs] Searching documents: "${query}"`)
+
   const results = await searchResourcesHybrid(query, spaceId, {}, { limit: 5 })
+
+  console.log(`[search_docs] Found ${results.length} results`)
 
   if (results.length > 0) {
     return {
@@ -473,17 +419,17 @@ function composePolicyResponse(result: ToolResult): ComposedResponse {
 }
 
 /**
- * Compose doc search response
+ * Compose doc search response using AI summarization
  */
 function composeDocResponse(result: ToolResult): ComposedResponse {
   if (result.tool === 'search_docs' && result.data?.results) {
     const topResult = result.data.results[0]
 
-    // Extract relevant snippet (first 300 chars)
-    const snippet = topResult.body?.substring(0, 300) || topResult.title
-
+    // For doc search, we need to call the AI to summarize
+    // The SMS handler should handle this
+    // Here we just return the top result
     return {
-      text: snippet,
+      text: topResult.body || topResult.title,
       sources: [topResult.title],
       confidence: result.confidence || 0.5,
       needsClarification: false
@@ -497,4 +443,3 @@ function composeDocResponse(result: ToolResult): ComposedResponse {
     needsClarification: false
   }
 }
-

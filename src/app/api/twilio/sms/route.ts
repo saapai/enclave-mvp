@@ -6,7 +6,7 @@ import { ENV } from '@/lib/env'
 import { planQuery, executePlan, composeResponse } from '@/lib/planner'
 
 // Feature flag: Enable new planner-based flow
-const USE_PLANNER = process.env.USE_PLANNER === 'true'
+const USE_PLANNER = true
 
 // Check if query is about Enclave itself
 const isEnclaveQuery = (query: string): boolean => {
@@ -421,6 +421,68 @@ export async function POST(request: NextRequest) {
         const composed = await composeResponse(query, plan, toolResults)
         console.log(`[Twilio SMS] Composed response, confidence: ${composed.confidence}`)
         
+        // If it's a doc search response and we have results, use AI to summarize
+        let finalText = composed.text
+        
+        if (plan.intent === 'doc_search' && toolResults.length > 0 && toolResults[0].data?.results) {
+          // Use the old chunking approach for doc search to get AI summaries
+          const topResult = toolResults[0].data.results[0]
+          
+          if (topResult.body && topResult.body.length > 300) {
+            // Chunk and get AI summary
+            const chunks: string[] = []
+            const chunkSize = 1500
+            
+            if (topResult.body.length <= chunkSize) {
+              chunks.push(topResult.body)
+            } else {
+              for (let i = 0; i < topResult.body.length; i += chunkSize - 200) {
+                chunks.push(topResult.body.substring(i, i + chunkSize))
+              }
+            }
+            
+            console.log(`[Twilio SMS] Summarizing ${chunks.length} chunks for doc search`)
+            
+            // Try each chunk
+            for (let i = 0; i < chunks.length; i++) {
+              const context = `Title: ${topResult.title}\nContent: ${chunks[i]}`
+              
+              try {
+                const aiUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'https://www.tryenclave.com'}/api/ai`
+                const aiRes = await fetch(aiUrl, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    query,
+                    context,
+                    type: 'summary'
+                  })
+                })
+                
+                if (aiRes.ok) {
+                  const aiData = await aiRes.json()
+                  const response = aiData.response || ''
+                  
+                  const lowerResponse = response.toLowerCase()
+                  const noInfoPatterns = ['no information', 'not found', 'does not contain', 'cannot provide']
+                  const hasNoInfo = noInfoPatterns.some(p => lowerResponse.includes(p))
+                  
+                  if (!hasNoInfo && response.length > 20) {
+                    finalText = response
+                    console.log(`[Twilio SMS] ✓ Found answer in chunk ${i + 1}/${chunks.length}`)
+                    break
+                  }
+                }
+              } catch (err) {
+                console.error(`[Twilio SMS] AI call failed for chunk ${i + 1}:`, err)
+              }
+            }
+          } else {
+            // Short content, use as-is
+            finalText = topResult.body || topResult.title
+          }
+        }
+        
         // Format response
         let responseMessage = ''
         
@@ -430,7 +492,7 @@ export async function POST(request: NextRequest) {
         }
         
         // Add main response
-        responseMessage += composed.text
+        responseMessage += finalText
         
         // Split and send
         const messages = splitLongMessage(responseMessage, 1600)
