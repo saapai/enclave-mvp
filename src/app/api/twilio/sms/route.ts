@@ -413,12 +413,14 @@ export async function POST(request: NextRequest) {
         const plan = await planQuery(query, spaceIds[0])
         console.log(`[Twilio SMS] Plan intent: ${plan.intent}, confidence: ${plan.confidence}`)
         
-        // For doc search, use the deduped results we already have
+        // Execute plan to try knowledge graph first
         let toolResults = await executePlan(plan, spaceIds[0])
         
-        // If plan was for doc_search and we have good results, replace with our cross-workspace results
-        if (plan.intent === 'doc_search' && dedupedResults.length > 0) {
-          console.log(`[Twilio SMS] Using cross-workspace doc search results (${dedupedResults.length} results)`)
+        // If knowledge graph found nothing, use our cross-workspace results
+        const hasGoodKnowledgeResult = toolResults.some(r => r.success && (r.confidence || 0) > 0.7)
+        
+        if (!hasGoodKnowledgeResult && dedupedResults.length > 0) {
+          console.log(`[Twilio SMS] Knowledge graph failed, using cross-workspace doc search results (${dedupedResults.length} results)`)
           toolResults = [{
             tool: 'search_docs',
             success: true,
