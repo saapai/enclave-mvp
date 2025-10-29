@@ -288,7 +288,8 @@ export async function POST(request: NextRequest) {
 
         // Find spaces for this phone (robust match on last 10 digits)
         const digits = phoneNumber // already last-10 US digits
-        const { data: membershipCandidates } = await supabase
+        const dbClientOuter = supabaseAdmin || supabase
+        const { data: membershipCandidates } = await dbClientOuter
           .from('app_user')
           .select('space_id, phone')
         const normalizeDigits = (p: any) => String(p || '').replace(/[^\d]/g, '').slice(-10)
@@ -310,13 +311,13 @@ export async function POST(request: NextRequest) {
         let lastCode: string | null = null
 
         for (const spaceId of spaceIds) {
-          const { data: members } = await supabase
+          const { data: members } = await dbClientOuter
             .from('app_user')
             .select('phone')
             .eq('space_id', spaceId)
           const phones = (members || []).map(m => m.phone).filter(Boolean).map(p => normalizeE164(String(p)))
           const unique = Array.from(new Set(phones))
-          const { data: optins } = await supabase
+          const { data: optins } = await dbClientOuter
             .from('sms_optin')
             .select('phone, opted_out')
             .in('phone', unique)
@@ -395,14 +396,16 @@ export async function POST(request: NextRequest) {
       // Find poll by code or latest for this phone
       let poll: any = null
       if (codeMatch) {
-        const { data: p } = await supabase
+        const dbClient = supabaseAdmin || supabase
+        const { data: p } = await dbClient
           .from('sms_poll')
           .select('id, space_id, question, options, code, created_at')
           .eq('code', codeMatch[1])
           .maybeSingle()
         poll = p
       } else {
-        const { data: rows } = await supabase
+        const dbClient = supabaseAdmin || supabase
+        const { data: rows } = await dbClient
           .from('sms_poll_response')
           .select('poll_id, sms_poll!inner(id, space_id, question, options, code, created_at)')
           .eq('phone', phoneE164)
@@ -413,7 +416,8 @@ export async function POST(request: NextRequest) {
 
       if (!poll) {
         // Fallback: find latest poll_id we seeded for this phone
-        const { data: latestSeed } = await supabase
+        const dbClient = supabaseAdmin || supabase
+        const { data: latestSeed } = await dbClient
           .from('sms_poll_response')
           .select('poll_id')
           .eq('phone', phoneE164)
@@ -421,7 +425,7 @@ export async function POST(request: NextRequest) {
           .limit(1)
           .maybeSingle()
         if (latestSeed?.poll_id) {
-          const { data: p2 } = await supabase
+          const { data: p2 } = await dbClient
             .from('sms_poll')
             .select('id, space_id, question, options, code, created_at')
             .eq('id', latestSeed.poll_id)
@@ -457,7 +461,8 @@ export async function POST(request: NextRequest) {
         if (idx >= 0 && idx < options.length) {
           const label = String(options[idx])
           // Upsert response
-          await supabase
+          const dbClient = supabaseAdmin || supabase
+          await dbClient
             .from('sms_poll_response')
             .upsert({
               poll_id: poll.id,
