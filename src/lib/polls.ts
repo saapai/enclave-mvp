@@ -584,20 +584,21 @@ export async function recordPollResponse(
     if (ENV.AIRTABLE_API_KEY && ENV.AIRTABLE_BASE_ID && ENV.AIRTABLE_TABLE_NAME) {
       const base = new Airtable({ apiKey: ENV.AIRTABLE_API_KEY }).base(ENV.AIRTABLE_BASE_ID);
       
-      const questionField = poll.airtable_question_field || 'Question';
-      const responseField = poll.airtable_response_field || 'Response';
-      const notesField = poll.airtable_notes_field || 'Notes';
+      // Use dynamic field names or defaults
+      const questionField = poll.airtable_question_field || `${poll.question.substring(0, 30)} Question`;
+      const responseField = poll.airtable_response_field || `${poll.question.substring(0, 30)} Response`;
+      const notesField = poll.airtable_notes_field || `${poll.question.substring(0, 30)} Notes`;
 
-      // Check if record exists for this person
+      // Check if record exists by phone number
       const records = await base(ENV.AIRTABLE_TABLE_NAME)
         .select({
-          filterByFormula: `{Person} = "${personName || phone}"`
+          filterByFormula: `{phone number} = "${phone}"`
         })
         .firstPage();
 
       const fields: Record<string, any> = {
-        Person: personName || phone,
-        Phone: phone,
+        Person: personName || 'Unknown',
+        'phone number': phone,
         [responseField]: option
       };
 
@@ -606,18 +607,23 @@ export async function recordPollResponse(
       }
 
       if (records.length > 0) {
-        // Update existing record
+        // Update existing record - update name if provided and different
+        const updateFields = { ...fields };
+        if (personName && records[0].fields.Person !== personName) {
+          updateFields.Person = personName;
+        }
+        
         await base(ENV.AIRTABLE_TABLE_NAME).update([
           {
             id: records[0].id,
-            fields
+            fields: updateFields
           }
         ]);
-        console.log(`[Polls] Updated Airtable record for ${personName || phone}`);
+        console.log(`[Polls] Updated Airtable record for ${phone} (${personName || 'Unknown'})`);
       } else {
         // Create new record
         await base(ENV.AIRTABLE_TABLE_NAME).create([{ fields }]);
-        console.log(`[Polls] Created Airtable record for ${personName || phone}`);
+        console.log(`[Polls] Created Airtable record for ${phone} (${personName || 'Unknown'})`);
       }
     }
 
