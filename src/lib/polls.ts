@@ -43,6 +43,16 @@ export async function extractPollDetails(message: string): Promise<{
   tone?: string;
 }> {
   try {
+    // First check if there's quoted text - use that exactly
+    const quoteMatch = message.match(/"([^"]+)"/);
+    if (quoteMatch) {
+      return {
+        question: quoteMatch[1],
+        options: ['Yes', 'No', 'Maybe'],
+        tone: 'casual'
+      };
+    }
+    
     const aiUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'https://www.tryenclave.com'}/api/ai`;
     const aiRes = await fetch(aiUrl, {
       method: 'POST',
@@ -51,12 +61,16 @@ export async function extractPollDetails(message: string): Promise<{
         query: `Extract poll details from this message: "${message}"
         
 Return JSON with these fields:
-- question: the question to ask (string)
+- question: ONLY the core event/topic being asked about (NOT "are you coming to", just the event itself)
 - options: array of response options (if not specified, default to ["Yes", "No", "Maybe"])
 - tone: the tone (neutral/urgent/casual or null)
 
-Example: "create a poll about active meeting tonight at 7"
-Response: {"question":"active meeting tonight at 7","options":["Yes","No","Maybe"],"tone":"casual"}
+Examples:
+"create a poll asking if people are coming to active meeting tonight" → {"question":"active meeting tonight","options":["Yes","No","Maybe"],"tone":"casual"}
+"make a poll about study hall tomorrow at 9am" → {"question":"study hall tomorrow at 9am","options":["Yes","No","Maybe"],"tone":"casual"}
+"i want to send a poll to see if people are coming to active meeting" → {"question":"active meeting","options":["Yes","No","Maybe"],"tone":"casual"}
+
+IMPORTANT: Extract ONLY the event/topic name, NOT the full question like "are you coming to X". Just return "X".
 
 Only return valid JSON, nothing else.`,
         context: '',

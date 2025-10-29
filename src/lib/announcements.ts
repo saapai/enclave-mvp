@@ -85,6 +85,17 @@ export async function extractAnnouncementDetails(message: string): Promise<{
   targetAudience?: string;
 }> {
   try {
+    // First check if there's quoted text - use that exactly
+    const quoteMatch = message.match(/"([^"]+)"/);
+    if (quoteMatch) {
+      return {
+        content: quoteMatch[1],
+        scheduledFor: null,
+        tone: 'casual',
+        targetAudience: 'all'
+      };
+    }
+    
     const aiUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'https://www.tryenclave.com'}/api/ai`;
     const aiRes = await fetch(aiUrl, {
       method: 'POST',
@@ -93,13 +104,17 @@ export async function extractAnnouncementDetails(message: string): Promise<{
         query: `Extract announcement details from this message: "${message}"
         
 Return JSON with these fields:
-- content: the message to announce (string)
+- content: ONLY the core event/info being announced (NOT "tell people to come to", just the event itself)
 - scheduledFor: when to send it (ISO date/time or null for immediate)
 - tone: the tone (neutral/urgent/casual/mean or null)
 - targetAudience: who to send to (all/actives/pledges or null)
 
-Example: "create an announcement telling actives to come to meeting tonight at 8"
-Response: {"content":"active meeting tonight at 8pm","scheduledFor":null,"tone":"neutral","targetAudience":"actives"}
+Examples:
+"create an announcement telling actives to come to meeting tonight at 8" → {"content":"meeting tonight at 8","scheduledFor":null,"tone":"neutral","targetAudience":"actives"}
+"make an announcement about study hall tomorrow" → {"content":"study hall tomorrow","scheduledFor":null,"tone":"casual","targetAudience":"all"}
+"send an announcement to remind people about active meeting" → {"content":"active meeting","scheduledFor":null,"tone":"neutral","targetAudience":"all"}
+
+IMPORTANT: Extract ONLY the core event/info, NOT command words like "tell people", "remind", "come to", etc.
 
 Only return valid JSON, nothing else.`,
         context: '',
