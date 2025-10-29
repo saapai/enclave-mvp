@@ -26,6 +26,12 @@ export const ENV = {
   TWILIO_ACCOUNT_SID: process.env.TWILIO_ACCOUNT_SID || '',
   TWILIO_AUTH_TOKEN: process.env.TWILIO_AUTH_TOKEN || '',
   TWILIO_PHONE_NUMBER: process.env.TWILIO_PHONE_NUMBER || '',
+  
+  // Airtable
+  AIRTABLE_API_KEY: process.env.AIRTABLE_API_KEY || '',
+  AIRTABLE_BASE_ID: process.env.AIRTABLE_BASE_ID || '',
+  AIRTABLE_TABLE_NAME: process.env.AIRTABLE_TABLE_NAME || '',
+  AIRTABLE_PUBLIC_RESULTS_URL: process.env.AIRTABLE_PUBLIC_RESULTS_URL || '',
 }
 
 

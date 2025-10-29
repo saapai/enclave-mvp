@@ -533,23 +533,43 @@ export async function POST(request: NextRequest) {
     // ========================================================================
     // POLL RESPONSE HANDLING (RSVP)
     // ========================================================================
-    try {
-      const textRaw = (body || '').trim()
-      const upper = textRaw.toUpperCase()
-      const codeMatch = upper.match(/\b([A-Z0-9]{4})\b/)
-      const phoneE164 = from.startsWith('+') ? from : `+1${phoneNumber}`
+    // Only check for poll responses if the message could be a response
+    // Skip if it's clearly a command or query
+    const textRaw = (body || '').trim()
+    const lowerBody = textRaw.toLowerCase()
+    
+    // These patterns indicate it's NOT a poll response
+    const isCommand = 
+      isPollRequest(textRaw) || 
+      isAnnouncementRequest(textRaw) ||
+      lowerBody.startsWith('i want') ||
+      lowerBody.startsWith('create') ||
+      lowerBody.startsWith('make a') ||
+      lowerBody.includes('when is') ||
+      lowerBody.includes('what is') ||
+      lowerBody.includes('who is') ||
+      lowerBody.includes('where is') ||
+      lowerBody.includes('how') ||
+      command === 'SEND IT' ||
+      command === 'SEND NOW'
+    
+    if (!isCommand) {
+      try {
+        const upper = textRaw.toUpperCase()
+        const codeMatch = upper.match(/\b([A-Z0-9]{4})\b/)
+        const phoneE164 = from.startsWith('+') ? from : `+1${phoneNumber}`
 
-      // Find poll by code or latest for this phone
-      let poll: any = null
-      if (codeMatch) {
-        const dbClient = supabaseAdmin || supabase
-        const { data: p } = await dbClient
-          .from('sms_poll')
-          .select('id, space_id, question, options, code, created_at')
-          .eq('code', codeMatch[1])
-          .maybeSingle()
-        poll = p
-      } else {
+        // Find poll by code or latest for this phone
+        let poll: any = null
+        if (codeMatch) {
+          const dbClient = supabaseAdmin || supabase
+          const { data: p } = await dbClient
+            .from('sms_poll')
+            .select('id, space_id, question, options, code, created_at')
+            .eq('code', codeMatch[1])
+            .maybeSingle()
+          poll = p
+        } else {
         const dbClient = supabaseAdmin || supabase
         const { data: rows } = await dbClient
           .from('sms_poll_response')
@@ -584,113 +604,84 @@ export async function POST(request: NextRequest) {
         const options: string[] = poll.options as string[]
         
         // ========== NAME COLLECTION ==========
-        // Check if we have their name
-        let personName = await getOrAskForName(phoneE164)
-        
-        // If no name and they haven't been asked, check if they already answered
+        // Get their name from sms_optin table (already collected on first contact)
         const dbClient = supabaseAdmin || supabase
-        const { data: existingResponse } = await dbClient
-          .from('sms_poll_response')
-          .select('person_name, response_status')
-          .eq('poll_id', poll.id)
-          .eq('phone', phoneE164)
+        const { data: optinData } = await dbClient
+          .from('sms_optin')
+          .select('name')
+          .eq('phone', phoneE164.replace('+1', ''))
           .maybeSingle()
         
-        // If they don't have a name and this is their first time responding, ask for it
-        if (!personName && (!existingResponse || existingResponse.response_status === 'pending')) {
-          // Check if the message looks like a name (not a yes/no/maybe)
-          const lowerMsg = body.toLowerCase().trim()
-          const isResponseToken = ['yes','no','maybe'].some(opt => lowerMsg.includes(opt)) || /^[1-9]$/.test(lowerMsg)
-          
-          if (!isResponseToken && body.trim().length > 2 && body.trim().length < 50) {
-            // They sent a name! Save it
-            await saveName(phoneE164, body.trim())
-            personName = body.trim()
-            
-            return new NextResponse(
-              '<?xml version="1.0" encoding="UTF-8"?>' +
-              `<Response><Message>Thanks ${personName}! Now reply with your response to the poll</Message></Response>`,
-              { headers: { 'Content-Type': 'application/xml' } }
-            )
-          } else if (!isResponseToken) {
-            // They sent something else, ask again
-            return new NextResponse(
-              '<?xml version="1.0" encoding="UTF-8"?>' +
-              '<Response><Message>What\'s your name? (just reply with your first name)</Message></Response>',
-              { headers: { 'Content-Type': 'application/xml' } }
-            )
-          }
-          // Otherwise, they sent a response token without giving name first - ask for name after
-        }
+        let personName = optinData?.name || 'Unknown'
         
         // ========== SMART RESPONSE PARSING ==========
         const parsed = await parseResponseWithNotes(body, options)
         
         if (!parsed.option) {
-          // Couldn't parse - ask them to clarify
-          return new NextResponse(
-            '<?xml version="1.0" encoding="UTF-8"?>' +
-            `<Response><Message>Sorry, I didn't understand. Please reply with: ${options.join(', ')}</Message></Response>`,
-            { headers: { 'Content-Type': 'application/xml' } }
+          // Check if this looks like a command/query instead of a poll response
+          const lowerMsg = body.toLowerCase().trim()
+          const looksLikeCommand = 
+            lowerMsg.startsWith('i want') ||
+            lowerMsg.startsWith('create') ||
+            lowerMsg.startsWith('make') ||
+            lowerMsg.includes('when is') ||
+            lowerMsg.includes('what is') ||
+            lowerMsg.includes('who is') ||
+            lowerMsg.includes('where is') ||
+            lowerMsg.includes('tell me') ||
+            lowerMsg.includes('show me') ||
+            lowerMsg.length > 50
+          
+          if (looksLikeCommand) {
+            // They're trying to do something else - break out of poll mode
+            console.log('[Twilio SMS] User sent command instead of poll response, breaking out')
+            // Don't return - fall through to normal query handling
+          } else {
+            // Couldn't parse and doesn't look like a command - ask them to clarify
+            return new NextResponse(
+              '<?xml version="1.0" encoding="UTF-8"?>' +
+              `<Response><Message>Sorry, I didn't understand. Please reply with: ${options.join(', ')}</Message></Response>`,
+              { headers: { 'Content-Type': 'application/xml' } }
+            )
+          }
+        } else {
+          // Successfully parsed the poll response
+          // ========== RECORD RESPONSE ==========
+          const success = await recordPollResponse(
+            poll.id,
+            phoneE164,
+            parsed.option,
+            parsed.notes,
+            personName
           )
-        }
-        
-        // If we still don't have their name, ask now
-        if (!personName) {
-          // Save their response temporarily
-          await dbClient
-            .from('sms_poll_response')
-            .upsert({
-              poll_id: poll.id,
-              phone: phoneE164,
-              option_index: options.indexOf(parsed.option),
-              option_label: parsed.option,
-              notes: parsed.notes || null,
-              response_status: 'needs_name',
-              received_at: new Date().toISOString()
-            } as any, { onConflict: 'poll_id,phone' } as any)
+          
+          if (!success) {
+            return new NextResponse(
+              '<?xml version="1.0" encoding="UTF-8"?>' +
+              '<Response><Message>Sorry, there was an error recording your response. Please try again.</Message></Response>',
+              { headers: { 'Content-Type': 'application/xml' } }
+            )
+          }
+          
+          const rawResultsUrl = process.env.AIRTABLE_PUBLIC_RESULTS_URL
+          const sanitizedResultsUrl = rawResultsUrl?.replace(/^@+/, '')
+          const publicResultsUrl = sanitizedResultsUrl || undefined
+          const linkLine = publicResultsUrl ? `\n\nView results: ${publicResultsUrl}` : ''
+          const notesText = parsed.notes ? ` (note: ${parsed.notes})` : ''
+          const reply = `Thanks ${personName}! Recorded: ${parsed.option}${notesText}${linkLine}`
           
           return new NextResponse(
             '<?xml version="1.0" encoding="UTF-8"?>' +
-            '<Response><Message>Got it! What\'s your name? (just reply with your first name)</Message></Response>',
+            `<Response><Message>${reply}</Message></Response>`,
             { headers: { 'Content-Type': 'application/xml' } }
           )
         }
-        
-        // ========== RECORD RESPONSE ==========
-        const success = await recordPollResponse(
-          poll.id,
-          phoneE164,
-          parsed.option,
-          parsed.notes,
-          personName
-        )
-        
-        if (!success) {
-          return new NextResponse(
-            '<?xml version="1.0" encoding="UTF-8"?>' +
-            '<Response><Message>Sorry, there was an error recording your response. Please try again.</Message></Response>',
-            { headers: { 'Content-Type': 'application/xml' } }
-          )
-        }
-        
-        const rawResultsUrl = process.env.AIRTABLE_PUBLIC_RESULTS_URL
-        const sanitizedResultsUrl = rawResultsUrl?.replace(/^@+/, '')
-        const publicResultsUrl = sanitizedResultsUrl || undefined
-        const linkLine = publicResultsUrl ? `\n\nView results: ${publicResultsUrl}` : ''
-        const notesText = parsed.notes ? ` (note: ${parsed.notes})` : ''
-        const reply = `Thanks ${personName}! Recorded: ${parsed.option}${notesText}${linkLine}`
-        
-        return new NextResponse(
-          '<?xml version="1.0" encoding="UTF-8"?>' +
-          `<Response><Message>${reply}</Message></Response>`,
-          { headers: { 'Content-Type': 'application/xml' } }
-        )
       }
     } catch (err) {
       console.error('[Twilio SMS] Poll handling error:', err)
       // fall through to normal assistant flow
     }
+  } // Close if (!isCommand) block
 
     // If user sent a likely RSVP token but we couldn't find an active poll, avoid planner noise
     try {
@@ -1046,17 +1037,18 @@ export async function POST(request: NextRequest) {
     
     // Only show welcome for users who have NEVER opted in before (completely new phone number)
     if (isTrulyNewUser) {
-      console.log(`[Twilio SMS] Brand new user ${phoneNumber}, sending welcome and opting in`)
+      console.log(`[Twilio SMS] Brand new user ${phoneNumber}, asking for name first`)
       
-      // Auto-opt in the user - use INSERT with ON CONFLICT to ensure it works
+      // Auto-opt in the user with needs_name status
       const { error: insertError } = await supabase
         .from('sms_optin')
         .insert({
           phone: phoneNumber,
-          name: phoneNumber,
+          name: null,
           method: 'sms_keyword',
           keyword: 'SEP',
           opted_out: false,
+          needs_name: true,  // Flag to track that we need their name
           consent_timestamp: new Date().toISOString(),
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString()
@@ -1074,25 +1066,60 @@ export async function POST(request: NextRequest) {
         console.error(`[Twilio SMS] Error inserting optin:`, insertError)
       }
 
-      // Pick friendly welcome message (no emojis, no sarcasm)
-      const sassyMessages = [
-        "Hey! Welcome to Enclave. I'm your AI assistant - just text me questions and I'll search through your resources.",
-        "Yo, welcome to Enclave! Ask me anything about your docs, events, or resources and I'll find it.",
-        "Hey there! Enclave here - I can search through all your connected resources. What do you need?",
-        "Welcome to Enclave! I can help you search across your documents, calendar, and more. What are you looking for?",
-        "Hey! You're all set up with Enclave. Just ask me questions about your resources and I'll find what you need."
-      ]
-      sassyWelcome = sassyMessages[Math.floor(Math.random() * sassyMessages.length)]
+      // Ask for their name immediately
+      return new NextResponse(
+        '<?xml version="1.0" encoding="UTF-8"?>' +
+        '<Response><Message>hey! what\'s your name? (just reply with your first name)</Message></Response>',
+        { headers: { 'Content-Type': 'application/xml' } }
+      )
+    }
+    
+    // Check if existing user needs to provide their name
+    if (optInDataAll && optInDataAll.needs_name) {
+      console.log(`[Twilio SMS] User ${phoneNumber} needs to provide name`)
       
-      // Start query session for them
-      await supabase
-        .from('sms_query_session')
-        .upsert({
-          phone_number: phoneNumber,
-          status: 'active',
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString()
-        })
+      // Check if this message looks like a name
+      const lowerMsg = body.toLowerCase().trim()
+      const looksLikeName = body.trim().length > 1 && body.trim().length < 30 && 
+        !lowerMsg.startsWith('i want') &&
+        !lowerMsg.startsWith('create') &&
+        !lowerMsg.startsWith('make') &&
+        !lowerMsg.includes('when is') &&
+        !lowerMsg.includes('what is')
+      
+      if (looksLikeName) {
+        // Save the name
+        await supabase
+          .from('sms_optin')
+          .update({ 
+            name: body.trim(),
+            needs_name: false 
+          })
+          .eq('phone', phoneNumber)
+        
+        // Also save to poll responses
+        await saveName(from, body.trim())
+        
+        // Send welcome message
+        const sassyMessages = [
+          `hey ${body.trim()}! i'm enclave - ask me anything about your docs, events, or resources and i'll find it`,
+          `what's up ${body.trim()}! i can search through all your connected resources. what do you need?`,
+          `nice to meet you ${body.trim()}! i can help you search across your documents, calendar, and more`,
+          `yo ${body.trim()}! you're all set up. just ask me questions about your resources and i'll find what you need`
+        ]
+        return new NextResponse(
+          '<?xml version="1.0" encoding="UTF-8"?>' +
+          `<Response><Message>${sassyMessages[Math.floor(Math.random() * sassyMessages.length)]}</Message></Response>`,
+          { headers: { 'Content-Type': 'application/xml' } }
+        )
+      } else {
+        // Doesn't look like a name, ask again
+        return new NextResponse(
+          '<?xml version="1.0" encoding="UTF-8"?>' +
+          '<Response><Message>what\'s your name? (just reply with your first name)</Message></Response>',
+          { headers: { 'Content-Type': 'application/xml' } }
+        )
+      }
     }
 
     // Check if user has an active query session
