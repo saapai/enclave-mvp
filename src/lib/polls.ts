@@ -126,9 +126,8 @@ export async function generatePollQuestion(
         return draft;
       }
       
-      // If it looks like an event description, ask if they're coming
-      // Remove phrases like "are you coming to" if AI already added them
-      draft = draft.replace(/^(are you coming to|coming to|going to)\s*/i, '');
+      // Remove verbose phrases that AI might have added
+      draft = draft.replace(/^(are you coming to|if people are coming to|if you are coming to|coming to|going to|people are coming to)\s*/i, '');
       
       // Make it conversational
       if (!draft.match(/^(yo|hey|sup)/i)) {
@@ -333,7 +332,20 @@ export async function sendPoll(
       return { sentCount: 0 };
     }
 
-    const recipients = optedInUsers.map(u => u.phone).filter(Boolean);
+    // Deduplicate and normalize phone numbers
+    const uniquePhones = new Set(
+      optedInUsers
+        .map(u => u.phone)
+        .filter(Boolean)
+        .map(p => {
+          // Normalize to E.164 format
+          const phone = String(p);
+          return phone.startsWith('+') ? phone : `+1${phone}`;
+        })
+    );
+    const recipients = Array.from(uniquePhones);
+    
+    console.log(`[Polls] Sending to ${recipients.length} unique recipients`);
 
     // Create Airtable fields for this poll
     const airtableFields = await createAirtableFieldsForPoll(poll.question);
@@ -352,11 +364,8 @@ export async function sendPoll(
     let sentCount = 0;
 
     // Send to each recipient
-    for (const recipientPhone of recipients) {
+    for (const phoneE164 of recipients) {
       try {
-        // Ensure phone is in E.164 format
-        const phoneE164 = recipientPhone.startsWith('+') ? recipientPhone : `+1${recipientPhone}`;
-        
         const result = await twilioClient.messages.create({
           body: conversationalMessage,
           from: process.env.TWILIO_PHONE_NUMBER,
@@ -380,7 +389,7 @@ export async function sendPoll(
 
         sentCount++;
       } catch (err) {
-        console.error(`[Polls] Failed to send to ${recipientPhone}:`, err);
+        console.error(`[Polls] Failed to send to ${phoneE164}:`, err);
       }
     }
 

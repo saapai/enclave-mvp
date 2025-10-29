@@ -33,6 +33,53 @@ import {
 // Feature flag: Enable new planner-based flow
 const USE_PLANNER = true
 
+// Check if message is a send affirmation
+const isSendAffirmation = (message: string): boolean => {
+  const lower = message.trim().toLowerCase()
+  return ['send', 'yep', 'yes', 'yea', 'yeah', 'ok', 'okay', 'go', 'do it', 'all good', 'looks good', 'perfect', 'good'].includes(lower)
+}
+
+// Check if message is name declaration using AI
+async function isNameDeclaration(message: string): Promise<{ isName: boolean; name?: string }> {
+  try {
+    const aiUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'https://www.tryenclave.com'}/api/ai`;
+    const aiRes = await fetch(aiUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        query: `Is this message a person declaring their name? "${message}"
+
+Return JSON: {"isName": true/false, "name": "extracted name or null"}
+
+Examples:
+"i'm saathvik" → {"isName":true,"name":"saathvik"}
+"my name is john" → {"isName":true,"name":"john"}
+"call me mike" → {"isName":true,"name":"mike"}
+"i'm confused" → {"isName":false}
+"send it" → {"isName":false}
+"yes" → {"isName":false}
+
+ONLY return true if they're clearly stating their name. Return JSON only.`,
+        context: '',
+        type: 'general'
+      })
+    });
+
+    if (aiRes.ok) {
+      const aiData = await aiRes.json();
+      const response = aiData.response || '{}';
+      const jsonMatch = response.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        const parsed = JSON.parse(jsonMatch[0]);
+        return { isName: parsed.isName || false, name: parsed.name || undefined };
+      }
+    }
+  } catch (err) {
+    console.error('[Name Detection] Failed:', err);
+  }
+  return { isName: false };
+}
+
 // Check if query is about Enclave itself
 const isEnclaveQuery = (query: string): boolean => {
   const lowerQuery = query.toLowerCase()
@@ -203,6 +250,93 @@ export async function POST(request: NextRequest) {
 
     // Handle commands: STOP, HELP first (before checking if new user)
     const command = body?.trim().toUpperCase()
+
+    // ============ NAME DETECTION (HIGHEST PRIORITY) ============
+    // Check if user is declaring their name
+    const nameCheck = await isNameDeclaration(body)
+    if (nameCheck.isName && nameCheck.name) {
+      console.log(`[Twilio SMS] Name declared: ${nameCheck.name} for ${phoneNumber}`)
+      
+      // Save name in all poll responses for this phone
+      await saveName(from, nameCheck.name)
+      
+      // Update Airtable if configured
+      if (ENV.AIRTABLE_API_KEY && ENV.AIRTABLE_BASE_ID && ENV.AIRTABLE_TABLE_NAME) {
+        try {
+          const Airtable = (await import('airtable')).default
+          const base = new Airtable({ apiKey: ENV.AIRTABLE_API_KEY }).base(ENV.AIRTABLE_BASE_ID)
+          
+          // Find existing record by phone
+          const records = await base(ENV.AIRTABLE_TABLE_NAME)
+            .select({ filterByFormula: `{phone number} = "${from}"` })
+            .firstPage()
+          
+          if (records.length > 0) {
+            // Update existing record
+            await base(ENV.AIRTABLE_TABLE_NAME).update([
+              { id: records[0].id, fields: { Person: nameCheck.name } }
+            ])
+            console.log(`[Airtable] Updated name for ${from} to ${nameCheck.name}`)
+          } else {
+            // Create new record
+            await base(ENV.AIRTABLE_TABLE_NAME).create([
+              { fields: { Person: nameCheck.name, 'phone number': from } }
+            ])
+            console.log(`[Airtable] Created record for ${from} with name ${nameCheck.name}`)
+          }
+        } catch (err) {
+          console.error('[Airtable] Failed to update name:', err)
+        }
+      }
+      
+      return new NextResponse(
+        `<?xml version="1.0" encoding="UTF-8"?><Response><Message>got it! i'll call you ${nameCheck.name}</Message></Response>`,
+        { headers: { 'Content-Type': 'application/xml' } }
+      )
+    }
+    
+    // ============ SEND AFFIRMATION FOR DRAFTS ============
+    // Check if there's an active draft and user is affirming to send
+    if (isSendAffirmation(body)) {
+      const activePollDraft = await getActivePollDraft(phoneNumber)
+      const activeDraft = await getActiveDraft(phoneNumber)
+      
+      if (activePollDraft || activeDraft) {
+        // Treat this as "send it" command
+        console.log(`[Twilio SMS] Send affirmation detected: "${body}" - triggering send`)
+        // This will fall through to the "SEND IT" handler below after setting command
+        // But we need to handle it here directly to avoid it being treated as edit
+        
+        // Determine which is more recent
+        let shouldSendPoll = false
+        if (activePollDraft && activeDraft) {
+          const pollTime = new Date(activePollDraft.updatedAt || activePollDraft.createdAt || 0).getTime()
+          const announcementTime = new Date(activeDraft.updatedAt || 0).getTime()
+          shouldSendPoll = pollTime > announcementTime
+        } else if (activePollDraft) {
+          shouldSendPoll = true
+        }
+        
+        if (shouldSendPoll && activePollDraft && activePollDraft.id) {
+          console.log(`[Twilio SMS] Sending poll ${activePollDraft.id}`)
+          const twilioClient = twilio(ENV.TWILIO_ACCOUNT_SID, ENV.TWILIO_AUTH_TOKEN)
+          const { sentCount, airtableLink } = await sendPoll(activePollDraft.id, twilioClient)
+          const linkText = airtableLink ? `\n\nview results: ${airtableLink}` : ''
+          return new NextResponse(
+            `<?xml version="1.0" encoding="UTF-8"?><Response><Message>sent poll to ${sentCount} people 📊${linkText}</Message></Response>`,
+            { headers: { 'Content-Type': 'application/xml' } }
+          )
+        } else if (activeDraft && activeDraft.id) {
+          console.log(`[Twilio SMS] Sending announcement ${activeDraft.id}`)
+          const twilioClient = twilio(ENV.TWILIO_ACCOUNT_SID, ENV.TWILIO_AUTH_TOKEN)
+          const sentCount = await sendAnnouncement(activeDraft.id, twilioClient)
+          return new NextResponse(
+            `<?xml version="1.0" encoding="UTF-8"?><Response><Message>sent to ${sentCount} people 📢</Message></Response>`,
+            { headers: { 'Content-Type': 'application/xml' } }
+          )
+        }
+      }
+    }
 
     // Check if this is the "SEP" keyword (legacy, still supported but auto-opt-in is now automatic)
     if (command === 'SEP') {
