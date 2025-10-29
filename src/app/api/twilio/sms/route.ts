@@ -153,8 +153,11 @@ export async function POST(request: NextRequest) {
 
     console.log(`[Twilio SMS] Received message from ${from}: "${body}"`)
 
-    // Normalize phone number
-    const phoneNumber = from.replace('+', '')
+    // Normalize phone number - ensure consistent formatting
+    // Twilio sends E.164 format like +14089133065 or +13853687238
+    const phoneNumber = from.startsWith('+1') ? from.substring(2) : from.replace(/[^\d]/g, '')
+    
+    console.log(`[Twilio SMS] Phone normalization: ${from} → ${phoneNumber}`)
 
     // Check if user exists in sms_optin table at ALL (not filtered by opted_out)
     const { data: optInDataAll, error: optInError } = await supabase
@@ -162,6 +165,8 @@ export async function POST(request: NextRequest) {
       .select('*')
       .eq('phone', phoneNumber)
       .maybeSingle()
+    
+    console.log(`[Twilio SMS] optInDataAll lookup result: ${optInDataAll ? 'FOUND' : 'NOT FOUND'}`)
 
     // AUTO-OPT-IN: Check if user is opted in, if not, auto-opt them in with sassy message
     const { data: optInData } = await supabase
