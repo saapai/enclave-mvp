@@ -471,24 +471,31 @@ export async function POST(request: NextRequest) {
           
           // Try each result in order until we find a good answer
           for (const result of allResults) {
-            if (!result.body || result.body.length < 50) {
-              console.log(`[Twilio SMS] Skipping "${result.title}" - body too short`)
+            // Handle short results differently - they might be complete answers (like "Wednesdays at 7 PM at SAC")
+            if (!result.body || result.body.length < 10) {
+              console.log(`[Twilio SMS] Skipping "${result.title}" - no body content`)
               continue
             }
             
-            // Chunk and get AI summary
+            // For very short results (< 100 chars), just use the title + body as the context
+            // For longer results, chunk and summarize
             const chunks: string[] = []
             const chunkSize = 1500
             
-            if (result.body.length <= chunkSize) {
+            if (result.body.length <= 100) {
+              // Very short - use title + body as single chunk
+              chunks.push(`${result.title}\n${result.body}`)
+            } else if (result.body.length <= chunkSize) {
+              // Medium length - use body as-is
               chunks.push(result.body)
             } else {
+              // Long - chunk it
               for (let i = 0; i < result.body.length; i += chunkSize - 200) {
                 chunks.push(result.body.substring(i, i + chunkSize))
               }
             }
             
-            console.log(`[Twilio SMS] Trying "${result.title}" with ${chunks.length} chunks`)
+            console.log(`[Twilio SMS] Trying "${result.title}" with ${chunks.length} chunks (body length: ${result.body?.length || 0})`)
             
             let foundGoodAnswer = false
             
