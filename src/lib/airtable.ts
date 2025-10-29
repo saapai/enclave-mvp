@@ -74,7 +74,9 @@ export async function upsertAirtableRecord(
     const phoneFieldName = process.env.AIRTABLE_PHONE_FIELD || 'phone number'
     
     // Search for existing record by phone number
-    const searchUrl = `https://api.airtable.com/v0/${baseId}/${encodeURIComponent(tableName)}?filterByFormula=${encodeURIComponent(`{${phoneFieldName}} = "${normalizedPhone}"`)}`
+    const encodedTableName = encodeURIComponent(tableName)
+    const searchUrl = `https://api.airtable.com/v0/${baseId}/${encodedTableName}?filterByFormula=${encodeURIComponent(`{${phoneFieldName}} = "${normalizedPhone}"`)}`
+    console.log(`[Airtable] Searching for record. Base: ${baseId}, Table: "${tableName}" (encoded: ${encodedTableName})`)
     
     const searchRes = await fetch(searchUrl, {
       headers: {
@@ -99,7 +101,10 @@ export async function upsertAirtableRecord(
       // Merge new fields with existing (don't overwrite if field doesn't exist in new fields)
       const mergedFields = { ...existingFields, ...fields }
       
-      const updateRes = await fetch(`https://api.airtable.com/v0/${baseId}/${encodeURIComponent(tableName)}`, {
+      const updateUrl = `https://api.airtable.com/v0/${baseId}/${encodeURIComponent(tableName)}`
+      console.log(`[Airtable] Updating record at: ${updateUrl}`)
+      
+      const updateRes = await fetch(updateUrl, {
         method: 'PATCH',
         headers: {
           'Authorization': `Bearer ${apiKey}`,
@@ -117,11 +122,13 @@ export async function upsertAirtableRecord(
       
       if (!updateRes.ok) {
         console.error('[Airtable] Update error:', updateData?.error || updateData)
+        console.error('[Airtable] Update URL:', updateUrl)
+        console.error('[Airtable] Table name used:', tableName)
         const errorMsg = updateData?.error?.message || updateData?.error?.type || 'Airtable update failed'
         
         // Provide helpful error messages
-        if (errorMsg.includes('Could not find') || errorMsg.includes('not found')) {
-          return { ok: false, error: `Table "${tableName}" or field not found. Check table name and field names match exactly.`, created: false }
+        if (errorMsg.includes('Could not find') || errorMsg.includes('not found') || updateData?.error?.type === 'INVALID_PERMISSIONS_OR_MODEL_NOT_FOUND') {
+          return { ok: false, error: `Table "${tableName}" not found. Check table name matches exactly (case-sensitive). Current: "${tableName}"`, created: false }
         } else if (errorMsg.includes('Invalid permissions')) {
           return { ok: false, error: `API key lacks permission. Ensure it has access to base "${baseId}" and table "${tableName}"`, created: false }
         }
@@ -139,7 +146,11 @@ export async function upsertAirtableRecord(
         ...fields
       }
       
-      const createRes = await fetch(`https://api.airtable.com/v0/${baseId}/${encodeURIComponent(tableName)}`, {
+      const createUrl = `https://api.airtable.com/v0/${baseId}/${encodeURIComponent(tableName)}`
+      console.log(`[Airtable] Creating record at: ${createUrl}`)
+      console.log(`[Airtable] Fields to create:`, Object.keys(createFields).join(', '))
+      
+      const createRes = await fetch(createUrl, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${apiKey}`,
@@ -152,15 +163,17 @@ export async function upsertAirtableRecord(
       
       if (!createRes.ok) {
         console.error('[Airtable] Create error:', createData?.error || createData)
+        console.error('[Airtable] Create URL:', createUrl)
+        console.error('[Airtable] Table name used:', tableName)
         const errorMsg = createData?.error?.message || createData?.error?.type || 'Airtable create failed'
         
         // Provide helpful error messages
-        if (errorMsg.includes('Could not find') || errorMsg.includes('not found')) {
-          return { ok: false, error: `Table "${tableName}" not found. Check table name matches exactly.`, created: true }
+        if (errorMsg.includes('Could not find') || errorMsg.includes('not found') || createData?.error?.type === 'INVALID_PERMISSIONS_OR_MODEL_NOT_FOUND') {
+          return { ok: false, error: `Table "${tableName}" not found. Check table name matches exactly (case-sensitive). Current: "${tableName}"`, created: true }
         } else if (errorMsg.includes('Invalid permissions')) {
           return { ok: false, error: `API key lacks permission. Ensure it has access to base "${baseId}" and table "${tableName}"`, created: true }
         } else if (errorMsg.includes('Unknown field')) {
-          return { ok: false, error: `Field "${Object.keys(fields)[0]}" not found. Check field names match exactly.`, created: true }
+          return { ok: false, error: `Field "${Object.keys(createFields)[0]}" not found. Check field names match exactly.`, created: true }
         }
         
         return { ok: false, error: errorMsg, created: true }
