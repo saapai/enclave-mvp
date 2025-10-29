@@ -274,6 +274,41 @@ export async function POST(request: NextRequest) {
     // ANNOUNCEMENT FLOW
     // ========================================================================
     
+    // Helper to get workspace IDs
+    async function getWorkspaceIds() {
+      const { data: sepWorkspaces } = await supabase
+        .from('space')
+        .select('id, name')
+        .ilike('name', '%SEP%')
+      return sepWorkspaces?.map(w => w.id) || []
+    }
+    
+    // FIRST: Check if user has an active draft (for editing)
+    const activeDraft = await getActiveDraft(phoneNumber)
+    
+    // If user has an active draft and message is not a command, treat it as draft edit
+    if (activeDraft && !command) {
+      console.log(`[Twilio SMS] Active draft found, treating as edit for ${phoneNumber}`)
+      
+      // Extract new content from message
+      const newContent = body
+      
+      // Update draft with new content
+      await saveDraft(phoneNumber, {
+        id: activeDraft.id,
+        content: newContent,
+        tone: activeDraft.tone,
+        scheduledFor: activeDraft.scheduledFor,
+        targetAudience: activeDraft.targetAudience,
+        workspaceId: activeDraft.workspaceId
+      }, activeDraft.workspaceId!)
+      
+      return new NextResponse(
+        `<?xml version="1.0" encoding="UTF-8"?><Response><Message>updated:\n\n${newContent}\n\nreply "send it" to broadcast</Message></Response>`,
+        { headers: { 'Content-Type': 'application/xml' } }
+      )
+    }
+    
     // Check if this is an announcement request
     if (isAnnouncementRequest(body)) {
       console.log(`[Twilio SMS] Detected announcement request from ${phoneNumber}`)
@@ -306,40 +341,36 @@ export async function POST(request: NextRequest) {
       )
     }
     
-    // Check if user is editing a draft
-    if (isDraftModification(body)) {
-      const activeDraft = await getActiveDraft(phoneNumber)
+    // Check if user is editing a draft with tone modifications
+    if (isDraftModification(body) && activeDraft) {
+      console.log(`[Twilio SMS] Modifying draft tone for ${phoneNumber}`)
       
-      if (activeDraft) {
-        console.log(`[Twilio SMS] Modifying draft for ${phoneNumber}`)
-        
-        // Determine tone modification
-        let newTone = activeDraft.tone || 'casual'
-        if (body.toLowerCase().includes('meaner')) newTone = 'mean'
-        if (body.toLowerCase().includes('nicer')) newTone = 'casual'
-        if (body.toLowerCase().includes('urgent')) newTone = 'urgent'
-        
-        // Regenerate draft with new tone
-        const newDraft = await generateAnnouncementDraft(
-          { content: activeDraft.content, tone: newTone },
-          activeDraft.content
-        )
-        
-        // Update draft
-        await saveDraft(phoneNumber, {
-          id: activeDraft.id,
-          content: newDraft,
-          tone: newTone,
-          scheduledFor: activeDraft.scheduledFor,
-          targetAudience: activeDraft.targetAudience,
-          workspaceId: activeDraft.workspaceId
-        }, activeDraft.workspaceId!)
-        
-        return new NextResponse(
-          `<?xml version="1.0" encoding="UTF-8"?><Response><Message>updated:\n\n${newDraft}\n\nreply "send it" to broadcast</Message></Response>`,
-          { headers: { 'Content-Type': 'application/xml' } }
-        )
-      }
+      // Determine tone modification
+      let newTone = activeDraft.tone || 'casual'
+      if (body.toLowerCase().includes('meaner')) newTone = 'mean'
+      if (body.toLowerCase().includes('nicer')) newTone = 'casual'
+      if (body.toLowerCase().includes('urgent')) newTone = 'urgent'
+      
+      // Regenerate draft with new tone
+      const newDraft = await generateAnnouncementDraft(
+        { content: activeDraft.content, tone: newTone },
+        activeDraft.content
+      )
+      
+      // Update draft
+      await saveDraft(phoneNumber, {
+        id: activeDraft.id,
+        content: newDraft,
+        tone: newTone,
+        scheduledFor: activeDraft.scheduledFor,
+        targetAudience: activeDraft.targetAudience,
+        workspaceId: activeDraft.workspaceId
+      }, activeDraft.workspaceId!)
+      
+      return new NextResponse(
+        `<?xml version="1.0" encoding="UTF-8"?><Response><Message>updated:\n\n${newDraft}\n\nreply "send it" to broadcast</Message></Response>`,
+        { headers: { 'Content-Type': 'application/xml' } }
+      )
     }
     
     // Check if user wants to send the draft
@@ -365,15 +396,6 @@ export async function POST(request: NextRequest) {
           { headers: { 'Content-Type': 'application/xml' } }
         )
       }
-    }
-    
-    // Helper to get workspace IDs
-    async function getWorkspaceIds() {
-      const { data: sepWorkspaces } = await supabase
-        .from('space')
-        .select('id, name')
-        .ilike('name', '%SEP%')
-      return sepWorkspaces?.map(w => w.id) || []
     }
 
     // Check if user is in sms_optin table to determine if they're truly new
