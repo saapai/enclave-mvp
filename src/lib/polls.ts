@@ -345,8 +345,12 @@ export async function createAirtableFieldsForPoll(
     const notesFieldName = `${sanitized}_Notes_${timestamp}`
 
     // Try to create fields via Metadata API if table ID is provided
-    if (ENV.AIRTABLE_TABLE_ID && ENV.AIRTABLE_API_KEY) {
+    if (ENV.AIRTABLE_TABLE_ID && ENV.AIRTABLE_API_KEY && ENV.AIRTABLE_BASE_ID) {
       console.log(`[Polls] Attempting to create Airtable fields via Metadata API...`)
+      console.log(`[Polls] Configuration:`)
+      console.log(`[Polls]   Base ID: ${ENV.AIRTABLE_BASE_ID}`)
+      console.log(`[Polls]   Table ID: ${ENV.AIRTABLE_TABLE_ID}`)
+      console.log(`[Polls]   Table Name: ${ENV.AIRTABLE_TABLE_NAME || 'not set'}`)
       
       const result = await createAirtableFields(
         ENV.AIRTABLE_BASE_ID,
