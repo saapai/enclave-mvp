@@ -25,7 +25,9 @@ export function classifyIntent(text: string, recentSummary: string = ''): RouteR
   if (/(\bfuck\b|\bstupid\b|\bidiot\b)/.test(lower)) return { intent: 'abusive', flags: baseFlags(lower, recentSummary) }
 
   // Enclave product questions
-  if (/(what is enclave|how.*enclave|who.*built.*enclave|enclave.*feature|capab)/.test(lower)) return { intent: 'enclave_help', flags: baseFlags(lower, recentSummary) }
+  if (/(what is enclave|how.*enclave|who.*built.*enclave|enclave.*feature|capab|what do you do|how do you work|what are you)/.test(lower)) {
+    return { intent: 'enclave_help', flags: baseFlags(lower, recentSummary) }
+  }
 
   // Content heuristics
   if (/\b(when|where|who|what|how)\b/.test(lower) || lower.length > 20) return { intent: 'content_query', flags: baseFlags(lower, recentSummary) }

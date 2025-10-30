@@ -851,7 +851,9 @@ export async function POST(request: NextRequest) {
         .from('space')
         .select('id, name')
         .ilike('name', '%SEP%')
-      return sepWorkspaces?.map(w => w.id) || []
+      const unique = Array.from(new Set((sepWorkspaces || []).map(w => w.id)))
+      // Keep just one workspace to avoid redundant searches
+      return unique.slice(0, 1)
     }
     
     // Announcement draft editing (only if in announcement context AND not a query)

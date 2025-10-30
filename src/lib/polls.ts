@@ -847,7 +847,23 @@ export async function recordPollResponse(
         console.error(`[Polls] Failed to upsert Airtable record:`, result.error);
         console.error(`[Polls] Base: ${ENV.AIRTABLE_BASE_ID}, Table: ${ENV.AIRTABLE_TABLE_NAME}`);
         console.error(`[Polls] Fields attempted: ${Object.keys(fields).join(', ')}`);
-        // Don't fail the whole operation if Airtable fails
+        // Graceful fallback: retry with minimal fields only (Person)
+        try {
+          const minimalFields: Record<string, any> = { [personFieldName]: personName || 'Unknown' }
+          const retry = await upsertAirtableRecord(
+            ENV.AIRTABLE_BASE_ID,
+            ENV.AIRTABLE_TABLE_NAME,
+            phone,
+            minimalFields
+          )
+          if (!retry.ok) {
+            console.warn('[Polls] Minimal Airtable upsert also failed; continuing without Airtable.')
+          } else {
+            console.log('[Polls] ✓ Minimal Airtable upsert succeeded after field error')
+          }
+        } catch (e) {
+          console.warn('[Polls] Airtable fallback threw error; continuing:', e as any)
+        }
       }
     } else {
       console.warn('[Polls] Airtable not configured - missing API key, base ID, or table name');
