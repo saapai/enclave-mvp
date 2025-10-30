@@ -1370,8 +1370,13 @@ export async function POST(request: NextRequest) {
     const toneDecision = decideTone({ smalltalk: early.isSmalltalk ? 1 : 0, toxicity: profanity ? 0.6 : 0, hasQuery: true, insultTargets })
 
     if (toneDecision.policy === 'boundary' || early.isAbusive) {
-      const msg = smsTighten("✋ Not cool. Ask a question or text 'help'.")
-      return new NextResponse(`<?xml version="1.0" encoding="UTF-8"?><Response><Message>${msg}</Message></Response>`, { headers: { 'Content-Type': 'application/xml' } })
+      const msg = "✋ Not cool. Ask a question or text 'help'."
+      const msgs = splitLongMessage(msg, 1600)
+      if (msgs.length === 1) {
+        return new NextResponse(`<?xml version=\"1.0\" encoding=\"UTF-8\"?><Response><Message>${msgs[0]}</Message></Response>`, { headers: { 'Content-Type': 'application/xml' } })
+      }
+      const messageXml = msgs.map(m => `  <Message>${m}</Message>`).join('\n')
+      return new NextResponse(`<?xml version=\"1.0\" encoding=\"UTF-8\"?><Response>\n${messageXml}\n</Response>`, { headers: { 'Content-Type': 'application/xml' } })
     }
     if (early.isSmalltalk) {
       const variants = ["what d’you need? reply 'help' for commands", "sup — want SEP info or Enclave help?", "try 'help' for commands"]
@@ -1408,10 +1413,18 @@ export async function POST(request: NextRequest) {
     const actionItems = await retrieveAction(phoneE164)
     const decision = combine({ intent: route.intent, content: contentItems as any, convo: convoItems as any, enclave: enclaveItems as any, action: actionItems as any })
     if (decision.type === 'answer' && decision.confidence >= 0.5) {
-      const toned = smsTighten(((toneDecision.prefix || '') + decision.message))
-      await supabase.from('sms_conversation_history').insert({ phone_number: phoneNumber, user_message: query, bot_response: toned })
+      const finalMsg = ((toneDecision.prefix || '') + decision.message)
+      await supabase.from('sms_conversation_history').insert({ phone_number: phoneNumber, user_message: query, bot_response: finalMsg })
+      const msgs = splitLongMessage(finalMsg, 1600)
+      if (msgs.length === 1) {
+        return new NextResponse(
+          `<?xml version=\"1.0\" encoding=\"UTF-8\"?><Response><Message>${msgs[0]}</Message></Response>`,
+          { headers: { 'Content-Type': 'application/xml' } }
+        )
+      }
+      const messageXml = msgs.map(m => `  <Message>${m}</Message>`).join('\n')
       return new NextResponse(
-        `<?xml version="1.0" encoding="UTF-8"?><Response><Message>${toned}</Message></Response>`,
+        `<?xml version=\"1.0\" encoding=\"UTF-8\"?><Response>\n${messageXml}\n</Response>`,
         { headers: { 'Content-Type': 'application/xml' } }
       )
     }
