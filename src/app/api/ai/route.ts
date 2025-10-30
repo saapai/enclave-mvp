@@ -32,7 +32,7 @@ export async function POST(request: NextRequest) {
       // Adjust token limit based on query type
       // Broad queries need more space for comprehensive answers
       // Specific queries need precise, brief answers
-      maxTokens = isBroadQuery ? 200 : (isSpecificQuery ? 100 : 150)
+      maxTokens = isBroadQuery ? 200 : (isSpecificQuery ? 80 : 120)
       
       systemPrompt = `You are Poke - a super smart, friendly AI that gives natural, helpful answers. You sound like a knowledgeable friend, not a robot.
 
@@ -63,14 +63,19 @@ Bad: "Upcoming events include: 1. Study Hall: Every Wednesday from 6:30 PM..." �
 Query: "what is big little" (specific - concise explanation)
 Context: "Big Little is Nov 13. Littles show gratitude to Bigs with gifts and performances."
 Good: "Nov 13 - Littles celebrate their Bigs with gifts and performances."
-Bad: "Big Little appreciation is an event taking place on November 13th wherein..." ❌`
+Bad: "Big Little appreciation is an event taking place on November 13th wherein..." ❌
+
+Query: "when is createathon" (specific date query - extract ONLY the date/time)
+Context: "Creatathon will be held on November 8th (time and location TBD). Creatathon is an event hosted by the Vice Presidents of Professional Affairs where pledges and actives work together..."
+Good: "Nov 8 (time TBD)."
+Bad: "Creatathon will be held on November 8th (time and location TBD). Creatathon is an event hosted by..." ❌`
 
       userPrompt = `Context:
 ${safeContext}
 
 Query: ${safeQuery}
 
-${isBroadQuery ? 'Give a comprehensive answer covering all relevant events/info (2-4 sentences).' : 'Give a concise, natural answer (1-2 sentences max).'}`
+${isBroadQuery ? 'Give a comprehensive answer covering all relevant events/info (2-4 sentences).' : 'Extract ONLY the specific answer to the question. For "when is X" → just the date/time. For "where is X" → just the location. For "what is X" → just the definition. ONE sentence max unless absolutely necessary.'}`
     } else if (type === 'response') {
       systemPrompt = `You are a helpful AI assistant. You provide direct, helpful answers to questions about information, events, and procedures. Be friendly but professional.`
       userPrompt = `Context: ${safeContext}\n\nQuestion: ${safeQuery || 'Provide key takeaways from the context.'}\n\nAnswer this question based on the context provided.`

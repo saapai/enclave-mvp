@@ -268,35 +268,38 @@ export async function POST(request: NextRequest) {
     const command = body?.trim().toUpperCase()
 
     // ============ NAME DETECTION (HIGHEST PRIORITY) ============
-    // Check if user is declaring their name
-    const nameCheck = await isNameDeclaration(body)
-    if (nameCheck.isName && nameCheck.name) {
-      console.log(`[Twilio SMS] Name declared: ${nameCheck.name} for ${phoneNumber}`)
-      
-      // Update sms_optin first to ensure needs_name is cleared
-      // Use phoneNumber (already normalized) to match how the table stores it
-      const { error: updateError } = await supabase
-        .from('sms_optin')
-        .update({ 
-          name: nameCheck.name,
-          needs_name: false,
-          updated_at: new Date().toISOString()
-        })
-        .eq('phone', phoneNumber)
-      
-      if (updateError) {
-        console.error(`[Twilio SMS] Error updating sms_optin for name:`, updateError)
-      } else {
-        console.log(`[Twilio SMS] Updated sms_optin: set name="${nameCheck.name}", needs_name=false for ${phoneNumber}`)
+    // Check if user is declaring their name - but NOT if it's a question about the bot's name
+    const isBotNameQuestion = /(is\s+this\s+jarvis|are\s+you\s+jarvis|is\s+this\s+enclave|are\s+you\s+enclave)/i.test(body)
+    if (!isBotNameQuestion) {
+      const nameCheck = await isNameDeclaration(body)
+      if (nameCheck.isName && nameCheck.name) {
+        console.log(`[Twilio SMS] Name declared: ${nameCheck.name} for ${phoneNumber}`)
+        
+        // Update sms_optin first to ensure needs_name is cleared
+        // Use phoneNumber (already normalized) to match how the table stores it
+        const { error: updateError } = await supabase
+          .from('sms_optin')
+          .update({ 
+            name: nameCheck.name,
+            needs_name: false,
+            updated_at: new Date().toISOString()
+          })
+          .eq('phone', phoneNumber)
+        
+        if (updateError) {
+          console.error(`[Twilio SMS] Error updating sms_optin for name:`, updateError)
+        } else {
+          console.log(`[Twilio SMS] Updated sms_optin: set name="${nameCheck.name}", needs_name=false for ${phoneNumber}`)
+        }
+        
+        // Update name everywhere (Supabase poll responses + Airtable)
+        await updateNameEverywhere(from, nameCheck.name)
+        
+        return new NextResponse(
+          `<?xml version="1.0" encoding="UTF-8"?><Response><Message>got it! i'll call you ${nameCheck.name}</Message></Response>`,
+          { headers: { 'Content-Type': 'application/xml' } }
+        )
       }
-      
-      // Update name everywhere (Supabase poll responses + Airtable)
-      await updateNameEverywhere(from, nameCheck.name)
-      
-      return new NextResponse(
-        `<?xml version="1.0" encoding="UTF-8"?><Response><Message>got it! i'll call you ${nameCheck.name}</Message></Response>`,
-        { headers: { 'Content-Type': 'application/xml' } }
-      )
     }
     
     // Send affirmation handling moved to PRIORITY 0 above (after context detection)
@@ -1368,6 +1371,22 @@ export async function POST(request: NextRequest) {
     const profanity = detectProfanity(query)
     const insultTargets = guessInsultTarget(query)
     const toneDecision = decideTone({ smalltalk: early.isSmalltalk ? 1 : 0, toxicity: profanity ? 0.6 : 0, hasQuery: true, insultTargets })
+
+    // Handle "is this jarvis" / "are you jarvis" questions (after name detection check)
+    const isBotNameQ = /(is\s+this\s+jarvis|are\s+you\s+jarvis|is\s+this\s+enclave|are\s+you\s+enclave)/i.test(query)
+    if (isBotNameQ) {
+      const botNameMsg = "nah, i'm enclave — built by saathvik and the inquiyr team. i can search your org's docs, events, and send polls/announcements via sms."
+      await supabase.from('sms_conversation_history').insert({ phone_number: phoneNumber, user_message: query, bot_response: botNameMsg })
+      return new NextResponse(`<?xml version=\"1.0\" encoding=\"UTF-8\"?><Response><Message>${botNameMsg}</Message></Response>`, { headers: { 'Content-Type': 'application/xml' } })
+    }
+
+    // Check for unsupported action requests (gcal invites, calendar sync, etc.)
+    const routeCheck = classifyIntent(query, contextMessages)
+    if (routeCheck.intent === 'action_request' && routeCheck.flags.unsupportedAction) {
+      const unsupportedMsg = "can't do that yet — i can search docs/events and send polls/announcements. i'll let the devs know you want calendar invites!"
+      await supabase.from('sms_conversation_history').insert({ phone_number: phoneNumber, user_message: query, bot_response: unsupportedMsg })
+      return new NextResponse(`<?xml version=\"1.0\" encoding=\"UTF-8\"?><Response><Message>${unsupportedMsg}</Message></Response>`, { headers: { 'Content-Type': 'application/xml' } })
+    }
 
     if (toneDecision.policy === 'boundary' || early.isAbusive) {
       const msg = "✋ Not cool. Ask a question or text 'help'."

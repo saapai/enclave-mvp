@@ -17,8 +17,8 @@ export function earlyClassify(text: string, convoSummary: string = ''): EarlyInt
   // Abuse
   const abusive = /(retard|retarded|idiot|stupid|dumb|kill yourself)/i.test(lower)
 
-  // Smalltalk
-  const small = /^(yo|hey|hi|hello|sup|what's up|whats up|wassup|wyd|ok|k|bet|fine bro)$/i.test(lower)
+  // Smalltalk - only exact matches, not queries about events/content
+  const small = /^(yo|hey|hi|hello|sup|what's up|whats up|wassup|wyd|ok|k|bet|fine bro)$/i.test(lower) && !/(events?|schedule|calendar|when|where|who|what)/i.test(lower)
 
   // Feedback / expansion
   const moreReq = /^(more|tell me more|expand)$/i.test(t)
@@ -37,9 +37,13 @@ export function earlyClassify(text: string, convoSummary: string = ''): EarlyInt
     return ['yes', 'no', 'maybe', 'y', 'n', 'a', 'b', 'c', 'd'].includes(cleaned)
   })()
 
+  // Content queries (events, schedule, etc.) - check before smalltalk
+  const isContentQuery = /(events?|schedule|calendar|when|where|who|what|how)/i.test(lower) && !small
+  
   if (abusive) return { intent: 'abusive', isSmalltalk: small, isAbusive: true, isPollAnswerLikely: false, isMoreRequest: moreReq, isConfusedFeedback: confused }
-  if (small || moreReq || confused) return { intent: 'smalltalk', isSmalltalk: true, isAbusive: false, isPollAnswerLikely: false, isMoreRequest: moreReq, isConfusedFeedback: confused }
   if (enclave) return { intent: 'enclave_help', isSmalltalk: false, isAbusive: false, isPollAnswerLikely: false, isMoreRequest: moreReq, isConfusedFeedback: confused }
+  if (isContentQuery) return { intent: 'content_query', isSmalltalk: false, isAbusive: false, isPollAnswerLikely: likelyPoll, isMoreRequest: moreReq, isConfusedFeedback: confused }
+  if (small || moreReq || confused) return { intent: 'smalltalk', isSmalltalk: true, isAbusive: false, isPollAnswerLikely: false, isMoreRequest: moreReq, isConfusedFeedback: confused }
   return { intent: 'content_query', isSmalltalk: false, isAbusive: false, isPollAnswerLikely: likelyPoll, isMoreRequest: moreReq, isConfusedFeedback: confused }
 }
 

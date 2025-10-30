@@ -4,6 +4,7 @@ export type RouteFlags = {
   timewords: boolean
   personQuery: boolean
   followUp: boolean
+  unsupportedAction?: boolean
 }
 
 export type RouteResult = {
@@ -19,6 +20,10 @@ export function classifyIntent(text: string, recentSummary: string = ''): RouteR
 
   // Hard keyword routing
   if (STOP_WORDS.includes(t.toUpperCase())) return { intent: 'keyword', flags: baseFlags(lower, recentSummary) }
+  // Detect action requests - supported ones (announcements/polls) vs unsupported (gcal invites, calendar sync, etc.)
+  if (/\b(send.*gcal|google.*calendar.*invite|add.*to.*calendar|sync.*calendar|create.*event)/i.test(lower)) {
+    return { intent: 'action_request', flags: { ...baseFlags(lower, recentSummary), unsupportedAction: true } }
+  }
   if (/\b(announce|blast|broadcast|send|schedule|remind|poll|vote)\b/.test(lower)) return { intent: 'action_request', flags: baseFlags(lower, recentSummary) }
 
   // Abusive (very light check; full moderation can replace)
