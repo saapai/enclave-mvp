@@ -24,8 +24,8 @@ export function earlyClassify(text: string, convoSummary: string = ''): EarlyInt
   const moreReq = /^(more|tell me more|expand)$/i.test(t)
   const confused = /(doesn['’]?t make sense|does not make sense|idk what you mean|confusing)/i.test(lower)
 
-  // Enclave product queries
-  const enclave = /(what do you do|how do you work|what are you|what is enclave|enclave)/i.test(lower)
+  // Enclave/Jarvis product queries - recognize both names
+  const enclave = /(what do you do|how do you work|what are you|what is enclave|enclave|what is jarvis|jarvis|who is jarvis|who built jarvis|who made jarvis|who created jarvis|who is enclave|who built enclave|who made enclave|who created enclave)/i.test(lower)
 
   // Poll answer likelihood: short, non-question; number or simple yes/no/maybe
   const likelyPoll = (() => {

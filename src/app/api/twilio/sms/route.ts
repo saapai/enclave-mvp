@@ -1372,10 +1372,11 @@ export async function POST(request: NextRequest) {
     const insultTargets = guessInsultTarget(query)
     const toneDecision = decideTone({ smalltalk: early.isSmalltalk ? 1 : 0, toxicity: profanity ? 0.6 : 0, hasQuery: true, insultTargets })
 
-    // Handle "is this jarvis" / "are you jarvis" questions (after name detection check)
+    // Handle "is this jarvis" / "are you jarvis" / "what is enclave" questions (after name detection check)
     const isBotNameQ = /(is\s+this\s+jarvis|are\s+you\s+jarvis|is\s+this\s+enclave|are\s+you\s+enclave)/i.test(query)
     if (isBotNameQ) {
-      const botNameMsg = "nah, i'm enclave — built by saathvik and the inquiyr team. i can search your org's docs, events, and send polls/announcements via sms."
+      // Confirm Jarvis identity - Jarvis is the bot powered by Enclave platform
+      const botNameMsg = "yeah, i'm jarvis — the ai assistant powered by enclave. built by saathvik and the inquiyr team. i can search your org's docs, events, and send polls/announcements via sms."
       await supabase.from('sms_conversation_history').insert({ phone_number: phoneNumber, user_message: query, bot_response: botNameMsg })
       return new NextResponse(`<?xml version=\"1.0\" encoding=\"UTF-8\"?><Response><Message>${botNameMsg}</Message></Response>`, { headers: { 'Content-Type': 'application/xml' } })
     }

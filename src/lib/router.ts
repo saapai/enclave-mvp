@@ -29,8 +29,8 @@ export function classifyIntent(text: string, recentSummary: string = ''): RouteR
   // Abusive (very light check; full moderation can replace)
   if (/(\bfuck\b|\bstupid\b|\bidiot\b)/.test(lower)) return { intent: 'abusive', flags: baseFlags(lower, recentSummary) }
 
-  // Enclave product questions
-  if (/(what is enclave|how.*enclave|who.*built.*enclave|enclave.*feature|capab|what do you do|how do you work|what are you)/.test(lower)) {
+  // Enclave/Jarvis product questions - recognize both names
+  if (/(what is enclave|how.*enclave|who.*built.*enclave|enclave.*feature|what is jarvis|how.*jarvis|who.*built.*jarvis|who.*made.*jarvis|who.*created.*jarvis|jarvis.*feature|capab|what do you do|how do you work|what are you)/.test(lower)) {
     return { intent: 'enclave_help', flags: baseFlags(lower, recentSummary) }
   }
 

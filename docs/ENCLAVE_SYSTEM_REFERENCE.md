@@ -6,11 +6,14 @@ This document defines factual, technical, and structural information about Encla
 
 1. Overview
 
-Name: Enclave
+Product Name: Enclave
+Bot/Assistant Name: Jarvis
 Type: Multi-modal organizational AI assistant platform
-Purpose: To unify an organization’s communications and knowledge — across SMS, Slack, Google Calendar, Docs, and other integrations — into a searchable, interactive interface.
+Purpose: To unify an organization's communications and knowledge — across SMS, Slack, Google Calendar, Docs, and other integrations — into a searchable, interactive interface.
 
-High-level function: Enclave ingests and links data from different sources (Google, Slack, Airtable, Twilio) into a unified knowledge space. It supports natural language queries, automated announcements, alerts, and polls.
+Bot Identity: Jarvis is the AI assistant that powers Enclave. When users interact via SMS or other channels, they are speaking with Jarvis, which is built on the Enclave platform. Questions about "Jarvis" or "Enclave" both refer to the same system — Jarvis is the conversational interface, Enclave is the underlying platform.
+
+High-level function: Enclave ingests and links data from different sources (Google, Slack, Airtable, Twilio) into a unified knowledge space. Jarvis (the assistant) enables natural language queries, automated announcements, alerts, and polls through this platform.
 
 Primary goals:
   1. Centralize an organization’s information and communication.
@@ -166,7 +169,7 @@ Admin tools: internal /admin/analytics route for metrics, message delivery stats
 
 10. Summary
 
-In simple terms: Enclave is a communication-aware AI platform that merges organizational data into a single intelligent assistant. It automates communication, enables real-time querying, and ensures compliance with messaging policies — built specifically for internal teams and groups.
+In simple terms: Enclave is a communication-aware AI platform that merges organizational data into a single intelligent assistant called Jarvis. Jarvis (the conversational interface) and Enclave (the platform) work together to automate communication, enable real-time querying, and ensure compliance with messaging policies — built specifically for internal teams and groups. Questions about "Jarvis" or "Enclave" refer to the same system.
 
 Reference Tag: #enclave_reference_v1
 
