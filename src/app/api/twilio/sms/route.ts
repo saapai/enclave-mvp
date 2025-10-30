@@ -585,6 +585,31 @@ export async function POST(request: NextRequest) {
       }
     }
     
+    // Helper: strict poll answer detector (numbers or exact option words, small input)
+    const isLikelyPollAnswer = (input: string, options: string[] | undefined): boolean => {
+      const t = (input || '').trim().toLowerCase()
+      if (t.length === 0) return false
+      // Hard toxicity words should never be treated as poll answers
+      if (/(retard|retarded|idiot|stupid|dumb)/.test(t)) return false
+      // Pure number mapping
+      const num = t.match(/^\s*(\d{1,2})\s*$/)
+      if (num && options && options.length > 0) {
+        const idx = parseInt(num[1], 10) - 1
+        return idx >= 0 && idx < options.length
+      }
+      // Exact short option word match (allow basic punctuation)
+      const cleaned = t.replace(/[^a-z0-9\s]/g, '').trim()
+      if (options) {
+        for (const opt of options) {
+          const oc = String(opt || '').toLowerCase().replace(/[^a-z0-9\s]/g, '').trim()
+          if (oc && cleaned === oc) return true
+        }
+      }
+      // Very short yes/no/maybe
+      if (['yes', 'no', 'maybe', 'y', 'n'].includes(cleaned) && (!options || options.length <= 5)) return true
+      return false
+    }
+
     // ========================================================================
     // PRIORITY 1: Poll Response (HIGH - before queries)
     // ========================================================================
@@ -620,6 +645,15 @@ export async function POST(request: NextRequest) {
         
         if (poll && Array.isArray(poll.options)) {
           const options: string[] = poll.options as string[]
+
+          // Router-aware guard: classify high-level intent, and strictly validate poll answer
+          const routePre = classifyIntent(textRaw, contextMessages)
+          const looksLikeAnswer = isLikelyPollAnswer(textRaw, options)
+          if (!looksLikeAnswer || routePre.intent === 'abusive' || routePre.intent === 'smalltalk' || routePre.intent === 'enclave_help') {
+            // Not a clean poll answer — fall through to other handlers
+            console.log('[Twilio SMS] Not treating message as poll response (failed strict check or intent)')
+            throw new Error('NotAPollAnswer')
+          }
           
           // Get name
           const normalizedPhone = phoneE164.replace('+1', '').replace('+', '')
