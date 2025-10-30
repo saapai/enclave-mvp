@@ -37,6 +37,9 @@ import { retrieveEnclave } from '@/lib/retrievers/enclave'
 import { retrieveAction } from '@/lib/retrievers/action'
 import { combine } from '@/lib/combiner'
 import { applyTone } from '@/lib/tone'
+import { earlyClassify } from '@/lib/nlp/earlyClassify'
+import { enclaveConciseAnswer } from '@/lib/enclave/answers'
+import { smsTighten } from '@/lib/text/limits'
 
 // Feature flag: Enable new planner-based flow
 const USE_PLANNER = true
@@ -1356,6 +1359,24 @@ export async function POST(request: NextRequest) {
         .map((msg: any) => `User: ${msg.user_message}\nBot: ${msg.bot_response}`)
         .join('\n\n') + '\n\nCurrent query:\n'
       console.log(`[Twilio SMS] Conversation context: ${conversationContext.substring(0, 100)}...`)
+    }
+
+    // Early classification short-circuit: abuse/smalltalk/enclave concise
+    const early = earlyClassify(query, contextMessages)
+    if (early.isAbusive) {
+      const msg = smsTighten("✋ let’s keep it respectful. text 'help' for what i can do.")
+      return new NextResponse(`<?xml version="1.0" encoding="UTF-8"?><Response><Message>${msg}</Message></Response>`, { headers: { 'Content-Type': 'application/xml' } })
+    }
+    if (early.isSmalltalk) {
+      const variants = ["yo! what d’you need?", "sup — want SEP info or Enclave help?", "hey hey. try 'help' for commands."]
+      const msg = smsTighten(variants[Math.floor(Math.random() * variants.length)])
+      return new NextResponse(`<?xml version="1.0" encoding="UTF-8"?><Response><Message>${msg}</Message></Response>`, { headers: { 'Content-Type': 'application/xml' } })
+    }
+    if (early.intent === 'enclave_help') {
+      const resp = await enclaveConciseAnswer(query)
+      const msg = smsTighten(applyTone(resp, 'sassy_indo'))
+      await supabase.from('sms_conversation_history').insert({ phone_number: phoneNumber, user_message: query, bot_response: msg })
+      return new NextResponse(`<?xml version="1.0" encoding="UTF-8"?><Response><Message>${msg}</Message></Response>`, { headers: { 'Content-Type': 'application/xml' } })
     }
 
     // Execute search or use new router+retriever combiner
