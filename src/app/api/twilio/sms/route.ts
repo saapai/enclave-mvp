@@ -1379,7 +1379,13 @@ export async function POST(request: NextRequest) {
       return new NextResponse(`<?xml version=\"1.0\" encoding=\"UTF-8\"?><Response>\n${messageXml}\n</Response>`, { headers: { 'Content-Type': 'application/xml' } })
     }
     if (early.isSmalltalk) {
-      const variants = ["what d’you need? reply 'help' for commands", "sup — want SEP info or Enclave help?", "try 'help' for commands"]
+      const variants = [
+        "what's the objective, bro? ask about events or docs",
+        "ship it—what do you need: date, location, or who?",
+        "pitch it in one line and i'll fetch the facts",
+        "founder energy only—what's the KPI you want?",
+        "speed run time: ask me when/where/who and i'll deliver"
+      ]
       // 'more' expansion and confused feedback
       if (early.isMoreRequest) {
         const lastUser = recentMessages[0]?.user_message || ''
