@@ -1107,7 +1107,7 @@ export async function POST(request: NextRequest) {
         .from('sms_optin')
         .insert({
           phone: phoneNumber,
-          name: null,
+          name: null, // Name is nullable - we'll collect it later
           method: 'sms_keyword',
           keyword: 'SEP',
           opted_out: false,
@@ -1127,14 +1127,49 @@ export async function POST(request: NextRequest) {
         )
       } else if (insertError) {
         console.error(`[Twilio SMS] Error inserting optin:`, insertError)
+        
+        // If insert failed for any reason (NOT duplicate key), check if user exists now
+        // This handles race conditions where user was inserted between our check and insert
+        const { data: existingUser } = await supabase
+          .from('sms_optin')
+          .select('*')
+          .eq('phone', phoneNumber)
+          .maybeSingle()
+        
+        if (existingUser) {
+          // User exists (maybe from a race condition) - check if they need a name
+          if (existingUser.needs_name) {
+            // They need a name - fall through to name collection logic below
+            console.log(`[Twilio SMS] User ${phoneNumber} exists but needs name, continuing to name collection`)
+            // Don't return here - let it fall through to the needs_name check below
+          } else {
+            // They're fully set up - skip welcome and continue to normal message handling
+            console.log(`[Twilio SMS] User ${phoneNumber} exists and is set up, skipping welcome`)
+            // Break out of this block and continue normal flow (don't return)
+          }
+        } else {
+          // Insert failed and user doesn't exist - this is likely the NOT NULL constraint
+          // If name column is still NOT NULL, this will fail
+          // Once migration runs to make name nullable, this should work
+          console.error(`[Twilio SMS] Failed to insert optin - user doesn't exist. Error:`, insertError.message)
+          console.error(`[Twilio SMS] This may be due to name NOT NULL constraint - run migration to make name nullable`)
+          // Still ask for name - once migration is run, this will work
+        }
       }
 
-      // Ask for their name immediately
-      return new NextResponse(
-        '<?xml version="1.0" encoding="UTF-8"?>' +
-        '<Response><Message>hey! what\'s your name? (just reply with your first name)</Message></Response>',
-        { headers: { 'Content-Type': 'application/xml' } }
-      )
+      // Only ask for name if insert succeeded OR if we're not continuing to normal flow
+      // If user exists and is set up, we already logged and will continue below
+      const shouldAskForName = !insertError || (insertError && insertError.code !== '23505')
+      
+      if (shouldAskForName) {
+        // Ask for their name immediately
+        return new NextResponse(
+          '<?xml version="1.0" encoding="UTF-8"?>' +
+          '<Response><Message>hey! what\'s your name? (just reply with your first name)</Message></Response>',
+          { headers: { 'Content-Type': 'application/xml' } }
+        )
+      }
+      // If we get here, user exists and is set up - continue to normal message handling below
     }
     
     // Check if existing user needs to provide their name
