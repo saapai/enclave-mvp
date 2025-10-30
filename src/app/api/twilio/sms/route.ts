@@ -30,6 +30,13 @@ import {
   updateNameEverywhere,
   recordPollResponse
 } from '@/lib/polls'
+import { classifyIntent } from '@/lib/router'
+import { retrieveContent } from '@/lib/retrievers/content'
+import { retrieveConvo } from '@/lib/retrievers/convo'
+import { retrieveEnclave } from '@/lib/retrievers/enclave'
+import { retrieveAction } from '@/lib/retrievers/action'
+import { combine } from '@/lib/combiner'
+import { applyTone } from '@/lib/tone'
 
 // Feature flag: Enable new planner-based flow
 const USE_PLANNER = true
@@ -585,13 +592,6 @@ export async function POST(request: NextRequest) {
       try {
         const upper = textRaw.toUpperCase()
         const codeMatch = upper.match(/\b([A-Z0-9]{4})\b/)
-        const simpleReply = ['yes','no','maybe'].includes(lowerBody)
-
-        // Guard: only handle as a poll response if it's an explicit simple reply or includes a poll code
-        if (!simpleReply && !codeMatch) {
-          // Not an explicit poll response; fall through to normal handlers
-          throw new Error('Not an explicit poll reply')
-        }
         
         // Find poll by code or use pending poll
         let poll: any = null
@@ -658,7 +658,13 @@ export async function POST(request: NextRequest) {
             const publicResultsUrl = sanitizedResultsUrl || undefined
             const linkLine = publicResultsUrl ? `\n\nView results: ${publicResultsUrl}` : ''
             const notesText = parsed.notes ? ` (note: ${parsed.notes})` : ''
-            const reply = `Thanks ${personName}! Recorded: ${parsed.option}${notesText}${linkLine}`
+            const sassy = [
+              `got you, ${personName}. marked: ${parsed.option}${notesText}`,
+              `copy that ${personName} — logged ${parsed.option}${notesText}`,
+              `${personName}, noted: ${parsed.option}${notesText}`,
+              `all right ${personName}, putting you down as ${parsed.option}${notesText}`
+            ]
+            const reply = `${sassy[Math.floor(Math.random()*sassy.length)]}${linkLine}`
             
             return new NextResponse(
               '<?xml version="1.0" encoding="UTF-8"?>' +
@@ -1316,6 +1322,23 @@ export async function POST(request: NextRequest) {
       console.log(`[Twilio SMS] Conversation context: ${conversationContext.substring(0, 100)}...`)
     }
 
+    // Execute search or use new router+retriever combiner
+    const route = classifyIntent(query, contextMessages)
+    const contentItems = await retrieveContent(query, spaceIds)
+    const convoItems = await retrieveConvo(phoneNumber)
+    const enclaveItems = await retrieveEnclave(query)
+    const actionItems = await retrieveAction(phoneE164)
+    const decision = combine({ intent: route.intent, content: contentItems as any, convo: convoItems as any, enclave: enclaveItems as any, action: actionItems as any })
+    if (decision.type === 'answer' && decision.confidence >= 0.5) {
+      const toned = applyTone(decision.message, 'sassy_indo')
+      await supabase.from('sms_conversation_history').insert({ phone_number: phoneNumber, user_message: query, bot_response: toned })
+      return new NextResponse(
+        `<?xml version="1.0" encoding="UTF-8"?><Response><Message>${toned}</Message></Response>`,
+        { headers: { 'Content-Type': 'application/xml' } }
+      )
+    }
+
+    // Fallback to existing planner/search flows
     // Execute search
     const allResults = []
     for (const spaceId of spaceIds) {
