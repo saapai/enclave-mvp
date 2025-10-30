@@ -37,6 +37,8 @@ import { retrieveEnclave } from '@/lib/retrievers/enclave'
 import { retrieveAction } from '@/lib/retrievers/action'
 import { combine } from '@/lib/combiner'
 import { applyTone } from '@/lib/tone'
+import { decideTone } from '@/lib/tone/engine'
+import { detectProfanity, guessInsultTarget } from '@/lib/tone/detect'
 import { earlyClassify } from '@/lib/nlp/earlyClassify'
 import { enclaveConciseAnswer } from '@/lib/enclave/answers'
 import { smsTighten } from '@/lib/text/limits'
@@ -1363,18 +1365,22 @@ export async function POST(request: NextRequest) {
 
     // Early classification short-circuit: abuse/smalltalk/enclave concise
     const early = earlyClassify(query, contextMessages)
-    if (early.isAbusive) {
-      const msg = smsTighten("✋ let’s keep it respectful. text 'help' for what i can do.")
+    const profanity = detectProfanity(query)
+    const insultTargets = guessInsultTarget(query)
+    const toneDecision = decideTone({ smalltalk: early.isSmalltalk ? 1 : 0, toxicity: profanity ? 0.6 : 0, hasQuery: true, insultTargets })
+
+    if (toneDecision.policy === 'boundary' || early.isAbusive) {
+      const msg = smsTighten("✋ Not cool. Ask a question or text 'help'.")
       return new NextResponse(`<?xml version="1.0" encoding="UTF-8"?><Response><Message>${msg}</Message></Response>`, { headers: { 'Content-Type': 'application/xml' } })
     }
     if (early.isSmalltalk) {
-      const variants = ["yo! what d’you need?", "sup — want SEP info or Enclave help?", "hey hey. try 'help' for commands."]
-      const msg = smsTighten(variants[Math.floor(Math.random() * variants.length)])
+      const variants = ["what d’you need? reply 'help' for commands", "sup — want SEP info or Enclave help?", "try 'help' for commands"]
+      const msg = smsTighten(((toneDecision.prefix || '') + variants[Math.floor(Math.random() * variants.length)]))
       return new NextResponse(`<?xml version="1.0" encoding="UTF-8"?><Response><Message>${msg}</Message></Response>`, { headers: { 'Content-Type': 'application/xml' } })
     }
     if (early.intent === 'enclave_help') {
       const resp = await enclaveConciseAnswer(query)
-      const msg = smsTighten(applyTone(resp, 'sassy_indo'))
+      const msg = smsTighten(((toneDecision.prefix || '') + resp))
       await supabase.from('sms_conversation_history').insert({ phone_number: phoneNumber, user_message: query, bot_response: msg })
       return new NextResponse(`<?xml version="1.0" encoding="UTF-8"?><Response><Message>${msg}</Message></Response>`, { headers: { 'Content-Type': 'application/xml' } })
     }
@@ -1387,7 +1393,7 @@ export async function POST(request: NextRequest) {
     const actionItems = await retrieveAction(phoneE164)
     const decision = combine({ intent: route.intent, content: contentItems as any, convo: convoItems as any, enclave: enclaveItems as any, action: actionItems as any })
     if (decision.type === 'answer' && decision.confidence >= 0.5) {
-      const toned = applyTone(decision.message, 'sassy_indo')
+      const toned = smsTighten(((toneDecision.prefix || '') + decision.message))
       await supabase.from('sms_conversation_history').insert({ phone_number: phoneNumber, user_message: query, bot_response: toned })
       return new NextResponse(
         `<?xml version="1.0" encoding="UTF-8"?><Response><Message>${toned}</Message></Response>`,
