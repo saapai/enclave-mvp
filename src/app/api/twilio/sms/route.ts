@@ -527,13 +527,8 @@ export async function POST(request: NextRequest) {
     
     const hasActivePoll = pendingPollResponse?.sms_poll && pendingPollResponse.sms_poll.sent_at
     
-    // Check if last bot message was actually a poll (check for poll question format)
-    const isPollResponseContext = 
-      hasActivePoll ||
-      lastBotMessage.includes('POLL') ||
-      lastBotMessage.includes('Reply with') ||
-      lastBotMessage.match(/yo (are you|is|do you|will you)/i) ||
-      (lastBotMessage.includes('sent poll to') && !contextMessages.includes('what the poll will say'))
+    // Only treat as poll-response context if there is a pending poll awaiting this user's reply
+    const isPollResponseContext = !!hasActivePoll
     
     const textRaw = (body || '').trim()
     const lowerBody = textRaw.toLowerCase()
@@ -590,6 +585,13 @@ export async function POST(request: NextRequest) {
       try {
         const upper = textRaw.toUpperCase()
         const codeMatch = upper.match(/\b([A-Z0-9]{4})\b/)
+        const simpleReply = ['yes','no','maybe'].includes(lowerBody)
+
+        // Guard: only handle as a poll response if it's an explicit simple reply or includes a poll code
+        if (!simpleReply && !codeMatch) {
+          // Not an explicit poll response; fall through to normal handlers
+          throw new Error('Not an explicit poll reply')
+        }
         
         // Find poll by code or use pending poll
         let poll: any = null
