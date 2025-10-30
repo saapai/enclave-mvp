@@ -3,6 +3,8 @@ export type EarlyIntent = {
   isSmalltalk: boolean
   isAbusive: boolean
   isPollAnswerLikely: boolean
+  isMoreRequest?: boolean
+  isConfusedFeedback?: boolean
 }
 
 export function earlyClassify(text: string, convoSummary: string = ''): EarlyIntent {
@@ -18,6 +20,10 @@ export function earlyClassify(text: string, convoSummary: string = ''): EarlyInt
   // Smalltalk
   const small = /^(yo|hey|hi|hello|sup|what's up|whats up|wassup|wyd|ok|k|bet|fine bro)$/i.test(lower)
 
+  // Feedback / expansion
+  const moreReq = /^(more|tell me more|expand)$/i.test(t)
+  const confused = /(doesn['’]?t make sense|does not make sense|idk what you mean|confusing)/i.test(lower)
+
   // Enclave product queries
   const enclave = /(what do you do|how do you work|what are you|what is enclave|enclave)/i.test(lower)
 
@@ -31,10 +37,10 @@ export function earlyClassify(text: string, convoSummary: string = ''): EarlyInt
     return ['yes', 'no', 'maybe', 'y', 'n', 'a', 'b', 'c', 'd'].includes(cleaned)
   })()
 
-  if (abusive) return { intent: 'abusive', isSmalltalk: small, isAbusive: true, isPollAnswerLikely: false }
-  if (small) return { intent: 'smalltalk', isSmalltalk: true, isAbusive: false, isPollAnswerLikely: false }
-  if (enclave) return { intent: 'enclave_help', isSmalltalk: false, isAbusive: false, isPollAnswerLikely: false }
-  return { intent: 'content_query', isSmalltalk: false, isAbusive: false, isPollAnswerLikely: likelyPoll }
+  if (abusive) return { intent: 'abusive', isSmalltalk: small, isAbusive: true, isPollAnswerLikely: false, isMoreRequest: moreReq, isConfusedFeedback: confused }
+  if (small || moreReq || confused) return { intent: 'smalltalk', isSmalltalk: true, isAbusive: false, isPollAnswerLikely: false, isMoreRequest: moreReq, isConfusedFeedback: confused }
+  if (enclave) return { intent: 'enclave_help', isSmalltalk: false, isAbusive: false, isPollAnswerLikely: false, isMoreRequest: moreReq, isConfusedFeedback: confused }
+  return { intent: 'content_query', isSmalltalk: false, isAbusive: false, isPollAnswerLikely: likelyPoll, isMoreRequest: moreReq, isConfusedFeedback: confused }
 }
 
 

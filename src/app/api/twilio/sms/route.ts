@@ -1375,14 +1375,29 @@ export async function POST(request: NextRequest) {
     }
     if (early.isSmalltalk) {
       const variants = ["what d’you need? reply 'help' for commands", "sup — want SEP info or Enclave help?", "try 'help' for commands"]
-      const msg = smsTighten(((toneDecision.prefix || '') + variants[Math.floor(Math.random() * variants.length)]))
-      return new NextResponse(`<?xml version="1.0" encoding="UTF-8"?><Response><Message>${msg}</Message></Response>`, { headers: { 'Content-Type': 'application/xml' } })
+      // 'more' expansion and confused feedback
+      if (early.isMoreRequest) {
+        const lastUser = recentMessages[0]?.user_message || ''
+        const lastIntent = classifyIntent(lastUser, contextMessages).intent
+        if (lastIntent === 'enclave_help') {
+          const resp = await enclaveConciseAnswer(lastUser)
+          return new NextResponse(`<?xml version=\"1.0\" encoding=\"UTF-8\"?><Response><Message>${resp}</Message></Response>`, { headers: { 'Content-Type': 'application/xml' } })
+        }
+        const moreMsg = 'say what you want more of — what/when/where?'
+        return new NextResponse(`<?xml version=\"1.0\" encoding=\"UTF-8\"?><Response><Message>${moreMsg}</Message></Response>`, { headers: { 'Content-Type': 'application/xml' } })
+      }
+      if (early.isConfusedFeedback) {
+        const clar = "got you — what didn’t make sense? want me to explain what/when/where?"
+        return new NextResponse(`<?xml version=\"1.0\" encoding=\"UTF-8\"?><Response><Message>${clar}</Message></Response>`, { headers: { 'Content-Type': 'application/xml' } })
+      }
+      const msg = ((toneDecision.prefix || '') + variants[Math.floor(Math.random() * variants.length)])
+      return new NextResponse(`<?xml version=\"1.0\" encoding=\"UTF-8\"?><Response><Message>${msg}</Message></Response>`, { headers: { 'Content-Type': 'application/xml' } })
     }
     if (early.intent === 'enclave_help') {
       const resp = await enclaveConciseAnswer(query)
-      const msg = smsTighten(((toneDecision.prefix || '') + resp))
+      const msg = resp
       await supabase.from('sms_conversation_history').insert({ phone_number: phoneNumber, user_message: query, bot_response: msg })
-      return new NextResponse(`<?xml version="1.0" encoding="UTF-8"?><Response><Message>${msg}</Message></Response>`, { headers: { 'Content-Type': 'application/xml' } })
+      return new NextResponse(`<?xml version=\"1.0\" encoding=\"UTF-8\"?><Response><Message>${msg}</Message></Response>`, { headers: { 'Content-Type': 'application/xml' } })
     }
 
     // Execute search or use new router+retriever combiner
