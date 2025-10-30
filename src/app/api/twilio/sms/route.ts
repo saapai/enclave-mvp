@@ -166,16 +166,41 @@ const splitLongMessage = (message: string, maxLength: number = 1600): string[] =
     let splitPoint = maxLength
     const searchText = remaining.substring(0, maxLength)
     
-    // Try to find sentence endings
-    const lastPeriod = searchText.lastIndexOf('. ')
-    const lastNewline = searchText.lastIndexOf('\n')
-    const lastQuestion = searchText.lastIndexOf('? ')
-    const lastExclamation = searchText.lastIndexOf('! ')
+    // Try to find sentence endings (with space after, or at end of text)
+    const periodWithSpace = searchText.lastIndexOf('. ')
+    const periodAtEnd = searchText.endsWith('.') ? searchText.length - 1 : -1
+    const lastPeriod = Math.max(periodWithSpace, periodAtEnd)
     
-    // Use the latest sentence boundary
-    const boundaries = [lastPeriod, lastNewline, lastQuestion, lastExclamation].filter(b => b > maxLength * 0.5) // Only use if reasonable length
+    const questionWithSpace = searchText.lastIndexOf('? ')
+    const questionAtEnd = searchText.endsWith('?') ? searchText.length - 1 : -1
+    const lastQuestion = Math.max(questionWithSpace, questionAtEnd)
+    
+    const exclamationWithSpace = searchText.lastIndexOf('! ')
+    const exclamationAtEnd = searchText.endsWith('!') ? searchText.length - 1 : -1
+    const lastExclamation = Math.max(exclamationWithSpace, exclamationAtEnd)
+    
+    const lastNewline = searchText.lastIndexOf('\n')
+    
+    // Use the latest sentence boundary (only if reasonable length to avoid tiny messages)
+    const minBoundary = maxLength * 0.5
+    const boundaries = [lastPeriod, lastNewline, lastQuestion, lastExclamation].filter(b => b >= minBoundary)
+    
     if (boundaries.length > 0) {
-      splitPoint = Math.max(...boundaries) + 1
+      const bestBoundary = Math.max(...boundaries)
+      // If boundary is period/question/exclamation with space after, split after the space
+      // If boundary is at end of text, split after the punctuation
+      if (periodWithSpace === bestBoundary || questionWithSpace === bestBoundary || exclamationWithSpace === bestBoundary) {
+        splitPoint = bestBoundary + 2 // Skip punctuation and space
+      } else {
+        splitPoint = bestBoundary + 1 // Skip just the punctuation
+      }
+    } else {
+      // No good boundary found - split at word boundary if possible
+      const lastSpace = searchText.lastIndexOf(' ')
+      if (lastSpace >= minBoundary) {
+        splitPoint = lastSpace + 1
+      }
+      // Otherwise split at maxLength (better than truncating)
     }
     
     messages.push(remaining.substring(0, splitPoint).trim())

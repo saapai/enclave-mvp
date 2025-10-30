@@ -22,60 +22,58 @@ export async function POST(request: NextRequest) {
     // Prepare the prompt based on type
     let systemPrompt = ''
     let userPrompt = ''
-    let maxTokens = 500 // Default token limit
+    let maxTokens = 1000 // Permissive token limit - allow full answers but extract only relevant info
     
     // Dynamically determine response style based on query type
     const isBroadQuery = /(what's happening|what's up|what's going on|what's new|upcoming events|what's coming up)/i.test(safeQuery)
     const isSpecificQuery = /(when is|where is|what time|who is|how do)/i.test(safeQuery)
     
     if (type === 'summary') {
-      // Adjust token limit based on query type
-      // Broad queries need more space for comprehensive answers
-      // Specific queries need precise, brief answers
-      maxTokens = isBroadQuery ? 200 : (isSpecificQuery ? 80 : 120)
-      
       systemPrompt = `You are Poke - a super smart, friendly AI that gives natural, helpful answers. You sound like a knowledgeable friend, not a robot.
+
+CRITICAL: EXTRACT ONLY INFORMATION DIRECTLY RELEVANT TO THE QUERY. IGNORE ALL OTHER CONTEXT.
 
 WRITING STYLE:
 - Be CONCISE - one clear sentence for simple questions, 2-3 max for complex ones
 - Be NATURAL - write like you're texting a friend, not a Wikipedia article
 - Be SPECIFIC - include dates, times, locations when available
-- Be HELPFUL - add context only if it's directly relevant to the question
+- Be RELEVANT - ONLY include information that directly answers the query
 
 CRITICAL RULES:
-1. Never be wordy - cut unnecessary phrases and filler
-2. Never repeat the question back to the user
-3. Answer directly without preamble like "Based on the context..."
-4. Use casual language when appropriate ("PM" not "in the evening")
-5. Put the most important info first
+1. Extract ONLY the information that directly answers the query - ignore everything else in the context
+2. Never include irrelevant events, details, or information not related to the specific question
+3. Never repeat the question back to the user
+4. Answer directly without preamble like "Based on the context..."
+5. Use casual language when appropriate ("PM" not "in the evening")
+6. Put the most important info first
 
 EXAMPLES:
-Query: "when is active meeting" (specific - short answer)
-Context: "Active meetings are every Wednesday at 8:00 PM at Mahi's apartment (461B Kelton)."
-Good: "Every Wednesday at 8 PM at Mahi's (461B Kelton)."
-Bad: "Based on the provided context, active meetings occur every Wednesday at 8:00 PM..." ❌
+Query: "when is createathon" (specific date query - extract ONLY date/time about Creatathon)
+Context: "Study Hall Pledges do Study Hall at Rieber Terrace, 9th Floor Lounge, from 6:30 PM to 12:30 AM every Wednesday. Creatathon will be held on November 8th (time and location TBD). Big Little will be on November 13th."
+Good: "Nov 8 (time TBD)."
+Bad: "Sigma Eta Pi UCLA – Event Information and Context Study Hall Pledges do Study Hall at Rieber Terrace... Creatathon will be held on November 8th... Big Little will be on November 13th." ❌ (includes irrelevant Study Hall and Big Little info)
 
-Query: "what's happening this week" (broad - comprehensive answer)
+Query: "when is active meeting" (specific - short answer)
+Context: "Active meetings are every Wednesday at 8:00 PM at Mahi's apartment (461B Kelton). Study Hall is every Wednesday at 6:30 PM."
+Good: "Every Wednesday at 8 PM at Mahi's (461B Kelton)."
+Bad: "Active meetings are every Wednesday at 8:00 PM at Mahi's apartment (461B Kelton). Study Hall is every Wednesday at 6:30 PM." ❌ (includes irrelevant Study Hall info)
+
+Query: "what's happening this week" (broad - comprehensive answer but still only relevant events)
 Context: "Study Hall (Wed 6:30 PM), Active Meeting (Wed 8 PM), Creatathon (Nov 8), Big Little (Nov 13)"
 Good: "This week: Study Hall Wed 6:30 PM, Active Meeting Wed 8 PM. Coming up: Creatathon Nov 8, Big Little Nov 13."
-Bad: "Upcoming events include: 1. Study Hall: Every Wednesday from 6:30 PM..." ❌
+Bad: "Study Hall is a weekly work session where pledges come together to study... Active Meeting is held every Wednesday..." ❌ (includes unnecessary background details)
 
 Query: "what is big little" (specific - concise explanation)
-Context: "Big Little is Nov 13. Littles show gratitude to Bigs with gifts and performances."
+Context: "Big Little is Nov 13. Littles show gratitude to Bigs with gifts and performances. Study Hall is every Wednesday."
 Good: "Nov 13 - Littles celebrate their Bigs with gifts and performances."
-Bad: "Big Little appreciation is an event taking place on November 13th wherein..." ❌
-
-Query: "when is createathon" (specific date query - extract ONLY the date/time)
-Context: "Creatathon will be held on November 8th (time and location TBD). Creatathon is an event hosted by the Vice Presidents of Professional Affairs where pledges and actives work together..."
-Good: "Nov 8 (time TBD)."
-Bad: "Creatathon will be held on November 8th (time and location TBD). Creatathon is an event hosted by..." ❌`
+Bad: "Big Little is Nov 13. Littles show gratitude to Bigs with gifts and performances. Study Hall is every Wednesday." ❌ (includes irrelevant Study Hall info)`
 
       userPrompt = `Context:
 ${safeContext}
 
 Query: ${safeQuery}
 
-${isBroadQuery ? 'Give a comprehensive answer covering all relevant events/info (2-4 sentences).' : 'Extract ONLY the specific answer to the question. For "when is X" → just the date/time. For "where is X" → just the location. For "what is X" → just the definition. ONE sentence max unless absolutely necessary.'}`
+${isBroadQuery ? 'Extract ONLY the information directly relevant to answering this question. Give a comprehensive answer covering all relevant events/info (2-4 sentences), but ignore any unrelated information in the context.' : 'Extract ONLY the specific information that directly answers this question. For "when is X" → ONLY the date/time for X. For "where is X" → ONLY the location for X. For "what is X" → ONLY the definition for X. Ignore all other unrelated information in the context. ONE sentence max unless absolutely necessary.'}`
     } else if (type === 'response') {
       systemPrompt = `You are a helpful AI assistant. You provide direct, helpful answers to questions about information, events, and procedures. Be friendly but professional.`
       userPrompt = `Context: ${safeContext}\n\nQuestion: ${safeQuery || 'Provide key takeaways from the context.'}\n\nAnswer this question based on the context provided.`
