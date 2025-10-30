@@ -261,7 +261,24 @@ export async function POST(request: NextRequest) {
     if (nameCheck.isName && nameCheck.name) {
       console.log(`[Twilio SMS] Name declared: ${nameCheck.name} for ${phoneNumber}`)
       
-      // Update name everywhere (Supabase + Airtable)
+      // Update sms_optin first to ensure needs_name is cleared
+      // Use phoneNumber (already normalized) to match how the table stores it
+      const { error: updateError } = await supabase
+        .from('sms_optin')
+        .update({ 
+          name: nameCheck.name,
+          needs_name: false,
+          updated_at: new Date().toISOString()
+        })
+        .eq('phone', phoneNumber)
+      
+      if (updateError) {
+        console.error(`[Twilio SMS] Error updating sms_optin for name:`, updateError)
+      } else {
+        console.log(`[Twilio SMS] Updated sms_optin: set name="${nameCheck.name}", needs_name=false for ${phoneNumber}`)
+      }
+      
+      // Update name everywhere (Supabase poll responses + Airtable)
       await updateNameEverywhere(from, nameCheck.name)
       
       return new NextResponse(
