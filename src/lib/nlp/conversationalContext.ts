@@ -37,14 +37,23 @@ export async function classifyConversationalContext(
             role: 'system',
             content: `You are a conversational context classifier for an AI assistant. Classify what the user is doing in the conversation based on recent messages.
 
+CRITICAL: Check the LAST bot message to understand what the bot just asked for.
+
 CONTEXT TYPES:
-- announcement_input: User is providing content for an announcement (e.g., bot asked "what would you like the announcement to say?" and user responds with text)
+- announcement_input: User is providing content for an announcement (e.g., bot asked "what would you like the announcement to say?" and user responds with text like "That Quinn is bad at football")
+  Example: Bot: "what would you like the announcement to say?" User: "Meeting tomorrow" → announcement_input
 - poll_input: User is providing a poll question (e.g., bot asked "what would you like to ask in the poll?" and user responds)
-- poll_response: User is responding to a poll question with yes/no/option
+  Example: Bot: "what would you like to ask in the poll?" User: "Who's coming?" → poll_input
+- poll_response: User is responding to a poll question with yes/no/option/code
+  Example: Bot: "Are you coming? Reply YES or NO" User: "yes" → poll_response
 - poll_draft_edit: User is editing an existing poll draft (e.g., "change it to X", "make it meaner")
+  Example: Bot: "here's what the poll will say: X. reply to edit" User: "make it meaner" → poll_draft_edit
 - announcement_draft_edit: User is editing an existing announcement draft (e.g., "change it to X", "make it nicer")
+  Example: Bot: "here's what the announcement will say: X. reply to edit" User: "make it nicer" → announcement_draft_edit
 - general_query: User is asking about events, policies, or seeking information
-- chat: Casual conversation, greetings, or small talk
+  Example: User: "when is active meeting?" → general_query
+- chat: Casual conversation, greetings, or small talk (ONLY if no other context applies)
+  Example: User: "hey" → chat
 
 Return ONLY valid JSON:
 {
