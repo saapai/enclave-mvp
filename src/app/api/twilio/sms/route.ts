@@ -1531,6 +1531,7 @@ export async function POST(request: NextRequest) {
       return new NextResponse(`<?xml version=\"1.0\" encoding=\"UTF-8\"?><Response><Message>${unsupportedMsg}</Message></Response>`, { headers: { 'Content-Type': 'application/xml' } })
     }
 
+
     if (toneDecision.policy === 'boundary' || early.isAbusive) {
       const msg = "✋ Not cool. Ask a question or text 'help'."
       const msgs = splitLongMessage(msg, 1600)
