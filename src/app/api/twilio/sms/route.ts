@@ -542,6 +542,9 @@ export async function POST(request: NextRequest) {
     const textRaw = (body || '').trim()
     const lowerBody = textRaw.toLowerCase()
     
+    // Create contextMessages string for backward compatibility with older functions
+    const contextMessages = recentMessages.map(m => `${m.user_message} ${m.bot_response}`).join(' ').toLowerCase()
+    
     // Classify conversational context using LLM
     const conversationalContext = await classifyConversationalContext(
       textRaw,
