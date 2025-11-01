@@ -554,8 +554,7 @@ export async function POST(request: NextRequest) {
     const isAnnouncementDraftContext =
       lastBotMessage.includes('what the announcement will say') ||
       lastBotMessage.includes('reply "send it" to broadcast') ||
-      contextMessages.includes('announcement will say') ||
-      contextMessages.includes('make an announcement')
+      contextMessages.includes('announcement will say')
     
     // Check if user has an active poll waiting for response
     const phoneE164 = from.startsWith('+') ? from : `+1${phoneNumber}`
@@ -989,7 +988,6 @@ export async function POST(request: NextRequest) {
     }
     
     // Announcement request (if NOT in draft context)
-    console.log(`[Twilio SMS] Announcement check: isPollDraftContext=${isPollDraftContext}, isAnnouncementDraftContext=${isAnnouncementDraftContext}, isAnnouncementRequest=${isAnnouncementRequest(textRaw)}`)
     if (!isPollDraftContext && !isAnnouncementDraftContext && isAnnouncementRequest(textRaw)) {
       console.log(`[Twilio SMS] Detected announcement request from ${phoneNumber}`)
       
