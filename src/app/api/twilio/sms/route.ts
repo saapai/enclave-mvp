@@ -1500,28 +1500,29 @@ export async function POST(request: NextRequest) {
     }
 
     // Execute search or use new router+retriever combiner
-    const route = classifyIntent(query, contextMessages)
-    const contentItems = await retrieveContent(query, spaceIds)
-    const convoItems = await retrieveConvo(phoneNumber)
-    const enclaveItems = await retrieveEnclave(query)
-    const actionItems = await retrieveAction(phoneE164)
-    const decision = combine({ intent: route.intent, content: contentItems as any, convo: convoItems as any, enclave: enclaveItems as any, action: actionItems as any })
-    if (decision.type === 'answer' && decision.confidence >= 0.5) {
-      const finalMsg = ((toneDecision.prefix || '') + decision.message)
-      await supabase.from('sms_conversation_history').insert({ phone_number: phoneNumber, user_message: query, bot_response: finalMsg })
-      const msgs = splitLongMessage(finalMsg, 1600)
-      if (msgs.length === 1) {
-        return new NextResponse(
-          `<?xml version=\"1.0\" encoding=\"UTF-8\"?><Response><Message>${msgs[0]}</Message></Response>`,
-          { headers: { 'Content-Type': 'application/xml' } }
-        )
-      }
-      const messageXml = msgs.map(m => `  <Message>${m}</Message>`).join('\n')
-      return new NextResponse(
-        `<?xml version=\"1.0\" encoding=\"UTF-8\"?><Response>\n${messageXml}\n</Response>`,
-        { headers: { 'Content-Type': 'application/xml' } }
-      )
-    }
+    // TEMPORARILY DISABLED: Skip the new router to force planner flow
+    // const route = classifyIntent(query, contextMessages)
+    // const contentItems = await retrieveContent(query, spaceIds)
+    // const convoItems = await retrieveConvo(phoneNumber)
+    // const enclaveItems = await retrieveEnclave(query)
+    // const actionItems = await retrieveAction(phoneE164)
+    // const decision = combine({ intent: route.intent, content: contentItems as any, convo: convoItems as any, enclave: enclaveItems as any, action: actionItems as any })
+    // if (decision.type === 'answer' && decision.confidence >= 0.5) {
+    //   const finalMsg = ((toneDecision.prefix || '') + decision.message)
+    //   await supabase.from('sms_conversation_history').insert({ phone_number: phoneNumber, user_message: query, bot_response: finalMsg })
+    //   const msgs = splitLongMessage(finalMsg, 1600)
+    //   if (msgs.length === 1) {
+    //     return new NextResponse(
+    //       `<?xml version=\"1.0\" encoding=\"UTF-8\"?><Response><Message>${msgs[0]}</Message></Response>`,
+    //       { headers: { 'Content-Type': 'application/xml' } }
+    //     )
+    //   }
+    //   const messageXml = msgs.map(m => `  <Message>${m}</Message>`).join('\n')
+    //   return new NextResponse(
+    //     `<?xml version=\"1.0\" encoding=\"UTF-8\"?><Response>\n${messageXml}\n</Response>`,
+    //     { headers: { 'Content-Type': 'application/xml' } }
+    //   )
+    // }
 
     // Fallback to existing planner/search flows
     // Execute search
