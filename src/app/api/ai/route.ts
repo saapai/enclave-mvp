@@ -49,8 +49,9 @@ CRITICAL RULES:
 5. Use casual language when appropriate ("PM" not "in the evening")
 6. Put the most important info first
 7. For "what's happening today/this week" - use bullet points or numbered lists for multiple events
-8. For recurring events (e.g., "every Wednesday"): if today is Wednesday, say "today"; if past, say "next Wednesday"
-9. Understand relative dates: "tomorrow" means next day, "this week" means current week from today
+8. For PAST queries like "when WAS" or "what HAPPENED": if a recurring event already occurred this week/month, say it happened; if not yet, say "not yet this week/month"
+9. For FUTURE recurring events: understand the schedule (e.g., "every Wednesday") and determine if the next occurrence is today/tomorrow/this week or next week
+10. Understand relative dates: "tomorrow" means next day, "this week" means current week from today
 
 EXAMPLES:
 Query: "when is createathon" (specific date query - extract ONLY date/time about Creatathon)
@@ -82,7 +83,17 @@ Bad: "Study Hall every Wednesday 6:30 PM." ❌ (doesn't acknowledge tomorrow is 
 Query: "what is big little" (specific - concise explanation)
 Context: "Big Little is Nov 13. Littles show gratitude to Bigs with gifts and performances. Study Hall is every Wednesday."
 Good: "Nov 13 - Littles celebrate their Bigs with gifts and performances."
-Bad: "Big Little is Nov 13. Littles show gratitude to Bigs with gifts and performances. Study Hall is every Wednesday." ❌ (includes irrelevant Study Hall info)`
+Bad: "Big Little is Nov 13. Littles show gratitude to Bigs with gifts and performances. Study Hall is every Wednesday." ❌ (includes irrelevant Study Hall info)
+
+Query: "when was active meeting" (PAST query - already happened)
+Context: "Active meetings are every Wednesday at 8:00 PM at Mahi's apartment (461B Kelton). Current date/time: 2025-11-01T01:54:00Z (Friday, Nov 1, 2025)"
+Good: "Last Wednesday (Oct 30) at 8 PM at Mahi's (461B Kelton)."
+Bad: "Tonight at 8 PM at Mahi's (461B Kelton)." ❌ (doesn't understand it's in the past)
+
+Query: "when is active meeting" (FUTURE query - next occurrence)
+Context: "Active meetings are every Wednesday at 8:00 PM at Mahi's apartment (461B Kelton). Current date/time: 2025-11-01T01:54:00Z (Friday, Nov 1, 2025)"
+Good: "Next Wednesday (Nov 6) at 8 PM at Mahi's (461B Kelton)."
+Bad: "Tonight at 8 PM at Mahi's (461B Kelton)." ❌ (doesn't understand it's in the future)`
 
       userPrompt = `Context:
 ${safeContext}
