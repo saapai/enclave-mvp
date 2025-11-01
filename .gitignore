@@ -40,6 +40,11 @@ pids
 # Coverage directory used by tools like istanbul
 coverage/
 
+# Testing
+playwright-report/
+test-results/
+*.tsbuildinfo
+
 # Dependency directories
 jspm_packages/
 

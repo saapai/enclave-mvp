@@ -1,80 +1,209 @@
-# Database Setup Guide for Enclave MVP
+# Database Setup Guide
 
-## Step 1: Update Environment Variables
+Complete guide to setting up the Enclave database in Supabase.
 
-Update your `.env.local` file with these values:
+## 📋 Overview
 
-```env
-# Clerk Authentication
-NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_ZW5hYmxlZC1ob3JuZXQtODIuY2xlcmsuYWNjb3VudHMuZGV2JA
-CLERK_SECRET_KEY=sk_test_UWkSmY5hGCKXMQYacy862XeHwGHNoHn9kueUDDWFvV
+Enclave uses PostgreSQL (via Supabase) with pgvector for semantic search. The database is organized into multiple schemas for different features.
 
-# Supabase
-NEXT_PUBLIC_SUPABASE_URL=https://igruzwyaohsbozlgihs.supabase.co
-NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlncnV6d3lhb2hzYm96bGdoaWhzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTE1NzUzMDYsImV4cCI6MjA2NzE1MTMwNn0.voGVT5wnobV-cNtMW2TL_YEHyzLSCKaDePXPjrqCheU
-SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_role_key
+---
 
-# App Configuration
-NEXT_PUBLIC_APP_URL=http://localhost:3000
+## 🚀 Quick Setup
+
+### 1. Prerequisites
+
+- Supabase account and project
+- Database access (SQL Editor)
+
+### 2. Run Core Setup
+
+In Supabase SQL Editor, run these files **in order**:
+
+```bash
+# 1. Foundation
+database/core/supabase-setup.sql        # Core tables
+database/core/supabase-pgvector.sql      # Vector search extension
+
+# 2. Vector Search
+database/core/supabase-chunks.sql               # Chunking tables
+database/core/supabase-chunk-vector-function.sql # Vector functions
+database/core/supabase-vector-function.sql      # Vector search
+database/core/supabase-search-function.sql      # Search functions
+
+# 3. Verification
+database/core/verify-workspace-setup.sql
 ```
 
-## Step 2: Set up Supabase Database
+---
 
-1. Go to your Supabase project dashboard: https://supabase.com/dashboard/project/igruzwyaohsbozlgihs
-2. Navigate to the **SQL Editor** tab
-3. Run the following SQL files in order:
+## 🔌 Integration Setup
 
-### 2.1: Create Tables and Basic Structure
-Copy and paste the contents of `supabase-setup.sql` into the SQL Editor and run it.
+### Google Docs
+```bash
+database/core/google-docs-schema.sql
+database/core/google-docs-functions.sql
+```
 
-### 2.2: Create Search Function
-Copy and paste the contents of `supabase-search-function.sql` into the SQL Editor and run it.
+### Google Calendar
+```bash
+database/core/google-calendar-schema.sql
+```
 
-### 2.3: Add Demo Data (Optional)
-Copy and paste the contents of `supabase-demo-data.sql` into the SQL Editor and run it.
+### Slack
+```bash
+database/core/slack-schema.sql
+```
 
-## Step 3: Get Service Role Key
+### SMS Bot
+```bash
+database/core/sms-optin-schema.sql
+database/core/sms-query-session-schema.sql
+database/core/sms-conversation-history-schema.sql
+database/core/sms-poll-schema.sql
+database/core/announcements-schema.sql
+```
 
-1. In your Supabase dashboard, go to **Settings** → **API**
-2. Copy the **service_role** key (not the anon key)
-3. Update the `SUPABASE_SERVICE_ROLE_KEY` in your `.env.local` file
+### Other Features
+```bash
+database/core/telemetry-schema.sql
+database/core/alerts-schema.sql
+database/core/knowledge-graph-schema.sql
+database/core/hierarchical-chunks-schema.sql
+```
 
-## Step 4: Test the Setup
+---
 
-1. Run the development server:
-   ```bash
-   npm run dev
-   ```
+## 📁 Database Structure
 
-2. Open http://localhost:3000 in your browser
-3. You should see the Enclave login page
-4. Sign up for a new account
-5. Once logged in, you should see the search interface
+### Core Tables
+- `space` - Workspaces (multi-tenant boundaries)
+- `app_user` - User accounts
+- `resource` - Documents, files, content
+- `event_meta` - Calendar events
+- `tag` - Content tags
+- `resource_tag` - Tag mappings
+- `query_log` - Search query logs
+- `gap_alert` - Alert system
 
-## Troubleshooting
+### Search & Vectors
+- `chunk` - Document chunks for vector search
+- Embeddings stored in `pgvector` extension
 
-### If you get permission errors:
-- Make sure you're using the SQL Editor in the Supabase dashboard, not a direct database connection
-- The SQL Editor runs with the proper permissions
+### Integrations
+- **Google**: `google_doc`, `google_doc_chunk`
+- **Slack**: `slack_channel`, `slack_message`
+- **Calendar**: `calendar_event`
 
-### If tables already exist:
-- The SQL uses `CREATE TABLE IF NOT EXISTS` and `ON CONFLICT DO NOTHING` to handle existing data
-- You can safely run the setup scripts multiple times
+### SMS
+- `sms_optin` - Opt-in status
+- `sms_announcement_drafts` - Announcement drafts
+- `sms_poll_drafts` - Poll drafts
+- `sms_announcements` - Sent announcements
+- `sms_poll` - Sent polls
+- `sms_poll_response` - Poll responses
+- `sms_conversation_history` - Message history
+- `sms_query_session` - Query sessions
 
-### If you need to start fresh:
-- You can drop all tables and recreate them, but be careful as this will delete all data
+---
 
-## Verification
+## 🔐 Security
 
-After running the setup, you should have:
-- ✅ 8 tables created (space, app_user, resource, tag, resource_tag, event_meta, query_log, gap_alert)
-- ✅ 1 default space with ID '00000000-0000-0000-0000-000000000000'
-- ✅ 24 default tags across different categories
-- ✅ 5 sample resources with proper relationships
-- ✅ Full-text search function working
-- ✅ All indexes created for performance
+### Row Level Security (RLS)
 
-The app should now be fully functional!
+RLS policies are configured for:
+- Multi-tenant workspace isolation
+- User-based access control
+- Resource visibility rules
 
+### Default Space
 
+All resources are stored in the default space:
+- **Space ID**: `00000000-0000-0000-0000-000000000000`
+- **Visibility**: All users can view
 
+---
+
+## 🧪 Testing
+
+After setup, verify:
+
+```sql
+-- Check tables
+SELECT table_name FROM information_schema.tables 
+WHERE table_schema = 'public';
+
+-- Check vector search
+SELECT * FROM pg_extension WHERE extname = 'vector';
+
+-- Check default space
+SELECT * FROM space WHERE id = '00000000-0000-0000-0000-000000000000';
+```
+
+---
+
+## 📝 Environment Variables
+
+After setup, configure:
+
+```bash
+# Supabase
+NEXT_PUBLIC_SUPABASE_URL=your_project_url
+NEXT_PUBLIC_SUPABASE_ANON_KEY=your_anon_key
+SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
+```
+
+---
+
+## 🔧 Maintenance
+
+### Migrations
+
+Historical migrations are in `database/migrations/`:
+- Add new features
+- Alter schemas
+- Data migrations
+
+### Fixes
+
+One-off fixes are in `database/fixes/`:
+- Bug fixes
+- RLS adjustments
+- Temporary workarounds
+
+⚠️ **Only use these if directed or debugging**
+
+---
+
+## ❓ Troubleshooting
+
+### Permission Errors
+
+- Use Supabase SQL Editor (not direct connection)
+- SQL Editor has admin permissions
+
+### Tables Already Exist
+
+- Setup scripts use `CREATE TABLE IF NOT EXISTS`
+- Safe to run multiple times
+- Data is preserved
+
+### Vector Search Not Working
+
+- Verify pgvector extension is installed
+- Check chunk table has embeddings
+- Run reindex: `/api/embeddings/reindex-chunks`
+
+### Missing Data
+
+- Check default space exists
+- Verify user accounts
+- Test search functions
+
+---
+
+## 📚 Additional Resources
+
+- [Supabase Docs](https://supabase.com/docs)
+- [pgvector Docs](https://github.com/pgvector/pgvector)
+- [Visibility Model](./VISIBILITY_MODEL.md)
+- [Canonical Documentation](./CANONICAL_DOCUMENTATION.md)
