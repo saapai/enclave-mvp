@@ -37,21 +37,34 @@ export async function classifyConversationalContext(
             role: 'system',
             content: `You are a conversational context classifier for an AI assistant. Classify what the user is doing in the conversation based on recent messages.
 
-CRITICAL: Check the LAST bot message to understand what the bot just asked for.
+CRITICAL RULES:
+1. Check the LAST bot message first - if bot asked a specific question, user's response is likely answering that question
+2. "announcement_input" is ONLY for when bot explicitly asked "what would you like the announcement to say?" AND the current message is providing content (not asking a question!)
+3. Questions like "What's happening?", "What's up?", "What's going on?" are ALWAYS general_query, NEVER announcement_input
+4. "I wanna make an announcement" or "I want to make an announcement" is a NEW REQUEST, NOT input → classify as general_query
+5. User saying "no it should say X" or "change it to X" after seeing a draft is announcement_draft_edit
+6. If the current message contains a question mark (?), it's almost certainly NOT announcement_input
 
 CONTEXT TYPES:
-- announcement_input: User is providing content for an announcement (e.g., bot asked "what would you like the announcement to say?" and user responds with text like "That Quinn is bad at football")
-  Example: Bot: "what would you like the announcement to say?" User: "Meeting tomorrow" → announcement_input
-- poll_input: User is providing a poll question (e.g., bot asked "what would you like to ask in the poll?" and user responds)
+- announcement_input: User is providing content AFTER bot asked "what would you like the announcement to say?"
+  Example: Bot: "what would you like the announcement to say?" User: "Quinn is bad at football" → announcement_input
+  Counter-example: Bot: "Active meeting tonight" User: "I wanna make an announcement" → general_query (NOT announcement_input!)
+- poll_input: User is providing a poll question AFTER bot asked "what would you like to ask in the poll?"
   Example: Bot: "what would you like to ask in the poll?" User: "Who's coming?" → poll_input
 - poll_response: User is responding to a poll question with yes/no/option/code
   Example: Bot: "Are you coming? Reply YES or NO" User: "yes" → poll_response
-- poll_draft_edit: User is editing an existing poll draft (e.g., "change it to X", "make it meaner")
+- poll_draft_edit: User is editing an existing poll draft (e.g., "change it to X", "make it meaner", "no it should say X")
   Example: Bot: "here's what the poll will say: X. reply to edit" User: "make it meaner" → poll_draft_edit
-- announcement_draft_edit: User is editing an existing announcement draft (e.g., "change it to X", "make it nicer")
+  Example: Bot: "here's what the poll will say: X" User: "no it should say Y" → poll_draft_edit
+- announcement_draft_edit: User is editing an existing announcement draft (e.g., "change it to X", "make it nicer", "no it should say X")
   Example: Bot: "here's what the announcement will say: X. reply to edit" User: "make it nicer" → announcement_draft_edit
-- general_query: User is asking about events, policies, or seeking information
+  Example: Bot: "here's what the announcement will say: X" User: "no it should say Y" → announcement_draft_edit
+- general_query: User is asking about events, policies, OR making a new request (like "I wanna make an announcement")
   Example: User: "when is active meeting?" → general_query
+  Example: User: "What's happening?" → general_query (information query, NOT announcement input!)
+  Example: User: "What's up?" → general_query
+  Example: User: "I wanna make an announcement" → general_query (new request, not input!)
+  CRITICAL: If the message is a QUESTION (contains "?", "what", "when", "where", "who", "how"), it's general_query, NOT announcement_input!
 - chat: Casual conversation, greetings, or small talk (ONLY if no other context applies)
   Example: User: "hey" → chat
 

@@ -48,10 +48,12 @@ CRITICAL RULES:
 4. Answer directly without preamble like "Based on the context..."
 5. Use casual language when appropriate ("PM" not "in the evening")
 6. Put the most important info first
-7. For "what's happening today/this week" - use bullet points or numbered lists for multiple events
-8. For PAST queries like "when WAS" or "what HAPPENED": if a recurring event already occurred this week/month, say it happened; if not yet, say "not yet this week/month"
-9. For FUTURE recurring events: understand the schedule (e.g., "every Wednesday") and determine if the next occurrence is today/tomorrow/this week or next week
-10. Understand relative dates: "tomorrow" means next day, "this week" means current week from today
+7. For "what's happening" or "what's happening today" - ONLY include events happening TODAY based on the Current date/time. If a document says "tonight" but today is NOT that day, calculate the correct date. For recurring events, only include if they fall TODAY.
+8. For "what's happening this week" - use bullet points or numbered lists for multiple events happening THIS WEEK (from Current date/time)
+9. For PAST queries like "when WAS" or "what HAPPENED": if a recurring event already occurred this week/month, say it happened; if not yet, say "not yet this week/month"
+10. For FUTURE recurring events: understand the schedule (e.g., "every Wednesday") and compare to Current date/time to determine if next occurrence is today/tomorrow/this week or next week
+11. Understand relative dates: "tomorrow" means next day from Current date/time, "this week" means current week from Current date/time
+12. **TEMPORAL AWARENESS IS CRITICAL**: Always compare document dates/phrases ("tonight", "tomorrow", "Wednesday") to the Current date/time provided. If document says "tonight" but Current date/time shows it's a different day, calculate the correct relative date (e.g., "Next Wednesday at 8 PM" not "tonight")
 
 EXAMPLES:
 Query: "when is createathon" (specific date query - extract ONLY date/time about Creatathon)
@@ -80,6 +82,11 @@ Context: "Study Hall every Wednesday 6:30 PM. Today is Tuesday, Oct 31. Creatath
 Good: "Study Hall tomorrow at 6:30 PM at Rieber Terrace."
 Bad: "Study Hall every Wednesday 6:30 PM." ❌ (doesn't acknowledge tomorrow is Wednesday)
 
+Query: "what's happening" (ambiguous - assume means TODAY unless context specifies otherwise)
+Context: "Active meetings are every Wednesday at 8:00 PM at Mahi's apartment. Tonight at 8 PM (Saathvik presenting). Current date/time: 2025-11-01T03:39:00Z (Saturday, Nov 1, 2025)"
+Good: "Nothing scheduled for today. Next Active Meeting is Wednesday, Nov 6 at 8 PM at Mahi's."
+Bad: "Tonight at 8 PM at Mahi's apartment" ❌ (doesn't account for current date being Saturday, not Wednesday)
+
 Query: "what is big little" (specific - concise explanation)
 Context: "Big Little is Nov 13. Littles show gratitude to Bigs with gifts and performances. Study Hall is every Wednesday."
 Good: "Nov 13 - Littles celebrate their Bigs with gifts and performances."
@@ -102,7 +109,13 @@ Query: ${safeQuery}
 
 Current date/time: ${new Date().toISOString()}
 
-${isBroadQuery ? 'Extract ONLY the information directly relevant to answering this question. Use bullet points (•) or numbered lists for multiple events. Give a comprehensive answer covering all relevant events/info, but ignore any unrelated information in the context. Be temporally aware: if asking about "today", check if events happen today based on recurring patterns.' : 'Extract ONLY the specific information that directly answers this question. For "when is X" → ONLY the date/time for X. For "where is X" → ONLY the location for X. For "what is X" → ONLY the definition for X. Ignore all other unrelated information in the context. ONE sentence max unless absolutely necessary.'}`
+${isBroadQuery ? `Extract ONLY the information directly relevant to answering this question. Use bullet points (•) or numbered lists for multiple events. Give a comprehensive answer covering all relevant events/info, but ignore any unrelated information in the context.
+
+CRITICAL TEMPORAL AWARENESS:
+- If query is "what's happening" or "what's happening today": ONLY include events happening TODAY based on Current date/time
+- If document says "tonight" or "today" but Current date/time shows a different day, calculate the correct relative date (e.g., if document says "tonight" and today is Saturday but meeting is Wednesday, say "Next Wednesday at 8 PM" NOT "tonight")
+- For recurring events: check if they fall TODAY based on Current date/time. If not today, say when the next occurrence is
+- Always compare document dates/phrases to Current date/time provided above` : 'Extract ONLY the specific information that directly answers this question. For "when is X" → ONLY the date/time for X. For "where is X" → ONLY the location for X. For "what is X" → ONLY the definition for X. Ignore all other unrelated information in the context. ONE sentence max unless absolutely necessary.'}`
     } else if (type === 'response') {
       systemPrompt = `You are a helpful AI assistant. You provide direct, helpful answers to questions about information, events, and procedures. Be friendly but professional.`
       userPrompt = `Context: ${safeContext}\n\nQuestion: ${safeQuery || 'Provide key takeaways from the context.'}\n\nAnswer this question based on the context provided.`

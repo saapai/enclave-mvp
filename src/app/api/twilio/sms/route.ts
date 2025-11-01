@@ -569,8 +569,10 @@ export async function POST(request: NextRequest) {
     // Override announcement context: if user explicitly requests an announcement, it's NOT input context
     // Conversational context might incorrectly classify "I wanna make an announcement" as announcement_input
     // when it's actually a NEW announcement request
+    // Also: questions (containing "?") are NEVER announcement_input
     const isExplicitAnnouncementRequest = isAnnouncementRequest(textRaw)
-    const isAnnouncementDraftContext = (isAnnouncementInputContext || isAnnouncementDraftEditContext) && !isExplicitAnnouncementRequest
+    const isQuestion = textRaw.includes('?') || /^(what|when|where|who|how|why|is|are|was|were|do|does|did|will|can|could|should)\s/i.test(textRaw.trim())
+    const isAnnouncementDraftContext = (isAnnouncementInputContext || isAnnouncementDraftEditContext) && !isExplicitAnnouncementRequest && !isQuestion
     
     // Check if user has an active poll waiting for response (for determining isPollResponseContext with low confidence)
     const phoneE164 = from.startsWith('+') ? from : `+1${phoneNumber}`
@@ -1037,15 +1039,22 @@ export async function POST(request: NextRequest) {
     }
     
     // Announcement draft editing (only if in announcement context AND not a query)
-    if (isAnnouncementDraftContext && activeDraft && !isPollRequest(textRaw) && !isAnnouncementRequest(textRaw) && !looksLikeQuery) {
+    // Also check conversational context - if it says announcement_draft_edit, trust it
+    const isEditingDraft = (isAnnouncementDraftContext || conversationalContext.contextType === 'announcement_draft_edit') && activeDraft
+    if (isEditingDraft && !isPollRequest(textRaw) && !isAnnouncementRequest(textRaw) && !looksLikeQuery) {
       console.log(`[Twilio SMS] Editing announcement draft in context: "${textRaw}"`)
       
       const announcementText = extractRawAnnouncementText(body)
       
-      // Edit existing draft
+      // If it's an exact text request, use it directly without regenerating
+      const useExactText = isExactTextRequest(body) || conversationalContext.contextType === 'announcement_draft_edit'
+      
+      // Edit existing draft - use exact text if requested, otherwise use extracted text
+      const finalContent = useExactText ? announcementText : announcementText
+      
       await saveDraft(phoneNumber, {
         id: activeDraft.id,
-        content: announcementText,
+        content: finalContent,
         tone: activeDraft.tone,
         scheduledFor: activeDraft.scheduledFor,
         targetAudience: activeDraft.targetAudience,
@@ -1053,13 +1062,15 @@ export async function POST(request: NextRequest) {
       }, activeDraft.workspaceId!)
       
       return new NextResponse(
-        `<?xml version="1.0" encoding="UTF-8"?><Response><Message>updated:\n\n${announcementText}\n\nreply "send it" to broadcast</Message></Response>`,
+        `<?xml version="1.0" encoding="UTF-8"?><Response><Message>updated:\n\n${finalContent}\n\nreply "send it" to broadcast</Message></Response>`,
         { headers: { 'Content-Type': 'application/xml' } }
       )
     }
     
     // Announcement request (if NOT in draft context)
-    if (!isPollDraftContext && !isAnnouncementDraftContext && isAnnouncementRequest(textRaw)) {
+    // Prioritize explicit announcement requests - if user says "I wanna make an announcement",
+    // handle it as a NEW request even if conversational context misclassified it
+    if (isAnnouncementRequest(textRaw) && !isPollDraftContext && !isAnnouncementDraftContext && !isPollRequest(textRaw)) {
       console.log(`[Twilio SMS] Detected announcement request from ${phoneNumber}`)
       
       // Extract announcement details
