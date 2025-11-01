@@ -567,6 +567,7 @@ export async function POST(request: NextRequest) {
     
     // Override: if bot asked for announcement content and user provides non-question content, it's announcement input
     const shouldOverrideAsAnnouncementInput = lastBotAskedForAnnouncement && !isExplicitQuestion && !isExplicitAnnouncementRequest
+    console.log(`[Twilio SMS] Announcement context: lastBotAskedForAnnouncement=${lastBotAskedForAnnouncement}, shouldOverride=${shouldOverrideAsAnnouncementInput}, LLM=${conversationalContext.contextType}`)
     
     const isAnnouncementInputContext = conversationalContext.contextType === 'announcement_input' || shouldOverrideAsAnnouncementInput
     const isAnnouncementDraftEditContext = conversationalContext.contextType === 'announcement_draft_edit'
@@ -1020,6 +1021,7 @@ export async function POST(request: NextRequest) {
     }
     
     // Announcement content input (when bot asked "what would you like the announcement to say?" but no draft exists yet)
+    console.log(`[Twilio SMS] Announcement input check: isAnnouncementDraftContext=${isAnnouncementDraftContext}, activeDraft=${!!activeDraft}, isPollRequest=${isPollRequest(textRaw)}, isAnnouncementRequest=${isAnnouncementRequest(textRaw)}, looksLikeQuery=${looksLikeQuery}`)
     if (isAnnouncementDraftContext && !activeDraft && !isPollRequest(textRaw) && !isAnnouncementRequest(textRaw) && !looksLikeQuery) {
       console.log(`[Twilio SMS] Creating announcement draft with user content: "${textRaw}"`)
       
