@@ -1,9 +1,11 @@
 import { ENV } from '../env'
+import { extractQuotes } from './quotes'
 
 export type ConversationalContext = {
   contextType: 'announcement_input' | 'poll_input' | 'poll_response' | 'poll_draft_edit' | 'announcement_draft_edit' | 'general_query' | 'chat'
   confidence: number
   reasoning?: string
+  quotedSegments?: string[]
 }
 
 /**
@@ -45,6 +47,7 @@ CRITICAL RULES (in priority order):
 5. "I wanna make an announcement" or "I want to make an announcement" is a NEW REQUEST, NOT input → classify as general_query
 6. User saying "no it should say X" or "change it to X" after seeing a draft is announcement_draft_edit
 7. If the current message contains a question mark (?), it's almost certainly NOT announcement_input (unless it's part of a quoted message like "Should I come?")
+8. **QUOTES**: Extract all text within double quotes "like this" into quotedSegments array
 
 CONTEXT TYPES:
 - announcement_input: User is providing content AFTER bot asked "what would you like the announcement to say?"
@@ -73,8 +76,9 @@ Return ONLY valid JSON:
 {
   "contextType": "announcement_input|poll_input|poll_response|poll_draft_edit|announcement_draft_edit|general_query|chat",
   "confidence": 0.0-1.0,
-  "reasoning": "brief explanation"
-}`
+  "reasoning": "brief explanation",
+  "quotedSegments": ["extracted", "quoted", "text"] (optional, empty array if none)
+}
           },
           {
             role: 'user',
@@ -112,6 +116,13 @@ Classify the context type of the CURRENT USER MESSAGE:`
     }
 
     const context: ConversationalContext = JSON.parse(jsonMatch[0])
+    
+    // Fallback: Extract quotes if LLM didn't provide them
+    if (!context.quotedSegments || context.quotedSegments.length === 0) {
+      const quotes = extractQuotes(currentMessage)
+      context.quotedSegments = quotes
+    }
+    
     console.log(`[Conversational Context] Classified as: ${context.contextType}, confidence: ${context.confidence}`)
     
     return context

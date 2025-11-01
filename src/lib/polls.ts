@@ -7,6 +7,7 @@ import { supabaseAdmin } from './supabase';
 import Airtable from 'airtable';
 import { ENV } from './env';
 import { createAirtableFields, normalizePhoneForAirtable, upsertAirtableRecord } from './airtable';
+import { parsePollQuotes, hasQuotes } from './nlp/quotes';
 
 export interface PollDraft {
   id?: string;
@@ -45,11 +46,11 @@ export async function extractPollDetails(message: string): Promise<{
 }> {
   try {
     // First check if there's quoted text - use that exactly
-    const quoteMatch = message.match(/"([^"]+)"/);
-    if (quoteMatch) {
+    if (hasQuotes(message)) {
+      const { question, options } = parsePollQuotes(message);
       return {
-        question: quoteMatch[1],
-        options: ['Yes', 'No', 'Maybe'],
+        question: question || undefined,
+        options: options || ['Yes', 'No', 'Maybe'],
         tone: 'casual'
       };
     }

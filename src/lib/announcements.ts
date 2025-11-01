@@ -4,6 +4,7 @@
  */
 
 import { supabase } from './supabase';
+import { parseAnnouncementQuotes, hasQuotes } from './nlp/quotes';
 
 export interface AnnouncementDraft {
   id?: string;
@@ -38,9 +39,9 @@ export function isAnnouncementRequest(message: string): boolean {
  */
 export function extractRawAnnouncementText(message: string): string {
   // If message has quotes, extract from quotes (highest priority)
-  const quoteMatch = message.match(/"([^"]+)"/);
-  if (quoteMatch) {
-    return quoteMatch[1];
+  if (hasQuotes(message)) {
+    const quotedText = parseAnnouncementQuotes(message);
+    if (quotedText) return quotedText;
   }
   
   // Check for "no it should say X" or "it should say X" - common correction pattern
@@ -123,14 +124,16 @@ export async function extractAnnouncementDetails(message: string): Promise<{
 }> {
   try {
     // First check if there's quoted text - use that exactly
-    const quoteMatch = message.match(/"([^"]+)"/);
-    if (quoteMatch) {
-      return {
-        content: quoteMatch[1],
-        scheduledFor: null,
-        tone: 'casual',
-        targetAudience: 'all'
-      };
+    if (hasQuotes(message)) {
+      const quotedText = parseAnnouncementQuotes(message);
+      if (quotedText) {
+        return {
+          content: quotedText,
+          scheduledFor: null,
+          tone: 'casual',
+          targetAudience: 'all'
+        };
+      }
     }
     
     const aiUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'https://www.tryenclave.com'}/api/ai`;
