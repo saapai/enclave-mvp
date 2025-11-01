@@ -292,16 +292,18 @@ async function executeSearchAnnouncements(
   console.log(`[search_announcements] Searching announcements: "${query}"`)
   
   // Search for recent announcements that are relevant to the query
-  const { data: announcements } = await supabase
+  // First try to find any sent announcements (ignore workspace_id to catch all)
+  const { data: allAnnouncements } = await supabase
     .from('announcement')
-    .select('id, final_content, sent_at, created_at')
-    .eq('workspace_id', spaceId)
+    .select('id, final_content, sent_at, created_at, workspace_id')
     .eq('status', 'sent')
     .not('final_content', 'is', null)
     .order('sent_at', { ascending: false })
-    .limit(10)
+    .limit(20)
   
-  if (!announcements || announcements.length === 0) {
+  console.log(`[search_announcements] Found ${allAnnouncements?.length || 0} total announcements`)
+  
+  if (!allAnnouncements || allAnnouncements.length === 0) {
     console.log(`[search_announcements] No announcements found`)
     return {
       tool: 'search_announcements',
@@ -311,14 +313,37 @@ async function executeSearchAnnouncements(
     }
   }
   
-  // Simple keyword matching (could be improved with embeddings later)
+  // Improved keyword matching - extract key terms from query
   const lowerQuery = (query || '').toLowerCase()
-  const matching = announcements.filter(ann => {
+  const queryWords = lowerQuery.split(/\s+/).filter(w => w.length > 2) // Ignore short words like "at", "the"
+  
+  // Score announcements by matching keywords
+  const scoredAnnouncements = allAnnouncements.map(ann => {
     const content = (ann.final_content || '').toLowerCase()
-    return content.includes(lowerQuery)
+    let score = 0
+    
+    // Exact phrase match gets highest score
+    if (content.includes(lowerQuery)) {
+      score += 10
+    }
+    
+    // Word-by-word matching
+    for (const word of queryWords) {
+      if (content.includes(word)) {
+        score += 1
+      }
+    }
+    
+    return { ann, score }
   })
   
-  console.log(`[search_announcements] Found ${matching.length} matching announcements`)
+  // Filter to announcements with at least one keyword match, sort by score
+  const matching = scoredAnnouncements
+    .filter(item => item.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .map(item => item.ann)
+  
+  console.log(`[search_announcements] Found ${matching.length} matching announcements (top score: ${scoredAnnouncements.length > 0 ? Math.max(...scoredAnnouncements.map(s => s.score)) : 0})`)
   
   if (matching.length > 0) {
     // Convert to SearchResult format for compatibility
