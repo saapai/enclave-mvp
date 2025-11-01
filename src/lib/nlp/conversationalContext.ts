@@ -18,6 +18,24 @@ export async function classifyConversationalContext(
   lastUserMessage: string,
   conversationHistory: Array<{user_message: string, bot_response: string}> = []
 ): Promise<ConversationalContext> {
+  // BUILD-IN CRITICAL RULE CHECK: If last bot asked for announcement/poll content and current message is NOT a question
+  // This MUST happen before LLM call to ensure reliability
+  const lowerLastBot = lastBotMessage.toLowerCase()
+  const lowerCurrent = currentMessage.toLowerCase()
+  const isQuestion = currentMessage.includes('?') || /^(what|when|where|who|how|why|is|are|was|were|do|does|did|will|can|could|should)\s/i.test(currentMessage.trim())
+  
+  // Rule 2: Announcement input
+  if (lowerLastBot.includes('what would you like the announcement to say') && !isQuestion) {
+    const quotes = extractQuotes(currentMessage)
+    return { contextType: 'announcement_input', confidence: 0.95, quotedSegments: quotes }
+  }
+  
+  // Rule 3: Poll input
+  if (lowerLastBot.includes('what would you like to ask in the poll') && !isQuestion) {
+    const quotes = extractQuotes(currentMessage)
+    return { contextType: 'poll_input', confidence: 0.95, quotedSegments: quotes }
+  }
+
   // Build conversation context for LLM
   const conversationContext = conversationHistory
     .slice(0, 3)

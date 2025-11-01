@@ -601,28 +601,6 @@ export async function POST(request: NextRequest) {
     const activeDraft = await getActiveDraft(phoneNumber)
     
     // ========================================================================
-    // PRIORITY 0.5: Conversational context-based routing (BEFORE query detection)
-    // Short-circuit based on LLM context classification
-    // ========================================================================
-    // If conversational context indicates announcement/poll input/edit, route there directly
-    if (conversationalContext.confidence >= 0.7) {
-      // High-confidence context classification - trust it and route accordingly
-      if (conversationalContext.contextType === 'announcement_input' || 
-          conversationalContext.contextType === 'announcement_draft_edit') {
-        // Route to announcement handlers - they will check if draft exists
-        // This will be handled by the announcement handlers below, but we skip query detection
-        console.log(`[Twilio SMS] High-confidence announcement context, skipping query detection`)
-      } else if (conversationalContext.contextType === 'poll_input' || 
-                 conversationalContext.contextType === 'poll_draft_edit') {
-        // Route to poll handlers
-        console.log(`[Twilio SMS] High-confidence poll context, skipping query detection`)
-      } else if (conversationalContext.contextType === 'poll_response') {
-        // Route to poll response handler
-        console.log(`[Twilio SMS] High-confidence poll response context, skipping query detection`)
-      }
-    }
-    
-    // ========================================================================
     // PRIORITY 0: Send command (HIGHEST - before everything else, but NOT if responding to poll)
     // ========================================================================
     if ((command === 'SEND IT' || command === 'SEND NOW' || isSendAffirmation(textRaw, finalIsPollResponseContext)) && !finalIsPollResponseContext && !isPollQuestionInputContext) {
