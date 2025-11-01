@@ -565,7 +565,12 @@ export async function POST(request: NextRequest) {
     // Legacy flags for backward compatibility (still used in some handlers)
     const isPollDraftContext = isPollDraftEditContext || conversationalContext.contextType === 'poll_input'
     const isPollQuestionInputContext = isPollInputContext
-    const isAnnouncementDraftContext = isAnnouncementInputContext || isAnnouncementDraftEditContext
+    
+    // Override announcement context: if user explicitly requests an announcement, it's NOT input context
+    // Conversational context might incorrectly classify "I wanna make an announcement" as announcement_input
+    // when it's actually a NEW announcement request
+    const isExplicitAnnouncementRequest = isAnnouncementRequest(textRaw)
+    const isAnnouncementDraftContext = (isAnnouncementInputContext || isAnnouncementDraftEditContext) && !isExplicitAnnouncementRequest
     
     // Check if user has an active poll waiting for response (for determining isPollResponseContext with low confidence)
     const phoneE164 = from.startsWith('+') ? from : `+1${phoneNumber}`
@@ -584,6 +589,28 @@ export async function POST(request: NextRequest) {
     
     const activePollDraft = await getActivePollDraft(phoneNumber)
     const activeDraft = await getActiveDraft(phoneNumber)
+    
+    // ========================================================================
+    // PRIORITY 0.5: Conversational context-based routing (BEFORE query detection)
+    // Short-circuit based on LLM context classification
+    // ========================================================================
+    // If conversational context indicates announcement/poll input/edit, route there directly
+    if (conversationalContext.confidence >= 0.7) {
+      // High-confidence context classification - trust it and route accordingly
+      if (conversationalContext.contextType === 'announcement_input' || 
+          conversationalContext.contextType === 'announcement_draft_edit') {
+        // Route to announcement handlers - they will check if draft exists
+        // This will be handled by the announcement handlers below, but we skip query detection
+        console.log(`[Twilio SMS] High-confidence announcement context, skipping query detection`)
+      } else if (conversationalContext.contextType === 'poll_input' || 
+                 conversationalContext.contextType === 'poll_draft_edit') {
+        // Route to poll handlers
+        console.log(`[Twilio SMS] High-confidence poll context, skipping query detection`)
+      } else if (conversationalContext.contextType === 'poll_response') {
+        // Route to poll response handler
+        console.log(`[Twilio SMS] High-confidence poll response context, skipping query detection`)
+      }
+    }
     
     // ========================================================================
     // PRIORITY 0: Send command (HIGHEST - before everything else, but NOT if responding to poll)
@@ -814,7 +841,17 @@ export async function POST(request: NextRequest) {
     let pendingPollFollowUp: string | null = null
     
     // Only treat as query if NOT in poll/question/draft contexts
-    if (looksLikeQuery && !isPollDraftContext && !isAnnouncementDraftContext && !finalIsPollResponseContext && !isPollQuestionInputContext) {
+    // Also skip if conversational context indicates announcement/poll action (even if it looks like a query)
+    // BUT: exclude explicit announcement requests - those should go to announcement handler, not be blocked
+    const isActionContext = conversationalContext.confidence >= 0.7 && (
+      conversationalContext.contextType === 'announcement_input' ||
+      conversationalContext.contextType === 'announcement_draft_edit' ||
+      conversationalContext.contextType === 'poll_input' ||
+      conversationalContext.contextType === 'poll_draft_edit' ||
+      conversationalContext.contextType === 'poll_response'
+    ) && !isExplicitAnnouncementRequest // Don't block explicit announcement requests
+    
+    if (looksLikeQuery && !isPollDraftContext && !isAnnouncementDraftContext && !finalIsPollResponseContext && !isPollQuestionInputContext && !isActionContext && !isExplicitAnnouncementRequest) {
       // This is a query - handle it normally (code continues below to query handling)
       // We'll set a flag to add draft follow-up after
       console.log(`[Twilio SMS] Detected query "${textRaw}", will answer then check for drafts`)
