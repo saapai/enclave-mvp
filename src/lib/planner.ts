@@ -61,8 +61,105 @@ export async function planQuery(
 ): Promise<QueryPlan> {
   console.log(`[Planner] Planning query: "${query}"`)
 
-  // Always use fallback plan - it's more reliable than LLM
+  // Try LLM-based planning first
+  try {
+    const llmPlan = await llmPlanQuery(query, spaceId)
+    if (llmPlan && llmPlan.confidence > 0.7) {
+      console.log(`[Planner] LLM plan confidence: ${llmPlan.confidence}`)
+      return llmPlan
+    }
+    console.log(`[Planner] LLM plan low confidence (${llmPlan?.confidence}), falling back`)
+  } catch (error) {
+    console.error(`[Planner] LLM planning failed:`, error)
+  }
+
+  // Fallback to rule-based plan
   return fallbackPlan(query)
+}
+
+/**
+ * LLM-based query planning
+ * Uses Mistral API to intelligently route queries
+ */
+async function llmPlanQuery(query: string, spaceId: string): Promise<QueryPlan | null> {
+  try {
+    const response = await fetch('https://api.mistral.ai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${ENV.MISTRAL_API_KEY}`
+      },
+      body: JSON.stringify({
+        model: 'mistral-small-latest',
+        messages: [
+          {
+            role: 'system',
+            content: `You are a query classifier for an AI assistant called Jarvis. Classify user queries into intent categories and recommend search strategies.
+
+INTENTS:
+- event_lookup: Specific questions about event times/locations (e.g., "when is active meeting", "where is study hall")
+- policy_lookup: Questions about policies, rules, or how things work (e.g., "what is big little", "how does attendance work")
+- person_lookup: Who is someone (e.g., "who is sarah", "tell me about john")
+- doc_search: General info queries that need document search (e.g., "what's happening this week", "tell me about events")
+- chat: Pure greetings or casual conversation (e.g., "hey", "what's up", "thanks")
+- content_summary: Complex queries requiring multi-source synthesis
+
+Return ONLY valid JSON with this exact structure:
+{
+  "intent": "event_lookup|policy_lookup|person_lookup|doc_search|chat|content_summary",
+  "confidence": 0.0-1.0,
+  "entities": {
+    "events": ["event_name"] (optional),
+    "policies": ["policy_name"] (optional),
+    "people": ["person_name"] (optional),
+    "dates": ["date_reference"] (optional),
+    "locations": ["location"] (optional)
+  },
+  "tools": [
+    {"tool": "search_docs|search_announcements|search_knowledge|calendar_find", "params": {"query": "..."}, "priority": 1-5}
+  ],
+  "reasoning": "brief explanation"
+}`
+          },
+          {
+            role: 'user',
+            content: query
+          }
+        ],
+        temperature: 0.1,
+        max_tokens: 300
+      })
+    })
+
+    if (!response.ok) {
+      console.error(`[Planner LLM] API error: ${response.status}`)
+      return null
+    }
+
+    const data = await response.json()
+    const content = data.choices[0]?.message?.content
+
+    if (!content) {
+      console.error('[Planner LLM] No content in response')
+      return null
+    }
+
+    // Parse JSON from response
+    const jsonMatch = content.match(/\{[\s\S]*\}/)
+    if (!jsonMatch) {
+      console.error('[Planner LLM] No JSON found in response')
+      return null
+    }
+
+    const plan: QueryPlan = JSON.parse(jsonMatch[0])
+    console.log(`[Planner LLM] Classified as: ${plan.intent}, confidence: ${plan.confidence}`)
+    
+    return plan
+
+  } catch (error) {
+    console.error('[Planner LLM] Error:', error)
+    return null
+  }
 }
 
 /**
@@ -107,7 +204,7 @@ function fallbackPlan(query: string): QueryPlan {
     } else {
       // Broad info query - search for comprehensive answer
       return {
-        intent: 'content',
+        intent: 'doc_search',
         confidence: 0.9,
         entities: {},
         tools: [
@@ -140,7 +237,7 @@ function fallbackPlan(query: string): QueryPlan {
 
   // 3. DEFAULT: Treat as content query (if not pure chat and not explicit content)
   return {
-    intent: 'content',
+    intent: 'doc_search',
     confidence: 0.7,
     entities: {},
     tools: [
@@ -467,7 +564,7 @@ export async function composeResponse(
     return composeEventResponse(bestResult)
   } else if (plan.intent === 'policy_lookup') {
     return composePolicyResponse(bestResult)
-  } else if (plan.intent === 'content' || plan.intent === 'content_summary') {
+  } else if (plan.intent === 'doc_search' || plan.intent === 'content_summary') {
     // Content queries should use ALL relevant results, not just the top one
     return composeDocResponse(bestResult, successfulResults.slice(0, 5))
   } else {
