@@ -19,3 +19,4 @@ export function guessInsultTarget(text: string): AbuseTargets {
 }
 
 
+

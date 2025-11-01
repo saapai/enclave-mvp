@@ -37,10 +37,16 @@ export function isAnnouncementRequest(message: string): boolean {
  * Used when user just says "Ash is going to get touched" after being asked what to say
  */
 export function extractRawAnnouncementText(message: string): string {
-  // If message has quotes, extract from quotes
+  // If message has quotes, extract from quotes (highest priority)
   const quoteMatch = message.match(/"([^"]+)"/);
   if (quoteMatch) {
     return quoteMatch[1];
+  }
+  
+  // Check for "no it should say X" or "it should say X" - common correction pattern
+  const shouldSayMatch = message.match(/(?:no,?\s+)?it\s+should\s+say\s+"?([^"]+)"?$/i);
+  if (shouldSayMatch) {
+    return shouldSayMatch[1].trim();
   }
   
   // Check for "no edit it to this exactly:", "edit it to this exactly:", etc - extract text after colon
@@ -50,15 +56,22 @@ export function extractRawAnnouncementText(message: string): string {
   }
   
   // Check for "no just", "actually", "change it to" etc - extract the actual text
-  const correctionMatch = message.match(/(?:no just|actually|change it to|make it|i want it to say|i want the announcement to say)\s+"?([^"]+)"?$/i);
+  const correctionMatch = message.match(/(?:no,?\s+(?:just|it\s+should)|actually,?\s+)?(?:change\s+it\s+to|make\s+it|i\s+want\s+it\s+to\s+say|i\s+want\s+the\s+announcement\s+to\s+say|it\s+says?)\s+"?([^"]+)"?$/i);
   if (correctionMatch) {
     return correctionMatch[1].trim();
   }
   
   // Check for "i want the announcement to say..."
-  const wantMatch = message.match(/i want (?:the announcement to say|it to say)\s+"?([^"]+)"?$/i);
+  const wantMatch = message.match(/i\s+want\s+(?:the\s+announcement\s+to\s+say|it\s+to\s+say)\s+"?([^"]+)"?$/i);
   if (wantMatch) {
     return wantMatch[1].trim();
+  }
+  
+  // If message starts with "no" followed by content, assume everything after "no" is the correction
+  const noStartMatch = message.match(/^no,?\s+(.+)$/i);
+  if (noStartMatch && noStartMatch[1].length > 5) {
+    // Only if there's substantial content after "no"
+    return noStartMatch[1].trim();
   }
   
   // Otherwise return the message as-is
@@ -93,7 +106,9 @@ export function isExactTextRequest(message: string): boolean {
     lowerMsg.includes('exact wording') ||
     lowerMsg.includes('exact text') ||
     lowerMsg.includes('edit it to this exactly') ||
-    lowerMsg.startsWith('no') && lowerMsg.includes('exactly')
+    (lowerMsg.startsWith('no') && lowerMsg.includes('exactly')) ||
+    /(?:no,?\s+)?it\s+should\s+say/i.test(lowerMsg) || // "no it should say X"
+    /^no,?\s+.*should\s+say/i.test(lowerMsg) // "no X should say Y"
   );
 }
 
