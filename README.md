@@ -34,6 +34,8 @@ A modern knowledge management system for teams and organizations with AI-powered
 
 ## Documentation
 
+- [Canonical Documentation (source of truth)](docs/CANONICAL_DOCUMENTATION.md)
+
 - [Database Setup](docs/DATABASE_SETUP.md)
 - [Google Docs Integration](docs/GOOGLE_DOCS_SETUP.md)
 - [Deployment Guide](docs/DEPLOYMENT.md)
