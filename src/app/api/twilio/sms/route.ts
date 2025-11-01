@@ -41,6 +41,7 @@ import { applyTone } from '@/lib/tone'
 import { decideTone } from '@/lib/tone/engine'
 import { detectProfanity, guessInsultTarget } from '@/lib/tone/detect'
 import { earlyClassify } from '@/lib/nlp/earlyClassify'
+import { classifyConversationalContext } from '@/lib/nlp/conversationalContext'
 import { enclaveConciseAnswer } from '@/lib/enclave/answers'
 import { smsTighten } from '@/lib/text/limits'
 
@@ -538,26 +539,32 @@ export async function POST(request: NextRequest) {
     const recentMessages = conversationHistory || []
     const lastBotMessage = recentMessages[0]?.bot_response || ''
     const lastUserMessage = recentMessages[0]?.user_message || ''
-    const contextMessages = recentMessages.map(m => `${m.user_message} ${m.bot_response}`).join(' ').toLowerCase()
+    const textRaw = (body || '').trim()
+    const lowerBody = textRaw.toLowerCase()
     
-    // Determine context
-    const isPollDraftContext = 
-      lastBotMessage.includes('what the poll will say') ||
-      lastBotMessage.includes('reply "send it" to send') ||
-      lastBotMessage.includes('reply to edit') ||
-      contextMessages.includes('poll will say')
+    // Classify conversational context using LLM
+    const conversationalContext = await classifyConversationalContext(
+      textRaw,
+      lastBotMessage,
+      lastUserMessage,
+      recentMessages
+    )
     
-    const isPollQuestionInputContext =
-      lastBotMessage.includes('what would you like to ask in the poll') ||
-      lastBotMessage === 'what would you like to ask in the poll?'
+    console.log(`[Twilio SMS] Conversational context: ${conversationalContext.contextType} (confidence: ${conversationalContext.confidence})`)
     
-    const isAnnouncementDraftContext =
-      lastBotMessage.includes('what the announcement will say') ||
-      lastBotMessage.includes('what would you like the announcement to say') ||
-      lastBotMessage.includes('reply "send it" to broadcast') ||
-      contextMessages.includes('announcement will say')
+    // Derive flags from LLM context for backward compatibility
+    const isPollInputContext = conversationalContext.contextType === 'poll_input'
+    const isPollDraftEditContext = conversationalContext.contextType === 'poll_draft_edit'
+    const isPollResponseContext = conversationalContext.contextType === 'poll_response'
+    const isAnnouncementInputContext = conversationalContext.contextType === 'announcement_input'
+    const isAnnouncementDraftEditContext = conversationalContext.contextType === 'announcement_draft_edit'
     
-    // Check if user has an active poll waiting for response
+    // Legacy flags for backward compatibility (still used in some handlers)
+    const isPollDraftContext = isPollDraftEditContext || conversationalContext.contextType === 'poll_input'
+    const isPollQuestionInputContext = isPollInputContext
+    const isAnnouncementDraftContext = isAnnouncementInputContext || isAnnouncementDraftEditContext
+    
+    // Check if user has an active poll waiting for response (for determining isPollResponseContext with low confidence)
     const phoneE164 = from.startsWith('+') ? from : `+1${phoneNumber}`
     const { data: pendingPollResponse } = await supabase
       .from('sms_poll_response')
@@ -569,19 +576,16 @@ export async function POST(request: NextRequest) {
       .maybeSingle()
     
     const hasActivePoll = pendingPollResponse?.sms_poll && pendingPollResponse.sms_poll.sent_at
+    // If LLM has low confidence, fall back to active poll check
+    const finalIsPollResponseContext = conversationalContext.confidence < 0.7 && !!hasActivePoll ? !!hasActivePoll : isPollResponseContext
     
-    // Only treat as poll-response context if there is a pending poll awaiting this user's reply
-    const isPollResponseContext = !!hasActivePoll
-    
-    const textRaw = (body || '').trim()
-    const lowerBody = textRaw.toLowerCase()
     const activePollDraft = await getActivePollDraft(phoneNumber)
     const activeDraft = await getActiveDraft(phoneNumber)
     
     // ========================================================================
     // PRIORITY 0: Send command (HIGHEST - before everything else, but NOT if responding to poll)
     // ========================================================================
-    if ((command === 'SEND IT' || command === 'SEND NOW' || isSendAffirmation(textRaw, isPollResponseContext)) && !isPollResponseContext && !isPollQuestionInputContext) {
+    if ((command === 'SEND IT' || command === 'SEND NOW' || isSendAffirmation(textRaw, finalIsPollResponseContext)) && !finalIsPollResponseContext && !isPollQuestionInputContext) {
       // Get both drafts and send the most recent one
       const pollDraftCheck = activePollDraft || await getActivePollDraft(phoneNumber)
       const announcementDraftCheck = activeDraft || await getActiveDraft(phoneNumber)
@@ -649,7 +653,7 @@ export async function POST(request: NextRequest) {
     // ========================================================================
     // PRIORITY 1: Poll Response (HIGH - before queries)
     // ========================================================================
-    if (isPollResponseContext && !isPollDraftContext && !isPollQuestionInputContext && !isPollRequest(textRaw) && !isAnnouncementRequest(textRaw)) {
+    if (finalIsPollResponseContext && !isPollDraftContext && !isPollQuestionInputContext && !isPollRequest(textRaw) && !isAnnouncementRequest(textRaw)) {
       try {
         const upper = textRaw.toUpperCase()
         const codeMatch = upper.match(/\b([A-Z0-9]{4})\b/)
@@ -807,7 +811,7 @@ export async function POST(request: NextRequest) {
     let pendingPollFollowUp: string | null = null
     
     // Only treat as query if NOT in poll/question/draft contexts
-    if (looksLikeQuery && !isPollDraftContext && !isAnnouncementDraftContext && !isPollResponseContext && !isPollQuestionInputContext) {
+    if (looksLikeQuery && !isPollDraftContext && !isAnnouncementDraftContext && !finalIsPollResponseContext && !isPollQuestionInputContext) {
       // This is a query - handle it normally (code continues below to query handling)
       // We'll set a flag to add draft follow-up after
       console.log(`[Twilio SMS] Detected query "${textRaw}", will answer then check for drafts`)
