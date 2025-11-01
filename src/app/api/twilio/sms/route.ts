@@ -785,8 +785,17 @@ export async function POST(request: NextRequest) {
       let question = quoteMatch ? quoteMatch[1] : textRaw.trim()
       
       if (!question || question.length === 0) {
+        const askMsg = 'what would you like to ask in the poll?'
+        
+        // Save to conversation history so next message is recognized as poll input
+        await supabase.from('sms_conversation_history').insert({
+          phone_number: phoneNumber,
+          user_message: textRaw,
+          bot_response: askMsg
+        })
+        
         return new NextResponse(
-          `<?xml version="1.0" encoding="UTF-8"?><Response><Message>what would you like to ask in the poll?</Message></Response>`,
+          `<?xml version="1.0" encoding="UTF-8"?><Response><Message>${askMsg}</Message></Response>`,
           { headers: { 'Content-Type': 'application/xml' } }
         )
       }
@@ -916,8 +925,17 @@ export async function POST(request: NextRequest) {
         
         if (!question || question.trim().length === 0) {
           // No question extracted - ask for it
+          const askMsg = 'what would you like to ask in the poll?'
+          
+          // Save to conversation history so next message is recognized as poll input
+          await supabase.from('sms_conversation_history').insert({
+            phone_number: phoneNumber,
+            user_message: textRaw,
+            bot_response: askMsg
+          })
+          
           return new NextResponse(
-            `<?xml version="1.0" encoding="UTF-8"?><Response><Message>what would you like to ask in the poll?</Message></Response>`,
+            `<?xml version="1.0" encoding="UTF-8"?><Response><Message>${askMsg}</Message></Response>`,
             { headers: { 'Content-Type': 'application/xml' } }
           )
         }
@@ -1073,8 +1091,17 @@ export async function POST(request: NextRequest) {
       
       // If no content extracted, ask what they want to say
       if (!announcementContent || announcementContent.trim().length === 0) {
+        const askMsg = 'what would you like the announcement to say?'
+        
+        // Save to conversation history so next message is recognized as announcement input
+        await supabase.from('sms_conversation_history').insert({
+          phone_number: phoneNumber,
+          user_message: textRaw,
+          bot_response: askMsg
+        })
+        
         return new NextResponse(
-          `<?xml version="1.0" encoding="UTF-8"?><Response><Message>what would you like the announcement to say?</Message></Response>`,
+          `<?xml version="1.0" encoding="UTF-8"?><Response><Message>${askMsg}</Message></Response>`,
           { headers: { 'Content-Type': 'application/xml' } }
         )
       }
