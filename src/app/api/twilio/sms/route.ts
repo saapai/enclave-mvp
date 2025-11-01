@@ -989,6 +989,7 @@ export async function POST(request: NextRequest) {
     }
     
     // Announcement request (if NOT in draft context)
+    console.log(`[Twilio SMS] Announcement check: isPollDraftContext=${isPollDraftContext}, isAnnouncementDraftContext=${isAnnouncementDraftContext}, isAnnouncementRequest=${isAnnouncementRequest(textRaw)}`)
     if (!isPollDraftContext && !isAnnouncementDraftContext && isAnnouncementRequest(textRaw)) {
       console.log(`[Twilio SMS] Detected announcement request from ${phoneNumber}`)
       
