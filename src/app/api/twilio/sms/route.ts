@@ -553,6 +553,7 @@ export async function POST(request: NextRequest) {
     
     const isAnnouncementDraftContext =
       lastBotMessage.includes('what the announcement will say') ||
+      lastBotMessage.includes('what would you like the announcement to say') ||
       lastBotMessage.includes('reply "send it" to broadcast') ||
       contextMessages.includes('announcement will say')
     
@@ -963,6 +964,32 @@ export async function POST(request: NextRequest) {
           { headers: { 'Content-Type': 'application/xml' } }
         )
       }
+    }
+    
+    // Announcement content input (when bot asked "what would you like the announcement to say?" but no draft exists yet)
+    if (isAnnouncementDraftContext && !activeDraft && !isPollRequest(textRaw) && !isAnnouncementRequest(textRaw) && !looksLikeQuery) {
+      console.log(`[Twilio SMS] Creating announcement draft with user content: "${textRaw}"`)
+      
+      const announcementText = extractRawAnnouncementText(body)
+      
+      // Generate draft from the content
+      const spaceIds = await getWorkspaceIds()
+      const draft = await generateAnnouncementDraft({ content: announcementText })
+      console.log(`[Twilio SMS] Generated draft: "${draft}"`)
+      
+      // Save new draft
+      const draftId = await saveDraft(phoneNumber, {
+        content: draft,
+        tone: 'casual',
+        scheduledFor: undefined,
+        targetAudience: undefined,
+        workspaceId: spaceIds[0]
+      }, spaceIds[0])
+      
+      return new NextResponse(
+        `<?xml version="1.0" encoding="UTF-8"?><Response><Message>okay here's what the announcement will say:\n\n${draft}\n\nreply "send it" to broadcast or reply to edit the message</Message></Response>`,
+        { headers: { 'Content-Type': 'application/xml' } }
+      )
     }
     
     // Announcement draft editing (only if in announcement context AND not a query)
