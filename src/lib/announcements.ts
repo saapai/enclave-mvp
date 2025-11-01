@@ -43,8 +43,14 @@ export function extractRawAnnouncementText(message: string): string {
     return quoteMatch[1];
   }
   
+  // Check for "no edit it to this exactly:" or "No Send out..." - extract everything after the colon or text after "No"
+  const editExactlyMatch = message.match(/(?:no|edit it to this exactly):\s*(.+)/is);
+  if (editExactlyMatch) {
+    return editExactlyMatch[1].trim();
+  }
+  
   // Check for "no just", "actually", "change it to" etc - extract the actual text
-  const correctionMatch = message.match(/(?:no just|actually|change it to|make it|i want it to say|i want the announcement to say)\s+"?([^"]+)"?$/i);
+  const correctionMatch = message.match(/(?:no just|actually|change it to|make it|i want it to say|i want the announcement to say|use my exact wording)\s+"?([^"]+)"?$/i);
   if (correctionMatch) {
     return correctionMatch[1].trim();
   }
@@ -70,7 +76,16 @@ export function isDraftModification(message: string): boolean {
     lowerMsg.includes('be more urgent') ||
     lowerMsg.includes('be more casual') ||
     lowerMsg.includes('change it to') ||
+    lowerMsg.includes('edit it to') ||
     lowerMsg.includes('make it') ||
+    lowerMsg.includes('use my exact') ||
+    lowerMsg.includes('use exact') ||
+    lowerMsg.includes('use this exactly') ||
+    lowerMsg.includes('calmer') ||
+    lowerMsg.includes('nicer') ||
+    lowerMsg.includes('meaner') ||
+    lowerMsg.includes('urgent') ||
+    lowerMsg.includes('casual') ||
     lowerMsg.includes('edit')
   );
 }
