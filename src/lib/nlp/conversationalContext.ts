@@ -78,7 +78,7 @@ Return ONLY valid JSON:
   "confidence": 0.0-1.0,
   "reasoning": "brief explanation",
   "quotedSegments": ["extracted", "quoted", "text"] (optional, empty array if none)
-}
+}`
           },
           {
             role: 'user',
