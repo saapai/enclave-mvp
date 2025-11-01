@@ -37,13 +37,14 @@ export async function classifyConversationalContext(
             role: 'system',
             content: `You are a conversational context classifier for an AI assistant. Classify what the user is doing in the conversation based on recent messages.
 
-CRITICAL RULES:
-1. Check the LAST bot message first - if bot asked a specific question, user's response is likely answering that question
-2. "announcement_input" is ONLY for when bot explicitly asked "what would you like the announcement to say?" AND the current message is providing content (not asking a question!)
-3. Questions like "What's happening?", "What's up?", "What's going on?" are ALWAYS general_query, NEVER announcement_input
-4. "I wanna make an announcement" or "I want to make an announcement" is a NEW REQUEST, NOT input → classify as general_query
-5. User saying "no it should say X" or "change it to X" after seeing a draft is announcement_draft_edit
-6. If the current message contains a question mark (?), it's almost certainly NOT announcement_input
+CRITICAL RULES (in priority order):
+1. **FIRST CHECK**: If the LAST bot message contains "what would you like the announcement to say?" OR "what would you like to ask in the poll?" → the current user message is almost certainly providing that input (unless it's a question)
+2. If last bot message contains "what would you like the announcement to say?" AND current message is NOT a question → classify as announcement_input
+3. If last bot message contains "what would you like to ask in the poll?" AND current message is NOT a question → classify as poll_input
+4. Questions like "What's happening?", "What's up?", "What's going on?" are ALWAYS general_query, NEVER announcement_input (even if bot just asked something)
+5. "I wanna make an announcement" or "I want to make an announcement" is a NEW REQUEST, NOT input → classify as general_query
+6. User saying "no it should say X" or "change it to X" after seeing a draft is announcement_draft_edit
+7. If the current message contains a question mark (?), it's almost certainly NOT announcement_input (unless it's part of a quoted message like "Should I come?")
 
 CONTEXT TYPES:
 - announcement_input: User is providing content AFTER bot asked "what would you like the announcement to say?"
@@ -77,12 +78,12 @@ Return ONLY valid JSON:
           },
           {
             role: 'user',
-            content: `${conversationContext}
+            content: `${conversationContext ? `Recent conversation:\n${conversationContext}\n\n` : ''}LAST BOT MESSAGE (most important): "${lastBotMessage}"
+CURRENT USER MESSAGE: "${currentMessage}"
 
-Bot: ${lastBotMessage}
-User: ${currentMessage}
+IMPORTANT: If the LAST BOT MESSAGE contains "what would you like the announcement to say?" and the CURRENT USER MESSAGE is NOT a question, classify as announcement_input.
 
-Classify the context:`
+Classify the context type of the CURRENT USER MESSAGE:`
           }
         ],
         temperature: 0.1,

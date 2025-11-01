@@ -559,7 +559,16 @@ export async function POST(request: NextRequest) {
     const isPollInputContext = conversationalContext.contextType === 'poll_input'
     const isPollDraftEditContext = conversationalContext.contextType === 'poll_draft_edit'
     const isPollResponseContext = conversationalContext.contextType === 'poll_response'
-    const isAnnouncementInputContext = conversationalContext.contextType === 'announcement_input'
+    
+    // Check if last bot message asked for announcement content (fallback if LLM misclassifies)
+    const lastBotAskedForAnnouncement = lastBotMessage.toLowerCase().includes('what would you like the announcement to say')
+    const isExplicitQuestion = textRaw.includes('?') || /^(what|when|where|who|how|why|is|are|was|were|do|does|did|will|can|could|should)\s/i.test(textRaw.trim())
+    const isExplicitAnnouncementRequest = isAnnouncementRequest(textRaw)
+    
+    // Override: if bot asked for announcement content and user provides non-question content, it's announcement input
+    const shouldOverrideAsAnnouncementInput = lastBotAskedForAnnouncement && !isExplicitQuestion && !isExplicitAnnouncementRequest
+    
+    const isAnnouncementInputContext = conversationalContext.contextType === 'announcement_input' || shouldOverrideAsAnnouncementInput
     const isAnnouncementDraftEditContext = conversationalContext.contextType === 'announcement_draft_edit'
     
     // Legacy flags for backward compatibility (still used in some handlers)
@@ -570,9 +579,7 @@ export async function POST(request: NextRequest) {
     // Conversational context might incorrectly classify "I wanna make an announcement" as announcement_input
     // when it's actually a NEW announcement request
     // Also: questions (containing "?") are NEVER announcement_input
-    const isExplicitAnnouncementRequest = isAnnouncementRequest(textRaw)
-    const isQuestion = textRaw.includes('?') || /^(what|when|where|who|how|why|is|are|was|were|do|does|did|will|can|could|should)\s/i.test(textRaw.trim())
-    const isAnnouncementDraftContext = (isAnnouncementInputContext || isAnnouncementDraftEditContext) && !isExplicitAnnouncementRequest && !isQuestion
+    const isAnnouncementDraftContext = (isAnnouncementInputContext || isAnnouncementDraftEditContext) && !isExplicitAnnouncementRequest && !isExplicitQuestion
     
     // Check if user has an active poll waiting for response (for determining isPollResponseContext with low confidence)
     const phoneE164 = from.startsWith('+') ? from : `+1${phoneNumber}`
