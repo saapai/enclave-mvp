@@ -289,15 +289,22 @@ export async function searchResourcesHybrid(
       allResults.sort((a, b) => (b.score || 0) - (a.score || 0))
     }
     
+    // Filter out unwanted documents (e.g., deleted resources that still show up)
+    const blockedTitles = ['fu\'s', 'fu\'s palace', 'f u\'s', 'f us palace'].map(t => t.toLowerCase())
+    const filteredResults = allResults.filter(result => {
+      const titleLower = (result.title || '').toLowerCase()
+      return !blockedTitles.some(blocked => titleLower.includes(blocked))
+    })
+    
     console.log(`[Hybrid Search] Top 5 results:`)
-    allResults.slice(0, 5).forEach((result, i) => {
+    filteredResults.slice(0, 5).forEach((result, i) => {
       const finalScore = (result as any).finalScore
       const scoreDisplay = finalScore ? `final: ${finalScore.toFixed(3)}` : `score: ${result.score?.toFixed(3)}`
       console.log(`  ${i+1}. [${result.type}] ${result.title} (${scoreDisplay}, source: ${(result as any).source})`)
     })
     
     // Apply limit and offset
-    return allResults.slice(offset, offset + limit)
+    return filteredResults.slice(offset, offset + limit)
     
   } catch (error) {
     console.error('Hybrid search error:', error)

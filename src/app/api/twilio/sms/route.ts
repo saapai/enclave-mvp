@@ -321,8 +321,10 @@ export async function POST(request: NextRequest) {
         // Update name everywhere (Supabase poll responses + Airtable)
         await updateNameEverywhere(from, nameCheck.name)
         
+        const introMsg = `got it! i'll call you ${nameCheck.name}. i'm jarvis — i can help you find info about events, docs, and more. try asking "what's happening this week" or any question you have!`
+        
         return new NextResponse(
-          `<?xml version="1.0" encoding="UTF-8"?><Response><Message>got it! i'll call you ${nameCheck.name}</Message></Response>`,
+          `<?xml version="1.0" encoding="UTF-8"?><Response><Message>${introMsg}</Message></Response>`,
           { headers: { 'Content-Type': 'application/xml' } }
         )
       }
