@@ -848,6 +848,8 @@ export async function POST(request: NextRequest) {
       conversationalContext.contextType === 'poll_response'
     ) && !isExplicitAnnouncementRequest // Don't block explicit announcement requests
     
+    console.log(`[Twilio SMS] Query detection: looksLikeQuery=${looksLikeQuery}, isPollDraftContext=${isPollDraftContext}, isAnnouncementDraftContext=${isAnnouncementDraftContext}, isActionContext=${isActionContext}, willSkipQuery=${!isPollDraftContext && !isAnnouncementDraftContext && !isActionContext}`)
+    
     if (looksLikeQuery && !isPollDraftContext && !isAnnouncementDraftContext && !finalIsPollResponseContext && !isPollQuestionInputContext && !isActionContext && !isExplicitAnnouncementRequest) {
       // This is a query - handle it normally (code continues below to query handling)
       // We'll set a flag to add draft follow-up after
