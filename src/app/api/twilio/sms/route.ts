@@ -1094,6 +1094,80 @@ export async function POST(request: NextRequest) {
       }
     }
     
+    // Check if user wants to delete/cancel a draft
+    const wantsDelete = /(delete|cancel|remove)\s+(the\s+)?(announcement|poll|draft)/i.test(body)
+    if (wantsDelete && (activeDraft || activePollDraft)) {
+      console.log(`[Twilio SMS] User wants to delete draft for ${phoneNumber}`)
+      
+      // Determine which to delete
+      let deletedType = ''
+      if (activeDraft && body.toLowerCase().includes('announcement')) {
+        // Delete announcement draft
+        const { error } = await supabase
+          .from('announcement')
+          .delete()
+          .eq('id', activeDraft.id)
+        
+        if (error) {
+          console.error(`[Twilio SMS] Failed to delete announcement draft:`, error)
+        } else {
+          deletedType = 'announcement'
+          console.log(`[Twilio SMS] Deleted announcement draft ${activeDraft.id}`)
+        }
+      } else if (activePollDraft && body.toLowerCase().includes('poll')) {
+        // Delete poll draft
+        const { error } = await supabase
+          .from('sms_poll')
+          .delete()
+          .eq('id', activePollDraft.id)
+        
+        if (error) {
+          console.error(`[Twilio SMS] Failed to delete poll draft:`, error)
+        } else {
+          deletedType = 'poll'
+          console.log(`[Twilio SMS] Deleted poll draft ${activePollDraft.id}`)
+        }
+      } else if (activePollDraft) {
+        // Delete poll draft (default if both exist)
+        const { error } = await supabase
+          .from('sms_poll')
+          .delete()
+          .eq('id', activePollDraft.id)
+        
+        if (error) {
+          console.error(`[Twilio SMS] Failed to delete poll draft:`, error)
+        } else {
+          deletedType = 'poll'
+          console.log(`[Twilio SMS] Deleted poll draft ${activePollDraft.id}`)
+        }
+      } else if (activeDraft) {
+        // Delete announcement draft (default if only announcement exists)
+        const { error } = await supabase
+          .from('announcement')
+          .delete()
+          .eq('id', activeDraft.id)
+        
+        if (error) {
+          console.error(`[Twilio SMS] Failed to delete announcement draft:`, error)
+        } else {
+          deletedType = 'announcement'
+          console.log(`[Twilio SMS] Deleted announcement draft ${activeDraft.id}`)
+        }
+      }
+      
+      if (deletedType) {
+        return new NextResponse(
+          `<?xml version="1.0" encoding="UTF-8"?><Response><Message>got it. deleted the ${deletedType} draft.</Message></Response>`,
+          { headers: { 'Content-Type': 'application/xml' } }
+        )
+      } else {
+        return new NextResponse(
+          `<?xml version="1.0" encoding="UTF-8"?><Response><Message>couldn't find a draft to delete</Message></Response>`,
+          { headers: { 'Content-Type': 'application/xml' } }
+        )
+      }
+    }
+    
     // Check if user wants to send the draft (activePollDraft already fetched above)
     if (command === 'SEND IT' || command === 'SEND NOW') {
       // Get announcement draft
