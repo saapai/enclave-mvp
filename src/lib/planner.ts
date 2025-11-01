@@ -7,6 +7,7 @@
 import { ENV } from './env'
 import { findEventByName, findPolicyByTitle, getLinkbacks } from './knowledge-graph'
 import { searchResourcesHybrid } from './search'
+import { supabase } from './supabase'
 
 // ============================================================================
 // TYPES
@@ -110,7 +111,8 @@ function fallbackPlan(query: string): QueryPlan {
         confidence: 0.9,
         entities: {},
         tools: [
-          { tool: 'search_docs', params: { query }, priority: 1 }
+          { tool: 'search_announcements', params: { query }, priority: 1 }, // Check announcements first (most recent info)
+          { tool: 'search_docs', params: { query }, priority: 2 }
         ]
       }
     }
@@ -167,6 +169,9 @@ async function executeTool(
 
       case 'search_docs':
         return await executeSearchDocs(tool.params, spaceId)
+
+      case 'search_announcements':
+        return await executeSearchAnnouncements(tool.params, spaceId)
 
       case 'calendar_find':
         return await executeCalendarFind(tool.params, spaceId)
@@ -269,6 +274,80 @@ async function executeSearchDocs(
 
   return {
     tool: 'search_docs',
+    success: false,
+    data: null,
+    confidence: 0
+  }
+}
+
+/**
+ * Search announcements (recent sent announcements)
+ */
+async function executeSearchAnnouncements(
+  params: Record<string, any>,
+  spaceId: string
+): Promise<ToolResult> {
+  const { query } = params
+  
+  console.log(`[search_announcements] Searching announcements: "${query}"`)
+  
+  // Search for recent announcements that are relevant to the query
+  const { data: announcements } = await supabase
+    .from('announcement')
+    .select('id, final_content, sent_at, created_at')
+    .eq('workspace_id', spaceId)
+    .eq('status', 'sent')
+    .not('final_content', 'is', null)
+    .order('sent_at', { ascending: false })
+    .limit(10)
+  
+  if (!announcements || announcements.length === 0) {
+    console.log(`[search_announcements] No announcements found`)
+    return {
+      tool: 'search_announcements',
+      success: false,
+      data: null,
+      confidence: 0
+    }
+  }
+  
+  // Simple keyword matching (could be improved with embeddings later)
+  const lowerQuery = (query || '').toLowerCase()
+  const matching = announcements.filter(ann => {
+    const content = (ann.final_content || '').toLowerCase()
+    return content.includes(lowerQuery)
+  })
+  
+  console.log(`[search_announcements] Found ${matching.length} matching announcements`)
+  
+  if (matching.length > 0) {
+    // Convert to SearchResult format for compatibility
+    const results = matching.map(ann => ({
+      id: ann.id,
+      title: 'Announcement',
+      body: ann.final_content || '',
+      type: 'announcement' as const,
+      space_id: spaceId,
+      created_at: ann.sent_at || ann.created_at,
+      updated_at: ann.sent_at || ann.created_at,
+      created_by: null,
+      tags: [],
+      rank: 0.9, // High rank for recent announcements
+      score: 0.9,
+      url: null,
+      metadata: {}
+    }))
+    
+    return {
+      tool: 'search_announcements',
+      success: true,
+      data: { results },
+      confidence: 0.9
+    }
+  }
+  
+  return {
+    tool: 'search_announcements',
     success: false,
     data: null,
     confidence: 0
