@@ -43,6 +43,12 @@ export function extractRawAnnouncementText(message: string): string {
     return quoteMatch[1];
   }
   
+  // Check for "no edit it to this exactly:", "edit it to this exactly:", etc - extract text after colon
+  const exactEditMatch = message.match(/(?:no\s+)?edit\s+it\s+to\s+this\s+exactly\s*:?\s*(.+)/is);
+  if (exactEditMatch) {
+    return exactEditMatch[1].trim();
+  }
+  
   // Check for "no just", "actually", "change it to" etc - extract the actual text
   const correctionMatch = message.match(/(?:no just|actually|change it to|make it|i want it to say|i want the announcement to say)\s+"?([^"]+)"?$/i);
   if (correctionMatch) {

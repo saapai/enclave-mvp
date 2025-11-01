@@ -258,15 +258,28 @@ export async function searchResourcesHybrid(
     // Combine and rank results from all sources
     console.log(`[Hybrid Search] Result counts - Regular FTS: ${regularResults.length}, Regular Vector: ${vectorSearchResults.length}, GDocs: ${googleDocsSearchResults.length}, Calendar: ${calendarSearchResults.length}, Slack: ${slackSearchResults.length}`)
     
-    let allResults = [...regularResults, ...vectorSearchResults, ...googleDocsSearchResults, ...calendarSearchResults, ...slackSearchResults]
+    // Filter out unwanted documents BEFORE reranking (e.g., deleted resources that still show up)
+    const blockedTitles = ['fu\'s', 'fu\'s palace', 'f u\'s', 'f us palace'].map(t => t.toLowerCase())
+    const filterBlocked = (results: SearchResult[]) => results.filter(result => {
+      const titleLower = (result.title || '').toLowerCase()
+      return !blockedTitles.some(blocked => titleLower.includes(blocked))
+    })
+    
+    const filteredRegular = filterBlocked(regularResults)
+    const filteredVector = filterBlocked(vectorSearchResults)
+    const filteredGDocs = filterBlocked(googleDocsSearchResults)
+    const filteredCalendar = filterBlocked(calendarSearchResults)
+    const filteredSlack = filterBlocked(slackSearchResults)
+    
+    let allResults = [...filteredRegular, ...filteredVector, ...filteredGDocs, ...filteredCalendar, ...filteredSlack]
     
     // Apply reranking if enabled
-    if (USE_RERANKING && regularResults.length > 0 && vectorSearchResults.length > 0) {
+    if (USE_RERANKING && filteredRegular.length > 0 && filteredVector.length > 0) {
       console.log(`[Hybrid Search] Applying reranking (time decay + authority)`)
       
-      // Separate BM25 (FTS) and Vector results for reranking
-      const bm25Results = regularResults
-      const vectorOnlyResults = vectorSearchResults
+      // Separate BM25 (FTS) and Vector results for reranking (already filtered)
+      const bm25Results = filteredRegular
+      const vectorOnlyResults = filteredVector
       
       // Rerank with time decay + authority
       const reranked = rerankResults(bm25Results, vectorOnlyResults, {
@@ -276,7 +289,7 @@ export async function searchResourcesHybrid(
       })
       
       // Merge with other sources (GDocs, Calendar, Slack)
-      allResults = [...reranked, ...googleDocsSearchResults, ...calendarSearchResults, ...slackSearchResults]
+      allResults = [...reranked, ...filteredGDocs, ...filteredCalendar, ...filteredSlack]
       
       // Sort by final score (from reranker) or fallback to original score
       allResults.sort((a, b) => {
@@ -289,22 +302,15 @@ export async function searchResourcesHybrid(
       allResults.sort((a, b) => (b.score || 0) - (a.score || 0))
     }
     
-    // Filter out unwanted documents (e.g., deleted resources that still show up)
-    const blockedTitles = ['fu\'s', 'fu\'s palace', 'f u\'s', 'f us palace'].map(t => t.toLowerCase())
-    const filteredResults = allResults.filter(result => {
-      const titleLower = (result.title || '').toLowerCase()
-      return !blockedTitles.some(blocked => titleLower.includes(blocked))
-    })
-    
     console.log(`[Hybrid Search] Top 5 results:`)
-    filteredResults.slice(0, 5).forEach((result, i) => {
+    allResults.slice(0, 5).forEach((result, i) => {
       const finalScore = (result as any).finalScore
       const scoreDisplay = finalScore ? `final: ${finalScore.toFixed(3)}` : `score: ${result.score?.toFixed(3)}`
       console.log(`  ${i+1}. [${result.type}] ${result.title} (${scoreDisplay}, source: ${(result as any).source})`)
     })
     
     // Apply limit and offset
-    return filteredResults.slice(offset, offset + limit)
+    return allResults.slice(offset, offset + limit)
     
   } catch (error) {
     console.error('Hybrid search error:', error)

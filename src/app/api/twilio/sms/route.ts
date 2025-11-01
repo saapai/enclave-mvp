@@ -926,6 +926,46 @@ export async function POST(request: NextRequest) {
       return unique.slice(0, 1)
     }
     
+    // Exact text request - handle BEFORE any draft modification or editing
+    if (isExactTextRequest(body) && (activeDraft || activePollDraft) && !looksLikeQuery) {
+      console.log(`[Twilio SMS] Using exact text for ${phoneNumber}`)
+      
+      if (activeDraft) {
+        const exactText = extractRawAnnouncementText(body)
+        console.log(`[Twilio SMS] Using exact text: "${exactText}"`)
+        
+        await saveDraft(phoneNumber, {
+          id: activeDraft.id,
+          content: exactText,
+          tone: activeDraft.tone,
+          scheduledFor: activeDraft.scheduledFor,
+          targetAudience: activeDraft.targetAudience,
+          workspaceId: activeDraft.workspaceId
+        }, activeDraft.workspaceId!)
+        
+        return new NextResponse(
+          `<?xml version="1.0" encoding="UTF-8"?><Response><Message>updated:\n\n${exactText}\n\nreply "send it" to broadcast</Message></Response>`,
+          { headers: { 'Content-Type': 'application/xml' } }
+        )
+      } else if (activePollDraft) {
+        const exactText = extractRawAnnouncementText(body)
+        
+        const spaceIds = await getWorkspaceIds()
+        await savePollDraft(phoneNumber, {
+          id: activePollDraft.id,
+          question: exactText,
+          options: activePollDraft.options,
+          tone: activePollDraft.tone,
+          workspaceId: spaceIds[0]
+        }, spaceIds[0])
+        
+        return new NextResponse(
+          `<?xml version="1.0" encoding="UTF-8"?><Response><Message>updated:\n\n${exactText}\n\nreply "send it" to send</Message></Response>`,
+          { headers: { 'Content-Type': 'application/xml' } }
+        )
+      }
+    }
+    
     // Announcement draft editing (only if in announcement context AND not a query)
     if (isAnnouncementDraftContext && activeDraft && !isPollRequest(textRaw) && !isAnnouncementRequest(textRaw) && !looksLikeQuery) {
       console.log(`[Twilio SMS] Editing announcement draft in context: "${textRaw}"`)
@@ -993,46 +1033,6 @@ export async function POST(request: NextRequest) {
         `<?xml version="1.0" encoding="UTF-8"?><Response><Message>${response}</Message></Response>`,
         { headers: { 'Content-Type': 'application/xml' } }
       )
-    }
-    
-    // Exact text request - handle before draft modification
-    if (isExactTextRequest(body) && (activeDraft || activePollDraft) && !looksLikeQuery) {
-      console.log(`[Twilio SMS] Using exact text for ${phoneNumber}`)
-      
-      if (activeDraft) {
-        const exactText = extractRawAnnouncementText(body)
-        console.log(`[Twilio SMS] Using exact text: "${exactText}"`)
-        
-        await saveDraft(phoneNumber, {
-          id: activeDraft.id,
-          content: exactText,
-          tone: activeDraft.tone,
-          scheduledFor: activeDraft.scheduledFor,
-          targetAudience: activeDraft.targetAudience,
-          workspaceId: activeDraft.workspaceId
-        }, activeDraft.workspaceId!)
-        
-        return new NextResponse(
-          `<?xml version="1.0" encoding="UTF-8"?><Response><Message>updated:\n\n${exactText}\n\nreply "send it" to broadcast</Message></Response>`,
-          { headers: { 'Content-Type': 'application/xml' } }
-        )
-      } else if (activePollDraft) {
-        const exactText = extractRawAnnouncementText(body)
-        
-        const spaceIds = await getWorkspaceIds()
-        await savePollDraft(phoneNumber, {
-          id: activePollDraft.id,
-          question: exactText,
-          options: activePollDraft.options,
-          tone: activePollDraft.tone,
-          workspaceId: spaceIds[0]
-        }, spaceIds[0])
-        
-        return new NextResponse(
-          `<?xml version="1.0" encoding="UTF-8"?><Response><Message>updated:\n\n${exactText}\n\nreply "send it" to send</Message></Response>`,
-          { headers: { 'Content-Type': 'application/xml' } }
-        )
-      }
     }
     
     // Draft tone modifications (only if in draft context, not a query)

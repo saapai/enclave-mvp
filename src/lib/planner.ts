@@ -329,10 +329,12 @@ export async function composeResponse(
 ): Promise<ComposedResponse> {
   console.log(`[Composer] Composing response from ${results.length} tool results`)
 
-  // Find best result
-  const bestResult = results
+  // Find all successful results, sorted by confidence
+  const successfulResults = results
     .filter(r => r.success)
-    .sort((a, b) => (b.confidence || 0) - (a.confidence || 0))[0]
+    .sort((a, b) => (b.confidence || 0) - (a.confidence || 0))
+  
+  const bestResult = successfulResults[0]
 
   if (!bestResult) {
     // No results found
@@ -361,11 +363,11 @@ export async function composeResponse(
     return composeEventResponse(bestResult)
   } else if (plan.intent === 'policy_lookup') {
     return composePolicyResponse(bestResult)
-  } else if (plan.intent === 'content') {
-    // Content queries should always use doc search results with AI summarization
-    return composeDocResponse(bestResult)
+  } else if (plan.intent === 'content' || plan.intent === 'content_summary') {
+    // Content queries should use ALL relevant results, not just the top one
+    return composeDocResponse(bestResult, successfulResults.slice(0, 5))
   } else {
-    return composeDocResponse(bestResult)
+    return composeDocResponse(bestResult, successfulResults.slice(0, 5))
   }
 }
 
@@ -477,17 +479,37 @@ function composePolicyResponse(result: ToolResult): ComposedResponse {
 /**
  * Compose doc search response using AI summarization
  */
-function composeDocResponse(result: ToolResult): ComposedResponse {
-  if (result.tool === 'search_docs' && result.data?.results) {
-    const topResult = result.data.results[0]
+function composeDocResponse(primaryResult: ToolResult, allResults?: ToolResult[]): ComposedResponse {
+  if (primaryResult.tool === 'search_docs' && primaryResult.data?.results) {
+    // Use multiple results to get comprehensive context
+    const resultsToUse = allResults || [primaryResult]
+    const allDocs: any[] = []
+    
+    // Collect all document results
+    for (const result of resultsToUse) {
+      if (result.tool === 'search_docs' && result.data?.results) {
+        allDocs.push(...result.data.results.slice(0, 3)) // Top 3 from each result
+      }
+    }
+    
+    // Deduplicate by ID
+    const uniqueDocs = Array.from(new Map(allDocs.map(doc => [doc.id, doc])).values())
+    
+    // Combine content from multiple docs for comprehensive answers
+    const combinedText = uniqueDocs
+      .slice(0, 5) // Use top 5 unique documents
+      .map(doc => doc.body || doc.title)
+      .join('\n\n')
+    
+    const sources = uniqueDocs.slice(0, 5).map(doc => doc.title)
 
     // For doc search, we need to call the AI to summarize
     // The SMS handler should handle this
-    // Here we just return the top result
+    // Here we return combined content from multiple docs
     return {
-      text: topResult.body || topResult.title,
-      sources: [topResult.title],
-      confidence: result.confidence || 0.5,
+      text: combinedText || uniqueDocs[0]?.body || uniqueDocs[0]?.title,
+      sources,
+      confidence: primaryResult.confidence || 0.5,
       needsClarification: false
     }
   }

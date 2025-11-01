@@ -142,6 +142,9 @@ ${isBroadQuery ? 'Extract ONLY the information directly relevant to answering th
     
     // Remove asterisks used for markdown formatting
     aiResponse = aiResponse.replace(/\*\*/g, '').replace(/\*/g, '')
+    
+    // Remove prefixes like "TL;DR:", "In short:", "Here you go:", etc.
+    aiResponse = aiResponse.replace(/^(TL;DR:|TLDR:|In short:|Here you go:|Quick answer:|Answer:)\s*/i, '')
 
     return NextResponse.json({ 
       response: aiResponse,
