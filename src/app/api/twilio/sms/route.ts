@@ -9,6 +9,7 @@ import { planQuery, executePlan, composeResponse } from '@/lib/planner'
 import { 
   isAnnouncementRequest, 
   isDraftModification, 
+  isExactTextRequest,
   extractAnnouncementDetails, 
   generateAnnouncementDraft, 
   saveDraft, 
@@ -992,66 +993,82 @@ export async function POST(request: NextRequest) {
       )
     }
     
-    // Draft modifications (only if in draft context, not a query)
-    if (isDraftModification(body) && (activeDraft || activePollDraft) && !looksLikeQuery) {
-      console.log(`[Twilio SMS] Modifying draft for ${phoneNumber}`)
+    // Exact text request - handle before draft modification
+    if (isExactTextRequest(body) && (activeDraft || activePollDraft) && !looksLikeQuery) {
+      console.log(`[Twilio SMS] Using exact text for ${phoneNumber}`)
       
       if (activeDraft) {
-        const lowerBody = body.toLowerCase()
-        const hasExactEdit = lowerBody.includes('exact') || lowerBody.includes('edit it to') || lowerBody.includes('use my exact')
+        const exactText = extractRawAnnouncementText(body)
+        console.log(`[Twilio SMS] Using exact text: "${exactText}"`)
         
-        if (hasExactEdit) {
-          // User wants to use exact text - extract it
-          const exactText = extractRawAnnouncementText(body)
-          console.log(`[Twilio SMS] Using exact text: "${exactText}"`)
-          
-          // Update draft with exact text
-          await saveDraft(phoneNumber, {
-            id: activeDraft.id,
-            content: exactText,
-            tone: activeDraft.tone,
-            scheduledFor: activeDraft.scheduledFor,
-            targetAudience: activeDraft.targetAudience,
-            workspaceId: activeDraft.workspaceId
-          }, activeDraft.workspaceId!)
-          
-          return new NextResponse(
-            `<?xml version="1.0" encoding="UTF-8"?><Response><Message>updated:\n\n${exactText}\n\nreply "send it" to broadcast</Message></Response>`,
-            { headers: { 'Content-Type': 'application/xml' } }
-          )
-        } else {
-          // Determine tone modification
-          let newTone = activeDraft.tone || 'casual'
-          if (lowerBody.includes('meaner')) newTone = 'mean'
-          if (lowerBody.includes('nicer') || lowerBody.includes('calmer')) newTone = 'casual'
-          if (lowerBody.includes('urgent')) newTone = 'urgent'
-          
-          // Regenerate draft with new tone
-          const newDraft = await generateAnnouncementDraft(
-            { content: activeDraft.content, tone: newTone },
-            activeDraft.content
-          )
-          
-          // Update draft
-          await saveDraft(phoneNumber, {
-            id: activeDraft.id,
-            content: newDraft,
-            tone: newTone,
-            scheduledFor: activeDraft.scheduledFor,
-            targetAudience: activeDraft.targetAudience,
-            workspaceId: activeDraft.workspaceId
-          }, activeDraft.workspaceId!)
-          
-          return new NextResponse(
-            `<?xml version="1.0" encoding="UTF-8"?><Response><Message>updated:\n\n${newDraft}\n\nreply "send it" to broadcast</Message></Response>`,
-            { headers: { 'Content-Type': 'application/xml' } }
-          )
-        }
+        await saveDraft(phoneNumber, {
+          id: activeDraft.id,
+          content: exactText,
+          tone: activeDraft.tone,
+          scheduledFor: activeDraft.scheduledFor,
+          targetAudience: activeDraft.targetAudience,
+          workspaceId: activeDraft.workspaceId
+        }, activeDraft.workspaceId!)
+        
+        return new NextResponse(
+          `<?xml version="1.0" encoding="UTF-8"?><Response><Message>updated:\n\n${exactText}\n\nreply "send it" to broadcast</Message></Response>`,
+          { headers: { 'Content-Type': 'application/xml' } }
+        )
+      } else if (activePollDraft) {
+        const exactText = extractRawAnnouncementText(body)
+        
+        const spaceIds = await getWorkspaceIds()
+        await savePollDraft(phoneNumber, {
+          id: activePollDraft.id,
+          question: exactText,
+          options: activePollDraft.options,
+          tone: activePollDraft.tone,
+          workspaceId: spaceIds[0]
+        }, spaceIds[0])
+        
+        return new NextResponse(
+          `<?xml version="1.0" encoding="UTF-8"?><Response><Message>updated:\n\n${exactText}\n\nreply "send it" to send</Message></Response>`,
+          { headers: { 'Content-Type': 'application/xml' } }
+        )
+      }
+    }
+    
+    // Draft tone modifications (only if in draft context, not a query)
+    if (isDraftModification(body) && (activeDraft || activePollDraft) && !looksLikeQuery) {
+      console.log(`[Twilio SMS] Modifying draft tone for ${phoneNumber}`)
+      
+      if (activeDraft) {
+        // Determine tone modification
+        let newTone = activeDraft.tone || 'casual'
+        if (body.toLowerCase().includes('meaner')) newTone = 'mean'
+        if (body.toLowerCase().includes('nicer') || body.toLowerCase().includes('calmer')) newTone = 'casual'
+        if (body.toLowerCase().includes('urgent')) newTone = 'urgent'
+        
+        // Regenerate draft with new tone
+        const newDraft = await generateAnnouncementDraft(
+          { content: activeDraft.content, tone: newTone },
+          activeDraft.content
+        )
+        
+        // Update draft
+        await saveDraft(phoneNumber, {
+          id: activeDraft.id,
+          content: newDraft,
+          tone: newTone,
+          scheduledFor: activeDraft.scheduledFor,
+          targetAudience: activeDraft.targetAudience,
+          workspaceId: activeDraft.workspaceId
+        }, activeDraft.workspaceId!)
+        
+        return new NextResponse(
+          `<?xml version="1.0" encoding="UTF-8"?><Response><Message>updated:\n\n${newDraft}\n\nreply "send it" to broadcast</Message></Response>`,
+          { headers: { 'Content-Type': 'application/xml' } }
+        )
       } else if (activePollDraft) {
         // Poll draft tone modification
         let newTone = 'casual'
         if (body.toLowerCase().includes('meaner')) newTone = 'urgent'
-        if (body.toLowerCase().includes('nicer')) newTone = 'casual'
+        if (body.toLowerCase().includes('nicer') || body.toLowerCase().includes('calmer')) newTone = 'casual'
         if (body.toLowerCase().includes('urgent')) newTone = 'urgent'
         
         const newQuestion = await generatePollQuestion(
