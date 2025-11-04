@@ -300,36 +300,36 @@ export async function POST(request: NextRequest) {
     // Check if user is declaring their name - but NOT if it's a question about the bot's name
     const isBotNameQuestion = /(is\s+this\s+jarvis|are\s+you\s+jarvis|is\s+this\s+enclave|are\s+you\s+enclave)/i.test(body)
     if (!isBotNameQuestion) {
-      const nameCheck = await isNameDeclaration(body)
-      if (nameCheck.isName && nameCheck.name) {
-        console.log(`[Twilio SMS] Name declared: ${nameCheck.name} for ${phoneNumber}`)
-        
-        // Update sms_optin first to ensure needs_name is cleared
-        // Use phoneNumber (already normalized) to match how the table stores it
-        const { error: updateError } = await supabase
-          .from('sms_optin')
-          .update({ 
-            name: nameCheck.name,
-            needs_name: false,
-            updated_at: new Date().toISOString()
-          })
-          .eq('phone', phoneNumber)
-        
-        if (updateError) {
-          console.error(`[Twilio SMS] Error updating sms_optin for name:`, updateError)
-        } else {
-          console.log(`[Twilio SMS] Updated sms_optin: set name="${nameCheck.name}", needs_name=false for ${phoneNumber}`)
-        }
-        
-        // Update name everywhere (Supabase poll responses + Airtable)
-        await updateNameEverywhere(from, nameCheck.name)
+    const nameCheck = await isNameDeclaration(body)
+    if (nameCheck.isName && nameCheck.name) {
+      console.log(`[Twilio SMS] Name declared: ${nameCheck.name} for ${phoneNumber}`)
+      
+      // Update sms_optin first to ensure needs_name is cleared
+      // Use phoneNumber (already normalized) to match how the table stores it
+      const { error: updateError } = await supabase
+        .from('sms_optin')
+        .update({ 
+          name: nameCheck.name,
+          needs_name: false,
+          updated_at: new Date().toISOString()
+        })
+        .eq('phone', phoneNumber)
+      
+      if (updateError) {
+        console.error(`[Twilio SMS] Error updating sms_optin for name:`, updateError)
+      } else {
+        console.log(`[Twilio SMS] Updated sms_optin: set name="${nameCheck.name}", needs_name=false for ${phoneNumber}`)
+      }
+      
+      // Update name everywhere (Supabase poll responses + Airtable)
+      await updateNameEverywhere(from, nameCheck.name)
         
         const introMsg = `got it! i'll call you ${nameCheck.name}. i'm jarvis — i can help you find info about events, docs, and more. try asking "what's happening this week" or any question you have!`
-        
-        return new NextResponse(
+      
+      return new NextResponse(
           `<?xml version="1.0" encoding="UTF-8"?><Response><Message>${introMsg}</Message></Response>`,
-          { headers: { 'Content-Type': 'application/xml' } }
-        )
+        { headers: { 'Content-Type': 'application/xml' } }
+      )
       }
     }
     
@@ -561,7 +561,50 @@ export async function POST(request: NextRequest) {
     // If ACTION intent + active draft + edit operation → force edit path, skip query detection
     const forceEditPath = isActionIntent && hasActiveDraft && actionRoute.operation === 'edit'
     
-    console.log(`[Twilio SMS] Action router: intent=${actionRoute.intent}, confidence=${actionRoute.confidence}, operation=${actionRoute.operation}, forceEditPath=${forceEditPath}`)
+    // If DRAFT_QUERY intent → return draft content directly, skip all other processing
+    const isDraftQueryIntent = actionRoute.intent === 'DRAFT_QUERY' && actionRoute.confidence >= 0.9
+    
+    // If CHAT intent (smalltalk) with high confidence → short response, skip document search
+    const isSmalltalkIntent = actionRoute.intent === 'CHAT' && actionRoute.confidence >= 0.9
+    
+    console.log(`[Twilio SMS] Action router: intent=${actionRoute.intent}, confidence=${actionRoute.confidence}, operation=${actionRoute.operation}, forceEditPath=${forceEditPath}, isDraftQuery=${isDraftQueryIntent}, isSmalltalk=${isSmalltalkIntent}`)
+    
+    // ========================================================================
+    // PRIORITY 0.5: Draft Query Handler (return draft content directly)
+    // ========================================================================
+    if (isDraftQueryIntent && activeDraft) {
+      console.log(`[Twilio SMS] Draft query detected, returning draft content`)
+      const draftResponse = `here's what the announcement will say:\n\n${activeDraft.content}\n\nreply "send it" to broadcast or reply to edit`
+      
+      // Save to conversation history
+      await supabase.from('sms_conversation_history').insert({
+        phone_number: phoneNumber,
+        user_message: textRaw,
+        bot_response: draftResponse
+      })
+      
+      return new NextResponse(
+        `<?xml version="1.0" encoding="UTF-8"?><Response><Message>${draftResponse}</Message></Response>`,
+        { headers: { 'Content-Type': 'application/xml' } }
+      )
+    }
+    
+    if (isDraftQueryIntent && activePollDraft) {
+      console.log(`[Twilio SMS] Poll draft query detected, returning poll draft`)
+      const pollResponse = `here's what the poll will say:\n\n${activePollDraft.question}${activePollDraft.options && activePollDraft.options.length > 0 ? `\n\nOptions: ${activePollDraft.options.join(', ')}` : ''}\n\nreply "send it" to send`
+      
+      // Save to conversation history
+      await supabase.from('sms_conversation_history').insert({
+        phone_number: phoneNumber,
+        user_message: textRaw,
+        bot_response: pollResponse
+      })
+      
+      return new NextResponse(
+        `<?xml version="1.0" encoding="UTF-8"?><Response><Message>${pollResponse}</Message></Response>`,
+        { headers: { 'Content-Type': 'application/xml' } }
+      )
+    }
     
     // Classify conversational context using LLM (only if not forcing edit path)
     const conversationalContext = await classifyConversationalContext(
@@ -688,7 +731,7 @@ export async function POST(request: NextRequest) {
       if (['yes', 'no', 'maybe', 'y', 'n'].includes(cleaned) && (!options || options.length <= 5)) return true
       return false
     }
-
+    
     // ========================================================================
     // PRIORITY 1: Poll Response (HIGH - before queries)
     // ========================================================================
@@ -871,8 +914,61 @@ export async function POST(request: NextRequest) {
     
     console.log(`[Twilio SMS] Query detection: looksLikeQuery=${looksLikeQuery}, isPollDraftContext=${isPollDraftContext}, isAnnouncementDraftContext=${isAnnouncementDraftContext}, isActionContext=${isActionContext}, forceEditPath=${forceEditPath}, willSkipQuery=${!isPollDraftContext && !isAnnouncementDraftContext && !isActionContext && !forceEditPath}`)
     
+    // ========================================================================
+    // PRIORITY 0.6: Smalltalk Handler (short, polite responses)
+    // ========================================================================
+    if (isSmalltalkIntent) {
+      console.log(`[Twilio SMS] Smalltalk detected: "${textRaw}"`)
+      const smalltalkResponses: Record<string, string> = {
+        'thanks?': 'you\'re welcome! 😊',
+        'thank you': 'you\'re welcome! 😊',
+        'ty': 'np! 😊',
+        'thx': 'np! 😊',
+        'hi': 'hey! what\'s up?',
+        'hey': 'hey! what\'s up?',
+        'hello': 'hey! what\'s up?',
+        'ok': 'cool 👍',
+        'okay': 'cool 👍',
+        'alright': 'sounds good 👍',
+        'sure': 'cool 👍',
+        'got it': 'awesome 👍',
+        'sounds good': 'great! 👍',
+        'cool': '😎',
+        'nice': '😎',
+        'sweet': '😎',
+        'awesome': '😎',
+        'great': '😎',
+      }
+      
+      const lowerMsg = textRaw.toLowerCase().trim()
+      const response = smalltalkResponses[lowerMsg] || '👍'
+      
+      // Check for drafts to mention
+      let draftFollowUp = ''
+      if (activeDraft) {
+        draftFollowUp = `\n\nbtw you have an announcement draft ready - reply "send it" to send`
+      } else if (activePollDraft) {
+        draftFollowUp = `\n\nbtw you have a poll draft ready: "${activePollDraft.question}" - reply "send it" to send`
+      }
+      
+      const finalResponse = `${response}${draftFollowUp}`
+      
+      // Save to conversation history
+      await supabase.from('sms_conversation_history').insert({
+        phone_number: phoneNumber,
+        user_message: textRaw,
+        bot_response: finalResponse
+      })
+      
+      return new NextResponse(
+        `<?xml version="1.0" encoding="UTF-8"?><Response><Message>${finalResponse}</Message></Response>`,
+        { headers: { 'Content-Type': 'application/xml' } }
+      )
+    }
+    
     // SKIP query detection if forceEditPath (action router determined this is an edit command)
-    if (looksLikeQuery && !isPollDraftContext && !isAnnouncementDraftContext && !finalIsPollResponseContext && !isPollQuestionInputContext && !isActionContext && !isExplicitAnnouncementRequest && !forceEditPath) {
+    // OR if smalltalk (thank you, etc.) - just respond politely without document search
+    if (looksLikeQuery && !isPollDraftContext && !isAnnouncementDraftContext && !finalIsPollResponseContext && !isPollQuestionInputContext && !isActionContext && !isExplicitAnnouncementRequest && !forceEditPath && !isSmalltalkIntent) {
       // This is a query - handle it normally (code continues below to query handling)
       // We'll set a flag to add draft follow-up after
       console.log(`[Twilio SMS] Detected query "${textRaw}", will answer then check for drafts`)
@@ -1078,7 +1174,25 @@ export async function POST(request: NextRequest) {
       // This preserves existing content and only applies the specific edit
       let patchedContent: string
       
-      if (isExactTextRequest(body)) {
+      // Check if user wants to copy what they wrote (extract from previous message)
+      const wantsToCopy = /(copy|use|take)\s+(what|exactly\s+what)\s+(i|I)\s+(wrote|said|typed|sent)/i.test(textRaw) || 
+                          /that'?s\s+(the\s+same\s+thing|what\s+i\s+wrote|exactly\s+what\s+i\s+wrote)/i.test(textRaw)
+      
+      if (wantsToCopy && recentMessages.length > 0) {
+        // Find the most recent user message that contains actual content (not just "thank you" etc)
+        const previousUserMessage = recentMessages.find(m => {
+          const msg = m.user_message.toLowerCase().trim()
+          return msg.length > 10 && !/^(thanks?|thank\s+you|ty|ok|okay)/i.test(msg)
+        })?.user_message
+        
+        if (previousUserMessage && previousUserMessage.length > 10) {
+          console.log(`[Twilio SMS] Copying previous user message: "${previousUserMessage}"`)
+          patchedContent = previousUserMessage.trim()
+        } else {
+          // Fallback: use extractRawAnnouncementText
+          patchedContent = extractRawAnnouncementText(body)
+        }
+      } else if (isExactTextRequest(body)) {
         // Exact text request - use extractRawAnnouncementText
         patchedContent = extractRawAnnouncementText(body)
       } else if (forceEditPath || actionRoute.operation === 'edit') {

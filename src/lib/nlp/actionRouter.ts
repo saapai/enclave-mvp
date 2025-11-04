@@ -5,13 +5,13 @@
  * Runs BEFORE LLM classification to ensure action commands are handled deterministically.
  */
 
-export type ActionIntent = 'ACTION' | 'PRODUCT_INFO' | 'ORG_INFO' | 'CHAT' | null
+export type ActionIntent = 'ACTION' | 'PRODUCT_INFO' | 'ORG_INFO' | 'DRAFT_QUERY' | 'CHAT' | null
 
 export interface ActionRoute {
   intent: ActionIntent
   confidence: number
   verb?: string
-  operation?: 'create' | 'edit' | 'send' | 'schedule' | 'cancel' | 'delete'
+  operation?: 'create' | 'edit' | 'send' | 'schedule' | 'cancel' | 'delete' | 'query'
   target?: 'announcement' | 'poll'
 }
 
@@ -27,6 +27,10 @@ const IMPERATIVE_PATTERNS = [
   /(announce|poll|send out|broadcast|create)\s+(an?\s+)?(announcement|poll)/i,
   // Time/date/location edits
   /(make|change|set|update)\s+.*\s+(to|at|for)\s+(?:(\d{1,2}:\d{2}|\d{1,2}(?:am|pm))|today|tomorrow|next\s+\w+)/i,
+  // Copy/use what I wrote patterns
+  /(copy|use|take)\s+(what|exactly\s+what)\s+(i|I)\s+(wrote|said|typed|sent)/i,
+  /that'?s\s+(the\s+same\s+thing|what\s+i\s+wrote|exactly\s+what\s+i\s+wrote)/i,
+  /can\s+you\s+(copy|use|take)\s+(what|exactly\s+what)\s+(i\s+)?(wrote|said|typed)/i,
 ]
 
 /**
@@ -59,6 +63,11 @@ function isImperative(message: string): boolean {
  */
 function extractOperation(message: string): 'create' | 'edit' | 'send' | 'schedule' | 'cancel' | 'delete' | undefined {
   const lower = message.toLowerCase()
+  
+  // Copy/use what I wrote patterns are always edit operations
+  if (/(copy|use|take)\s+(what|exactly\s+what)\s+(i|I)\s+(wrote|said|typed|sent)/i.test(message)) return 'edit'
+  if (/that'?s\s+(the\s+same\s+thing|what\s+i\s+wrote|exactly\s+what\s+i\s+wrote)/i.test(message)) return 'edit'
+  if (/can\s+you\s+(copy|use|take)\s+(what|exactly\s+what)\s+(i\s+)?(wrote|said|typed)/i.test(message)) return 'edit'
   
   if (/^(send|broadcast)/i.test(message)) return 'send'
   if (/^(make|create|draft|announce)/i.test(message)) return 'create'
@@ -119,9 +128,38 @@ function isOrgInfoQuery(message: string): boolean {
 }
 
 /**
+ * Determines if message is asking about the draft (special query type)
+ */
+function isDraftQuery(message: string): boolean {
+  const lower = message.toLowerCase().trim()
+  const patterns = [
+    /^(what|show|tell\s+me)\s+(is\s+)?(the\s+)?(draft|announcement\s+draft|poll\s+draft)/i,
+    /^(what|show)\s+(does|will)\s+(the\s+)?(draft|announcement|poll)\s+(say|look\s+like)/i,
+    /^(show|tell\s+me)\s+(the\s+)?(draft|announcement|poll)/i,
+  ]
+  
+  return patterns.some(p => p.test(lower))
+}
+
+/**
+ * Determines if message is smalltalk (thank you, greetings, etc.)
+ */
+function isSmalltalk(message: string): boolean {
+  const lower = message.toLowerCase().trim()
+  const smalltalkPatterns = [
+    /^(thanks?|thank\s+you|ty|thx|appreciate\s+it)/i,
+    /^(hi|hey|hello|sup|what'?s\s+up|yo)/i,
+    /^(ok|okay|alright|sure|got\s+it|sounds\s+good)/i,
+    /^(cool|nice|sweet|awesome|great)/i,
+  ]
+  
+  return smalltalkPatterns.some(p => p.test(lower)) && lower.length < 50
+}
+
+/**
  * Routes a message to the appropriate pipeline
  * 
- * Priority: ACTION > PRODUCT_INFO > ORG_INFO > CHAT
+ * Priority: ACTION > DRAFT_QUERY > PRODUCT_INFO > ORG_INFO > CHAT
  */
 export function routeAction(message: string, hasActiveDraft: boolean): ActionRoute {
   // Priority 1: ACTION (imperative commands)
@@ -140,6 +178,17 @@ export function routeAction(message: string, hasActiveDraft: boolean): ActionRou
       }
     }
     
+    // Special case: "copy what I wrote" with active draft is definitely an edit
+    if (hasActiveDraft && (operation === 'edit' || /(copy|use|take)\s+(what|exactly\s+what)\s+(i|I)\s+(wrote|said)/i.test(message))) {
+      return {
+        intent: 'ACTION',
+        confidence: 0.95,
+        verb: 'edit',
+        operation: 'edit',
+        target: target || 'announcement'
+      }
+    }
+    
     return {
       intent: 'ACTION',
       confidence: 0.9,
@@ -149,7 +198,24 @@ export function routeAction(message: string, hasActiveDraft: boolean): ActionRou
     }
   }
   
-  // Priority 2: PRODUCT_INFO (questions about Enclave)
+  // Priority 2: DRAFT_QUERY (asking about draft content - only if draft exists)
+  if (hasActiveDraft && isDraftQuery(message)) {
+    return {
+      intent: 'DRAFT_QUERY',
+      confidence: 0.95,
+      operation: 'query'
+    }
+  }
+  
+  // Priority 3: Smalltalk (short, polite messages)
+  if (isSmalltalk(message)) {
+    return {
+      intent: 'CHAT',
+      confidence: 0.9
+    }
+  }
+  
+  // Priority 4: PRODUCT_INFO (questions about Enclave)
   if (isProductInfoQuery(message)) {
     return {
       intent: 'PRODUCT_INFO',
@@ -157,7 +223,7 @@ export function routeAction(message: string, hasActiveDraft: boolean): ActionRou
     }
   }
   
-  // Priority 3: ORG_INFO (questions about SEP/org content)
+  // Priority 5: ORG_INFO (questions about SEP/org content)
   if (isOrgInfoQuery(message)) {
     return {
       intent: 'ORG_INFO',
@@ -165,7 +231,7 @@ export function routeAction(message: string, hasActiveDraft: boolean): ActionRou
     }
   }
   
-  // Default: CHAT (smalltalk, unclear intent)
+  // Default: CHAT (unclear intent)
   return {
     intent: 'CHAT',
     confidence: 0.5
