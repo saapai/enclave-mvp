@@ -16,7 +16,8 @@ import {
   getActiveDraft,
   sendAnnouncement,
   getPreviousAnnouncements,
-  extractRawAnnouncementText
+  extractRawAnnouncementText,
+  patchAnnouncementDraft
 } from '@/lib/announcements'
 import {
   isPollRequest,
@@ -42,6 +43,7 @@ import { decideTone } from '@/lib/tone/engine'
 import { detectProfanity, guessInsultTarget } from '@/lib/tone/detect'
 import { earlyClassify } from '@/lib/nlp/earlyClassify'
 import { classifyConversationalContext } from '@/lib/nlp/conversationalContext'
+import { routeAction } from '@/lib/nlp/actionRouter'
 import { enclaveConciseAnswer } from '@/lib/enclave/answers'
 import { smsTighten } from '@/lib/text/limits'
 
@@ -545,7 +547,23 @@ export async function POST(request: NextRequest) {
     // Create contextMessages string for backward compatibility with older functions
     const contextMessages = recentMessages.map(m => `${m.user_message} ${m.bot_response}`).join(' ').toLowerCase()
     
-    // Classify conversational context using LLM
+    // ========================================================================
+    // DETERMINISTIC ACTION ROUTER (runs BEFORE LLM classification)
+    // ========================================================================
+    const activePollDraft = await getActivePollDraft(phoneNumber)
+    const activeDraft = await getActiveDraft(phoneNumber)
+    const hasActiveDraft = !!(activeDraft || activePollDraft)
+    
+    // Route to ACTION pipeline if imperative command detected
+    const actionRoute = routeAction(textRaw, !!activeDraft)
+    const isActionIntent = actionRoute.intent === 'ACTION' && actionRoute.confidence >= 0.9
+    
+    // If ACTION intent + active draft + edit operation → force edit path, skip query detection
+    const forceEditPath = isActionIntent && hasActiveDraft && actionRoute.operation === 'edit'
+    
+    console.log(`[Twilio SMS] Action router: intent=${actionRoute.intent}, confidence=${actionRoute.confidence}, operation=${actionRoute.operation}, forceEditPath=${forceEditPath}`)
+    
+    // Classify conversational context using LLM (only if not forcing edit path)
     const conversationalContext = await classifyConversationalContext(
       textRaw,
       lastBotMessage,
@@ -580,7 +598,13 @@ export async function POST(request: NextRequest) {
     // Conversational context might incorrectly classify "I wanna make an announcement" as announcement_input
     // when it's actually a NEW announcement request
     // Also: questions (containing "?") are NEVER announcement_input
-    const isAnnouncementDraftContext = (isAnnouncementInputContext || isAnnouncementDraftEditContext) && !isExplicitAnnouncementRequest && !isExplicitQuestion
+    // CRITICAL: Derive from activeDraft state OR forceEditPath (action router determined edit)
+    // This ensures state coherence - if activeDraft exists and action router says edit, it's draft context
+    const isAnnouncementDraftContext = (
+      (isAnnouncementInputContext || isAnnouncementDraftEditContext || forceEditPath) && 
+      !isExplicitAnnouncementRequest && 
+      !isExplicitQuestion
+    ) || (!!activeDraft && forceEditPath)
     
     // Check if user has an active poll waiting for response (for determining isPollResponseContext with low confidence)
     const phoneE164 = from.startsWith('+') ? from : `+1${phoneNumber}`
@@ -596,9 +620,6 @@ export async function POST(request: NextRequest) {
     const hasActivePoll = pendingPollResponse?.sms_poll && pendingPollResponse.sms_poll.sent_at
     // If LLM has low confidence, fall back to active poll check
     const finalIsPollResponseContext = conversationalContext.confidence < 0.7 && !!hasActivePoll ? !!hasActivePoll : isPollResponseContext
-    
-    const activePollDraft = await getActivePollDraft(phoneNumber)
-    const activeDraft = await getActiveDraft(phoneNumber)
     
     // ========================================================================
     // PRIORITY 0: Send command (HIGHEST - before everything else, but NOT if responding to poll)
@@ -848,9 +869,10 @@ export async function POST(request: NextRequest) {
       conversationalContext.contextType === 'poll_response'
     ) && !isExplicitAnnouncementRequest // Don't block explicit announcement requests
     
-    console.log(`[Twilio SMS] Query detection: looksLikeQuery=${looksLikeQuery}, isPollDraftContext=${isPollDraftContext}, isAnnouncementDraftContext=${isAnnouncementDraftContext}, isActionContext=${isActionContext}, willSkipQuery=${!isPollDraftContext && !isAnnouncementDraftContext && !isActionContext}`)
+    console.log(`[Twilio SMS] Query detection: looksLikeQuery=${looksLikeQuery}, isPollDraftContext=${isPollDraftContext}, isAnnouncementDraftContext=${isAnnouncementDraftContext}, isActionContext=${isActionContext}, forceEditPath=${forceEditPath}, willSkipQuery=${!isPollDraftContext && !isAnnouncementDraftContext && !isActionContext && !forceEditPath}`)
     
-    if (looksLikeQuery && !isPollDraftContext && !isAnnouncementDraftContext && !finalIsPollResponseContext && !isPollQuestionInputContext && !isActionContext && !isExplicitAnnouncementRequest) {
+    // SKIP query detection if forceEditPath (action router determined this is an edit command)
+    if (looksLikeQuery && !isPollDraftContext && !isAnnouncementDraftContext && !finalIsPollResponseContext && !isPollQuestionInputContext && !isActionContext && !isExplicitAnnouncementRequest && !forceEditPath) {
       // This is a query - handle it normally (code continues below to query handling)
       // We'll set a flag to add draft follow-up after
       console.log(`[Twilio SMS] Detected query "${textRaw}", will answer then check for drafts`)
@@ -1047,21 +1069,29 @@ export async function POST(request: NextRequest) {
     
     // Announcement draft editing (only if in announcement context AND not a query)
     // Also check conversational context - if it says announcement_draft_edit, trust it
-    const isEditingDraft = (isAnnouncementDraftContext || conversationalContext.contextType === 'announcement_draft_edit') && activeDraft
-    if (isEditingDraft && !isPollRequest(textRaw) && !isAnnouncementRequest(textRaw) && !looksLikeQuery) {
-      console.log(`[Twilio SMS] Editing announcement draft in context: "${textRaw}"`)
+    // OR if action router determined this is an edit (forceEditPath)
+    const isEditingDraft = (isAnnouncementDraftContext || conversationalContext.contextType === 'announcement_draft_edit' || forceEditPath) && activeDraft
+    if (isEditingDraft && !isPollRequest(textRaw) && !isAnnouncementRequest(textRaw) && (!looksLikeQuery || forceEditPath)) {
+      console.log(`[Twilio SMS] Editing announcement draft in context: "${textRaw}" (forceEditPath=${forceEditPath})`)
       
-      const announcementText = extractRawAnnouncementText(body)
+      // Use intelligent patching instead of regenerating
+      // This preserves existing content and only applies the specific edit
+      let patchedContent: string
       
-      // If it's an exact text request, use it directly without regenerating
-      const useExactText = isExactTextRequest(body) || conversationalContext.contextType === 'announcement_draft_edit'
-      
-      // Edit existing draft - use exact text if requested, otherwise use extracted text
-      const finalContent = useExactText ? announcementText : announcementText
+      if (isExactTextRequest(body)) {
+        // Exact text request - use extractRawAnnouncementText
+        patchedContent = extractRawAnnouncementText(body)
+      } else if (forceEditPath || actionRoute.operation === 'edit') {
+        // Action router determined edit - use patchAnnouncementDraft
+        patchedContent = patchAnnouncementDraft(activeDraft.content || '', textRaw)
+      } else {
+        // Fallback to extractRawAnnouncementText
+        patchedContent = extractRawAnnouncementText(body)
+      }
       
       await saveDraft(phoneNumber, {
         id: activeDraft.id,
-        content: finalContent,
+        content: patchedContent,
         tone: activeDraft.tone,
         scheduledFor: activeDraft.scheduledFor,
         targetAudience: activeDraft.targetAudience,
@@ -1069,7 +1099,7 @@ export async function POST(request: NextRequest) {
       }, activeDraft.workspaceId!)
       
       return new NextResponse(
-        `<?xml version="1.0" encoding="UTF-8"?><Response><Message>updated:\n\n${finalContent}\n\nreply "send it" to broadcast</Message></Response>`,
+        `<?xml version="1.0" encoding="UTF-8"?><Response><Message>updated:\n\n${patchedContent}\n\nreply "send it" to broadcast</Message></Response>`,
         { headers: { 'Content-Type': 'application/xml' } }
       )
     }

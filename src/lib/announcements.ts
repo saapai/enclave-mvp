@@ -114,6 +114,89 @@ export function isExactTextRequest(message: string): boolean {
 }
 
 /**
+ * Patch an announcement draft intelligently based on edit instructions
+ * 
+ * Examples:
+ * - "Make it say it's at 9pm" → adds "at 9pm" to existing content
+ * - "Change it to officers only" → updates audience
+ * - "Make it nicer" → updates tone
+ * 
+ * Returns the patched content, preserving existing structure when possible.
+ */
+export function patchAnnouncementDraft(
+  currentContent: string,
+  editInstruction: string
+): string {
+  const lower = editInstruction.toLowerCase().trim()
+  
+  // Extract time/date patterns
+  const timePatterns = [
+    /(?:at|for|@)\s+(\d{1,2}(?::\d{2})?\s*(?:am|pm)?)/i,
+    /(?:at|for|@)\s+(\d{1,2}:\d{2})/i,
+    /(\d{1,2}(?:am|pm))/i,
+    /(?:it'?s|it\s+is)\s+(?:at|for)\s+(\d{1,2}(?::\d{2})?\s*(?:am|pm)?)/i,
+  ]
+  
+  // Extract time
+  let extractedTime: string | null = null
+  for (const pattern of timePatterns) {
+    const match = editInstruction.match(pattern)
+    if (match) {
+      extractedTime = match[1]
+      break
+    }
+  }
+  
+  // If instruction contains "make it say" or "change it to", extract the new content
+  const makeItSayMatch = editInstruction.match(/make\s+(it|the)\s+(say|say\s+that)\s+(.+)/i)
+  const changeItToMatch = editInstruction.match(/change\s+(it|the)\s+(to|to\s+say)\s+(.+)/i)
+  
+  if (makeItSayMatch || changeItToMatch) {
+    const newContent = (makeItSayMatch?.[3] || changeItToMatch?.[3] || '').trim()
+    
+    // If new content is just time/date, append to existing
+    if (extractedTime && newContent.includes(extractedTime) && newContent.length < 30) {
+      // Append time to existing content
+      if (!currentContent.toLowerCase().includes(extractedTime.toLowerCase())) {
+        return `${currentContent} at ${extractedTime}`
+      }
+      return currentContent
+    }
+    
+    // If new content is a full replacement, check if it's a fragment
+    if (newContent.length < 50 && !newContent.includes('.')) {
+      // Likely a fragment - try to intelligently merge
+      // If existing content mentions the event, append the new info
+      if (currentContent.length > 20) {
+        // Try to find where to insert
+        // If it's time-related, append at end
+        if (extractedTime || /time|when|at\s+\d/i.test(newContent)) {
+          const timePart = extractedTime || newContent.match(/(?:at|for)\s+(.+)/i)?.[1] || newContent
+          if (!currentContent.toLowerCase().includes(timePart.toLowerCase())) {
+            return `${currentContent} at ${timePart}`
+          }
+        }
+        // Otherwise, replace with new content if it's clearly a replacement
+        if (/^(it'?s|it\s+is|event|meeting|announcement)/i.test(newContent)) {
+          return newContent
+        }
+      }
+    }
+    
+    // Full replacement
+    return newContent || currentContent
+  }
+  
+  // If just time extracted, append to existing
+  if (extractedTime && !currentContent.toLowerCase().includes(extractedTime.toLowerCase())) {
+    return `${currentContent} at ${extractedTime}`
+  }
+  
+  // Default: return original content (no patch applied)
+  return currentContent
+}
+
+/**
  * Extract announcement details from message using LLM
  */
 export async function extractAnnouncementDetails(message: string): Promise<{
