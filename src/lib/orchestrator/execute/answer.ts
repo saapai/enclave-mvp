@@ -101,6 +101,24 @@ export async function executeAnswer(
     // Compose response
     const composed = await composeResponse(query, plan, toolResults)
     console.log(`[Execute Answer] Composed response: text length=${composed.text?.length || 0}, intent=${plan.intent}, toolResults=${toolResults.length}`)
+    console.log(`[Execute Answer] Composed text preview: "${composed.text?.substring(0, 200)}"`)
+    
+    // Check if we have actual document results but composed text is fallback
+    const hasDocumentResults = toolResults.length > 0 && toolResults[0].data?.results && toolResults[0].data.results.length > 0
+    const isFallbackMessage = composed.text?.includes("I couldn't find") || composed.text?.length < 50
+    
+    if (hasDocumentResults && isFallbackMessage) {
+      console.log(`[Execute Answer] WARNING: Found documents but composer returned fallback. Using document content directly.`)
+      // Extract document content directly
+      const topResult = toolResults[0].data.results[0]
+      if (topResult?.body) {
+        composed.text = topResult.body
+        console.log(`[Execute Answer] Using document body directly, length: ${topResult.body.length}`)
+      } else if (topResult?.title) {
+        composed.text = topResult.title
+        console.log(`[Execute Answer] Using document title as fallback: ${topResult.title}`)
+      }
+    }
     
     // Try AI summarization if we have results
     let finalText = composed.text || ''
