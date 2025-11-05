@@ -151,11 +151,12 @@ async function getUserResponseAfterPoll(
       .maybeSingle()
     
     if (!pollError && pollResponse && pollResponse.received_at) {
-      // Verify the response was received AFTER the poll was sent
+      // Verify the response was received AFTER the poll was sent (with 5 second buffer for timing)
       const responseTime = new Date(pollResponse.received_at)
       const pollTime = new Date(pollSentAt)
+      const bufferTime = new Date(pollTime.getTime() + 5000) // 5 seconds after poll sent
       
-      if (responseTime > pollTime) {
+      if (responseTime > bufferTime) {
         // Use the poll response record (most reliable)
         const responseText = pollResponse.option_label || ''
         const notesText = pollResponse.notes || ''
@@ -163,17 +164,21 @@ async function getUserResponseAfterPoll(
         // Combine option and notes for parsing
         const fullText = notesText ? `${responseText}, ${notesText}` : responseText
         
+        console.log(`[Active Meeting Sync] Using poll response record for ${phoneNumber}: ${responseText} (received: ${pollResponse.received_at}, poll sent: ${pollSentAt})`)
+        
         return {
           text: fullText,
           timestamp: pollResponse.received_at
         }
+      } else {
+        console.log(`[Active Meeting Sync] Poll response for ${phoneNumber} received too early (${pollResponse.received_at} <= ${bufferTime.toISOString()}), ignoring`)
       }
     }
     
     // Fallback: Get conversation history STRICTLY after poll was sent
-    // Add a small buffer (1 second) to ensure we only get messages after the poll
+    // Add a buffer (10 seconds) to ensure we only get messages after the poll was actually delivered
     const pollTime = new Date(pollSentAt)
-    const minTime = new Date(pollTime.getTime() + 1000) // 1 second after poll sent
+    const minTime = new Date(pollTime.getTime() + 10000) // 10 seconds after poll sent (account for delivery time)
     
     const { data: messages, error } = await supabaseAdmin
       .from('sms_conversation_history')
@@ -186,14 +191,21 @@ async function getUserResponseAfterPoll(
       return null
     }
     
-    // Find the first user message after poll was sent
-    // Skip if it's clearly not a poll response (e.g., a query)
+    // Find the first VALID user message after poll was sent
+    // Must be a short, simple response that looks like a poll answer
     for (const msg of messages) {
       const userMsg = msg.user_message?.trim()
       if (!userMsg) continue
       
-      // Skip if it's clearly a query or command
+      // Verify message timestamp is STRICTLY after poll (double-check)
+      const msgTime = new Date(msg.created_at)
+      if (msgTime <= pollTime) {
+        continue // Skip if before poll (shouldn't happen with gt filter, but double-check)
+      }
+      
       const lowerMsg = userMsg.toLowerCase()
+      
+      // Skip if it's clearly a query or command
       const isQuery = (
         lowerMsg.startsWith('when') ||
         lowerMsg.startsWith('what') ||
@@ -214,19 +226,26 @@ async function getUserResponseAfterPoll(
         continue
       }
       
-      // Verify message timestamp is after poll
-      const msgTime = new Date(msg.created_at)
-      if (msgTime <= pollTime) {
-        continue // Skip if somehow before poll (shouldn't happen with gt filter, but double-check)
+      // Check if message looks like a poll response (yes/no/maybe or similar)
+      const looksLikeResponse = (
+        /^(yes|no|maybe|yep|nope|nah|ya|y|n|sure|absolutely|cant|can't|will|wont|won't|probably|might)/i.test(lowerMsg) ||
+        lowerMsg.length < 50 // Short messages are more likely to be responses
+      )
+      
+      if (!looksLikeResponse) {
+        // Skip if it doesn't look like a response
+        continue
       }
       
-      // This might be a poll response
+      // This looks like a poll response
+      console.log(`[Active Meeting Sync] Found conversation response for ${phoneNumber}: "${userMsg}" (at ${msg.created_at}, poll sent: ${pollSentAt})`)
       return {
         text: userMsg,
         timestamp: msg.created_at
       }
     }
     
+    // No valid response found
     return null
   } catch (err) {
     console.error(`[Active Meeting Sync] Error getting response for ${phoneNumber}:`, err)
@@ -293,10 +312,28 @@ export async function syncActiveMeetingPollResponses(): Promise<{
         console.log(`[Active Meeting Sync] User ${user.phone} responded: "${userResponse.text.substring(0, 50)}..."`)
         
         // Parse response using Mistral (via parseResponseWithNotes)
+        // Only parse if we have actual text (not empty)
+        if (!userResponse.text || userResponse.text.trim().length === 0) {
+          console.log(`[Active Meeting Sync] Empty response for ${user.phone}, skipping`)
+          skipped++
+          continue
+        }
+        
         const parsed = await parseResponseWithNotes(userResponse.text, poll.options)
         
-        if (!parsed.option) {
-          console.log(`[Active Meeting Sync] Could not parse response for ${user.phone}, skipping`)
+        if (!parsed.option || parsed.option.trim().length === 0) {
+          console.log(`[Active Meeting Sync] Could not parse response for ${user.phone} ("${userResponse.text}"), skipping`)
+          skipped++
+          continue
+        }
+        
+        // Verify the parsed option is actually one of the poll options
+        const validOption = poll.options.some(opt => 
+          opt.toLowerCase() === parsed.option.toLowerCase()
+        )
+        
+        if (!validOption) {
+          console.log(`[Active Meeting Sync] Parsed option "${parsed.option}" not in poll options [${poll.options.join(', ')}], skipping`)
           skipped++
           continue
         }
