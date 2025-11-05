@@ -161,56 +161,105 @@ export async function syncMostRecentPollToAirtable(questionKeywords?: string): P
   try {
     // Strategy 0: If keywords provided, search for poll matching those keywords first
     if (questionKeywords) {
-      const keywords = questionKeywords.toLowerCase().split(/\s+/).filter(Boolean)
-      console.log(`[Retroactive Sync] Searching for poll with keywords: ${keywords.join(', ')}`)
+      // Normalize keywords: split by spaces/underscores, filter empty, handle variations
+      const normalizedKeywords = questionKeywords.toLowerCase()
+        .replace(/[_\s]+/g, ' ') // Replace underscores with spaces
+        .split(/\s+/)
+        .filter(Boolean)
+        .map(k => k.replace(/[^a-z0-9]/g, '')) // Remove punctuation for matching
+        .filter(k => k.length > 2) // Ignore very short words
       
-      // Get all polls with recent responses
+      console.log(`[Retroactive Sync] Searching for poll with keywords: ${normalizedKeywords.join(', ')}`)
+      
+      // Get all polls with recent responses (increase limit to catch more polls)
       const { data: recentResponses, error: responseError } = await supabaseAdmin
         .from('sms_poll_response')
         .select('poll_id, received_at, sms_poll!inner(id, question, sent_at, created_at, status)')
         .order('received_at', { ascending: false })
-        .limit(50) // Check last 50 responses to find matching poll
+        .limit(100) // Check last 100 responses to find matching poll
       
       if (!responseError && recentResponses) {
-        // Find poll whose question matches the keywords
+        // Also get all recent polls directly from sms_poll table for better coverage
+        const { data: allRecentPolls } = await supabaseAdmin
+          .from('sms_poll')
+          .select('id, question, sent_at, created_at, status')
+          .order('sent_at', { ascending: false, nullsFirst: false })
+          .order('created_at', { ascending: false })
+          .limit(50)
+        
+        // Combine both sources and dedupe by poll ID
+        const pollMap = new Map<string, any>()
+        
+        // Add polls from responses
         for (const response of recentResponses) {
-          if (response.sms_poll) {
-            const questionLower = response.sms_poll.question.toLowerCase()
-            const matchesKeywords = keywords.every(keyword => questionLower.includes(keyword))
-            
-            if (matchesKeywords) {
-              const poll = response.sms_poll
-              console.log(`[Retroactive Sync] Found matching poll: ${poll.id} - "${poll.question.substring(0, 50)}..." (matches: ${keywords.join(', ')})`)
-              const result = await syncPollResponsesToAirtable(poll.id)
-              return {
-                ...result,
-                pollId: poll.id,
-                question: poll.question
-              }
-            }
+          if (response.sms_poll && !pollMap.has(response.sms_poll.id)) {
+            pollMap.set(response.sms_poll.id, {
+              ...response.sms_poll,
+              lastResponseAt: response.received_at
+            })
           }
         }
         
-        // If no exact match, try partial match (any keyword matches)
-        for (const response of recentResponses) {
-          if (response.sms_poll) {
-            const questionLower = response.sms_poll.question.toLowerCase()
-            const matchesAnyKeyword = keywords.some(keyword => questionLower.includes(keyword))
-            
-            if (matchesAnyKeyword) {
-              const poll = response.sms_poll
-              console.log(`[Retroactive Sync] Found partially matching poll: ${poll.id} - "${poll.question.substring(0, 50)}..." (matches some: ${keywords.join(', ')})`)
-              const result = await syncPollResponsesToAirtable(poll.id)
-              return {
-                ...result,
-                pollId: poll.id,
-                question: poll.question
-              }
-            }
+        // Add polls from direct query
+        for (const poll of allRecentPolls || []) {
+          if (!pollMap.has(poll.id)) {
+            pollMap.set(poll.id, poll)
           }
         }
         
-        console.log(`[Retroactive Sync] No poll found matching keywords: ${keywords.join(', ')}, falling back to most recent`)
+        const allPolls = Array.from(pollMap.values())
+        console.log(`[Retroactive Sync] Checking ${allPolls.length} unique polls for keyword match`)
+        
+        // Score each poll by how many keywords match
+        const scoredPolls = allPolls.map(poll => {
+          const questionLower = poll.question.toLowerCase().replace(/[^a-z0-9\s]/g, ' ')
+          let score = 0
+          let matchedKeywords: string[] = []
+          
+          for (const keyword of normalizedKeywords) {
+            // Check if keyword appears in question (handle variations)
+            if (questionLower.includes(keyword)) {
+              score += 2 // Exact match
+              matchedKeywords.push(keyword)
+            } else if (keyword.length > 3) {
+              // Try partial match for longer keywords
+              const partialMatch = questionLower.split(/\s+/).some(word => 
+                word.includes(keyword) || keyword.includes(word)
+              )
+              if (partialMatch) {
+                score += 1 // Partial match
+                matchedKeywords.push(keyword)
+              }
+            }
+          }
+          
+          return { poll, score, matchedKeywords }
+        })
+        
+        // Sort by score (highest first), then by last response time
+        scoredPolls.sort((a, b) => {
+          if (b.score !== a.score) return b.score - a.score
+          const aTime = a.poll.lastResponseAt || a.poll.sent_at || a.poll.created_at
+          const bTime = b.poll.lastResponseAt || b.poll.sent_at || b.poll.created_at
+          return new Date(bTime || 0).getTime() - new Date(aTime || 0).getTime()
+        })
+        
+        // Find best match (score > 0)
+        const bestMatch = scoredPolls.find(sp => sp.score > 0)
+        
+        if (bestMatch) {
+          const poll = bestMatch.poll
+          console.log(`[Retroactive Sync] Found matching poll: ${poll.id} - "${poll.question.substring(0, 50)}..." (score: ${bestMatch.score}, matched: ${bestMatch.matchedKeywords.join(', ')})`)
+          const result = await syncPollResponsesToAirtable(poll.id)
+          return {
+            ...result,
+            pollId: poll.id,
+            question: poll.question
+          }
+        }
+        
+        console.log(`[Retroactive Sync] No poll found matching keywords: ${normalizedKeywords.join(', ')}, falling back to most recent`)
+        console.log(`[Retroactive Sync] Available polls: ${allPolls.slice(0, 5).map(p => `"${p.question.substring(0, 40)}..."`).join(', ')}`)
       }
     }
     
