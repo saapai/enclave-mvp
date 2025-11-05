@@ -104,7 +104,10 @@ export async function executeAnswer(
     // Try AI summarization if we have results
     let finalText = composed.text
     
-    if (plan.intent !== 'chat' && toolResults.length > 0 && toolResults[0].data?.results) {
+    // For event_lookup, use the composed text directly (it's already formatted)
+    if (plan.intent === 'event_lookup' && composed.text && composed.text.length > 10) {
+      finalText = composed.text
+    } else if (plan.intent !== 'chat' && toolResults.length > 0 && toolResults[0].data?.results) {
       const allResults = toolResults[0].data.results
       
       // Try each result in order

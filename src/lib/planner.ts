@@ -649,6 +649,11 @@ function composeEventResponse(result: ToolResult): ComposedResponse {
     }
   }
 
+  // calendar_find returns doc search results, so use those
+  if (result.tool === 'calendar_find' && result.data?.results && result.data.results.length > 0) {
+    return composeDocResponse(result)
+  }
+
   // Fallback to doc search result
   return composeDocResponse(result)
 }
