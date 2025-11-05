@@ -170,7 +170,8 @@ async function determineMode(
                                    /i\s+(want|wanna)\s+(to\s+)?(make|create|send|post)\s+(an?\s+)?(announcement|announce)/i.test(text)
   
   // Check if user is asking an explicit question (should be treated as query, not draft input)
-  const isExplicitQuestion = /^(what|when|where|who|how|why|is|are|was|were|do|does|did|will|can|could|should)\s/.test(lowerText) && text.includes('?')
+  // Questions can have '?' or just start with question words
+  const isExplicitQuestion = /^(what|when|where|who|how|why|is|are|was|were|do|does|did|will|can|could|should)\s/i.test(text) || text.includes('?')
   
   // If it's a new request, ignore existing drafts and go to IDLE (plan will route to create)
   if (isNewPollRequest || isNewAnnouncementRequest) {
