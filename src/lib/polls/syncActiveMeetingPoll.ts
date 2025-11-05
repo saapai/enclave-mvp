@@ -141,7 +141,8 @@ async function getUserResponseAfterPoll(
     const normalizedPhone = normalizePhone(phoneNumber)
     const phoneE164 = toE164(normalizedPhone)
     
-    // First, check if there's an actual poll response record (most reliable)
+    // ONLY use poll response records - this is the source of truth
+    // If a response isn't in the poll response table, we don't sync it
     const { data: pollResponse, error: pollError } = await supabaseAdmin
       .from('sms_poll_response')
       .select('option_label, notes, received_at')
@@ -173,79 +174,12 @@ async function getUserResponseAfterPoll(
       } else {
         console.log(`[Active Meeting Sync] Poll response for ${phoneNumber} received too early (${pollResponse.received_at} <= ${bufferTime.toISOString()}), ignoring`)
       }
+    } else {
+      console.log(`[Active Meeting Sync] No poll response record found for ${phoneNumber}, skipping (not in sms_poll_response table)`)
     }
     
-    // Fallback: Get conversation history STRICTLY after poll was sent
-    // Add a buffer (10 seconds) to ensure we only get messages after the poll was actually delivered
-    const pollTime = new Date(pollSentAt)
-    const minTime = new Date(pollTime.getTime() + 10000) // 10 seconds after poll sent (account for delivery time)
-    
-    const { data: messages, error } = await supabaseAdmin
-      .from('sms_conversation_history')
-      .select('user_message, bot_response, created_at')
-      .eq('phone_number', normalizedPhone)
-      .gt('created_at', minTime.toISOString()) // STRICTLY greater than (not >=)
-      .order('created_at', { ascending: true })
-    
-    if (error || !messages || messages.length === 0) {
-      return null
-    }
-    
-    // Find the first VALID user message after poll was sent
-    // Must be a short, simple response that looks like a poll answer
-    for (const msg of messages) {
-      const userMsg = msg.user_message?.trim()
-      if (!userMsg) continue
-      
-      // Verify message timestamp is STRICTLY after poll (double-check)
-      const msgTime = new Date(msg.created_at)
-      if (msgTime <= pollTime) {
-        continue // Skip if before poll (shouldn't happen with gt filter, but double-check)
-      }
-      
-      const lowerMsg = userMsg.toLowerCase()
-      
-      // Skip if it's clearly a query or command
-      const isQuery = (
-        lowerMsg.startsWith('when') ||
-        lowerMsg.startsWith('what') ||
-        lowerMsg.startsWith('where') ||
-        lowerMsg.startsWith('who') ||
-        lowerMsg.startsWith('how') ||
-        lowerMsg.startsWith('why') ||
-        lowerMsg.includes('?') ||
-        lowerMsg.includes('make') ||
-        lowerMsg.includes('create') ||
-        lowerMsg.includes('send') ||
-        lowerMsg.includes('delete') ||
-        lowerMsg.includes('cancel') ||
-        lowerMsg.length > 200 // Likely not a simple poll response
-      )
-      
-      if (isQuery) {
-        continue
-      }
-      
-      // Check if message looks like a poll response (yes/no/maybe or similar)
-      const looksLikeResponse = (
-        /^(yes|no|maybe|yep|nope|nah|ya|y|n|sure|absolutely|cant|can't|will|wont|won't|probably|might)/i.test(lowerMsg) ||
-        lowerMsg.length < 50 // Short messages are more likely to be responses
-      )
-      
-      if (!looksLikeResponse) {
-        // Skip if it doesn't look like a response
-        continue
-      }
-      
-      // This looks like a poll response
-      console.log(`[Active Meeting Sync] Found conversation response for ${phoneNumber}: "${userMsg}" (at ${msg.created_at}, poll sent: ${pollSentAt})`)
-      return {
-        text: userMsg,
-        timestamp: msg.created_at
-      }
-    }
-    
-    // No valid response found
+    // DO NOT use conversation history as fallback - only use poll response records
+    // This ensures we only sync responses that were actually recorded as poll responses
     return null
   } catch (err) {
     console.error(`[Active Meeting Sync] Error getting response for ${phoneNumber}:`, err)
