@@ -9,6 +9,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { syncAllPollResponsesToAirtable, syncMostRecentPollToAirtable } from '@/lib/polls/retroactiveSync'
+import { syncActiveMeetingPollResponses } from '@/lib/polls/syncActiveMeetingPoll'
 
 export const dynamic = 'force-dynamic'
 
@@ -29,8 +30,23 @@ export async function GET(request: NextRequest) {
     
     // Check query params for sync type
     const { searchParams } = new URL(request.url)
-    const syncType = searchParams.get('type') // 'recent' or 'all' (default)
+    const syncType = searchParams.get('type') // 'recent', 'all', or 'active-meeting' (default)
     const questionKeywords = searchParams.get('question') // Optional: keywords to search for in poll question
+    
+    if (syncType === 'active-meeting') {
+      // Special sync for active meeting poll - checks all opted-in users and their responses
+      console.log('[One-Time Sync] Syncing active meeting poll responses...')
+      const result = await syncActiveMeetingPollResponses()
+      
+      return NextResponse.json({
+        success: true,
+        message: 'Active meeting poll sync completed',
+        synced: result.synced,
+        skipped: result.skipped,
+        errors: result.errors,
+        errorsList: result.errorsList
+      })
+    }
     
     if (syncType === 'recent') {
       // Sync just the most recent poll (regardless of status)
