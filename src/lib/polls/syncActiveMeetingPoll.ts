@@ -31,78 +31,69 @@ function toE164(normalized: string): string {
  */
 async function findActiveMeetingPoll(): Promise<{ id: string; question: string; sent_at: string; options: string[] } | null> {
   try {
-    // Search for polls with keywords related to active meeting
-    // The exact text is: "can you make it to active meeting at 8 tomorrow (Wed) at Ash's apartment"
-    const keywords = ['active', 'meeting', 'ash', '8', 'tomorrow']
+    // The exact text that was sent to everyone
+    const exactText = "can you make it to active meeting at 8 tomorrow (Wed) at Ash's apartment"
+    const exactTextLower = exactText.toLowerCase()
     
     const { data: polls, error } = await supabaseAdmin
       .from('sms_poll')
       .select('id, question, sent_at, options, status')
       .eq('status', 'sent')
       .order('sent_at', { ascending: false })
-      .limit(100) // Check more polls
+      .limit(100)
     
     if (error || !polls) {
       console.error('[Active Meeting Sync] Error fetching polls:', error)
       return null
     }
     
-    // Score polls by keyword match and exact text match
-    const scoredPolls = polls.map(poll => {
-      const questionLower = poll.question.toLowerCase()
-      let score = 0
+    // First, try to find exact match (case-insensitive, ignoring minor whitespace differences)
+    for (const poll of polls) {
+      const questionLower = poll.question.toLowerCase().trim()
+      const exactLowerTrimmed = exactTextLower.trim()
       
-      // Exact text match (highest priority)
-      const exactText = "can you make it to active meeting at 8 tomorrow (wed) at ash's apartment"
-      if (questionLower === exactText || questionLower.includes(exactText)) {
-        score += 50 // Highest priority
-      }
-      
-      // Check for exact phrase matches (high weight)
-      if (questionLower.includes('can you make it') && questionLower.includes('active meeting')) {
-        score += 20
-      }
-      if (questionLower.includes('ash') && (questionLower.includes("'s") || questionLower.includes('s apartment'))) {
-        score += 10
-      }
-      if (questionLower.includes('8') && (questionLower.includes('tomorrow') || questionLower.includes('wed'))) {
-        score += 10
-      }
-      
-      // Penalize polls that don't match (like "yo is ash gay?")
-      if (questionLower.includes('gay') || questionLower.includes('yo is')) {
-        score -= 30 // Heavy penalty
-      }
-      
-      // Check for individual keywords
-      for (const keyword of keywords) {
-        if (questionLower.includes(keyword)) {
-          score++
+      // Check for exact match (allowing for minor variations in punctuation/spacing)
+      if (questionLower === exactLowerTrimmed || 
+          questionLower.replace(/\s+/g, ' ') === exactLowerTrimmed.replace(/\s+/g, ' ')) {
+        console.log(`[Active Meeting Sync] Found EXACT match: ${poll.id} - "${poll.question}"`)
+        return {
+          id: poll.id,
+          question: poll.question,
+          sent_at: poll.sent_at || '',
+          options: (poll.options as string[]) || ['Yes', 'No', 'Maybe']
         }
       }
       
-      return { poll, score }
-    })
-    
-    // Sort by score (highest first), then by sent_at
-    scoredPolls.sort((a, b) => {
-      if (b.score !== a.score) return b.score - a.score
-      return new Date(b.poll.sent_at || 0).getTime() - new Date(a.poll.sent_at || 0).getTime()
-    })
-    
-    // Find best match - prefer high scores (exact match will be 50+)
-    const bestMatch = scoredPolls.find(sp => sp.score >= 10) // Need at least 10 points (exact match or strong phrase match)
-    if (bestMatch) {
-      console.log(`[Active Meeting Sync] Found poll: ${bestMatch.poll.id} - "${bestMatch.poll.question}" (score: ${bestMatch.score})`)
-      return {
-        id: bestMatch.poll.id,
-        question: bestMatch.poll.question,
-        sent_at: bestMatch.poll.sent_at || '',
-        options: (bestMatch.poll.options as string[]) || ['Yes', 'No', 'Maybe']
+      // Check if it contains the exact text (in case it's part of a longer message)
+      if (questionLower.includes(exactLowerTrimmed) || exactLowerTrimmed.includes(questionLower)) {
+        console.log(`[Active Meeting Sync] Found close match: ${poll.id} - "${poll.question}"`)
+        return {
+          id: poll.id,
+          question: poll.question,
+          sent_at: poll.sent_at || '',
+          options: (poll.options as string[]) || ['Yes', 'No', 'Maybe']
+        }
       }
     }
     
-    console.error('[Active Meeting Sync] No poll found matching active meeting keywords')
+    // Fallback: Look for polls with all key phrases
+    const keyPhrases = ['can you make it', 'active meeting', 'ash', '8', 'tomorrow']
+    for (const poll of polls) {
+      const questionLower = poll.question.toLowerCase()
+      const matches = keyPhrases.filter(phrase => questionLower.includes(phrase)).length
+      
+      if (matches >= 4) { // Need at least 4 out of 5 key phrases
+        console.log(`[Active Meeting Sync] Found poll with ${matches} key phrases: ${poll.id} - "${poll.question}"`)
+        return {
+          id: poll.id,
+          question: poll.question,
+          sent_at: poll.sent_at || '',
+          options: (poll.options as string[]) || ['Yes', 'No', 'Maybe']
+        }
+      }
+    }
+    
+    console.error('[Active Meeting Sync] No poll found matching exact text:', exactText)
     return null
   } catch (err) {
     console.error('[Active Meeting Sync] Error finding poll:', err)
