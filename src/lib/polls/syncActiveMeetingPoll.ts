@@ -52,15 +52,26 @@ async function findActiveMeetingPoll(): Promise<{ id: string; question: string; 
       const questionLower = poll.question.toLowerCase()
       let score = 0
       
-      // Check for exact phrase matches (higher weight)
+      // Exact text match (highest priority)
+      const exactText = "can you make it to active meeting at 8 tomorrow (wed) at ash's apartment"
+      if (questionLower === exactText || questionLower.includes(exactText)) {
+        score += 50 // Highest priority
+      }
+      
+      // Check for exact phrase matches (high weight)
       if (questionLower.includes('can you make it') && questionLower.includes('active meeting')) {
+        score += 20
+      }
+      if (questionLower.includes('ash') && (questionLower.includes("'s") || questionLower.includes('s apartment'))) {
         score += 10
       }
-      if (questionLower.includes('ash') && (questionLower.includes("'s") || questionLower.includes('s '))) {
-        score += 5
-      }
       if (questionLower.includes('8') && (questionLower.includes('tomorrow') || questionLower.includes('wed'))) {
-        score += 5
+        score += 10
+      }
+      
+      // Penalize polls that don't match (like "yo is ash gay?")
+      if (questionLower.includes('gay') || questionLower.includes('yo is')) {
+        score -= 30 // Heavy penalty
       }
       
       // Check for individual keywords
@@ -79,7 +90,8 @@ async function findActiveMeetingPoll(): Promise<{ id: string; question: string; 
       return new Date(b.poll.sent_at || 0).getTime() - new Date(a.poll.sent_at || 0).getTime()
     })
     
-    const bestMatch = scoredPolls.find(sp => sp.score >= 3) // Need at least 3 keywords or exact match
+    // Find best match - prefer high scores (exact match will be 50+)
+    const bestMatch = scoredPolls.find(sp => sp.score >= 10) // Need at least 10 points (exact match or strong phrase match)
     if (bestMatch) {
       console.log(`[Active Meeting Sync] Found poll: ${bestMatch.poll.id} - "${bestMatch.poll.question}" (score: ${bestMatch.score})`)
       return {
@@ -197,7 +209,7 @@ async function getUserResponseAfterPoll(
         lowerMsg.startsWith('how') ||
         lowerMsg.startsWith('why') ||
         lowerMsg.includes('?') ||
-        lowerMsg.includes('make') ||
+        (lowerMsg.includes('make') && !lowerMsg.includes('make it')) ||
         lowerMsg.includes('create') ||
         lowerMsg.includes('send') ||
         lowerMsg.includes('delete') ||
@@ -216,7 +228,7 @@ async function getUserResponseAfterPoll(
         if (parsed.option && parsed.option.trim().length > 0) {
           // Verify the parsed option is actually one of the poll options
           const validOption = pollOptions.some(opt => 
-            opt.toLowerCase() === parsed.option.toLowerCase()
+            opt.toLowerCase() === parsed.option!.toLowerCase()
           )
           
           if (validOption) {
@@ -227,10 +239,14 @@ async function getUserResponseAfterPoll(
               option: parsed.option,
               notes: parsed.notes
             }
+          } else {
+            // Log why it was rejected
+            console.log(`[Active Meeting Sync] Rejected "${userMsg}" for ${phoneNumber}: parsed as "${parsed.option}" but not in poll options [${pollOptions.join(', ')}]`)
           }
         }
       } catch (parseError) {
         // If parsing fails, continue to next message
+        console.log(`[Active Meeting Sync] Failed to parse "${userMsg}" for ${phoneNumber}:`, parseError instanceof Error ? parseError.message : String(parseError))
         continue
       }
     }
@@ -324,7 +340,7 @@ export async function syncActiveMeetingPollResponses(): Promise<{
         
         if (result.ok) {
           synced++
-          console.log(`[Active Meeting Sync] ✓ Synced ${user.phone} (${user.name || 'Unknown'}): ${parsed.option}${parsed.notes ? ` (${parsed.notes})` : ''}`)
+          console.log(`[Active Meeting Sync] ✓ Synced ${user.phone} (${user.name || 'Unknown'}): ${userResponse.option}${userResponse.notes ? ` (${userResponse.notes})` : ''}`)
         } else {
           errors++
           const errorMsg = result.error || 'Unknown error'
