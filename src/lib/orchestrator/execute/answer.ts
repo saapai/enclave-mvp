@@ -59,8 +59,32 @@ export async function executeAnswer(
   try {
     const plan = await planQuery(query, spaceIds[0])
     
-    // Execute plan to try knowledge graph first
-    let toolResults = await executePlan(plan, spaceIds[0])
+    // Execute plan across all workspaces and combine results
+    const allToolResults: any[] = []
+    for (const spaceId of spaceIds) {
+      const toolResults = await executePlan(plan, spaceId)
+      allToolResults.push(...toolResults)
+    }
+    
+    // Deduplicate tool results by tool name and keep highest confidence
+    const toolResultsMap = new Map<string, any>()
+    for (const result of allToolResults) {
+      const existing = toolResultsMap.get(result.tool)
+      if (!existing || (result.confidence || 0) > (existing.confidence || 0)) {
+        // Merge data if both have results arrays
+        if (existing && existing.data?.results && result.data?.results) {
+          const mergedResults = [...existing.data.results, ...result.data.results]
+          const uniqueResults = Array.from(new Map(mergedResults.map((r: any) => [r.id, r])).values())
+          toolResultsMap.set(result.tool, {
+            ...result,
+            data: { ...result.data, results: uniqueResults }
+          })
+        } else {
+          toolResultsMap.set(result.tool, result)
+        }
+      }
+    }
+    let toolResults = Array.from(toolResultsMap.values())
     
     // If knowledge graph found nothing, use cross-workspace results
     const hasGoodKnowledgeResult = toolResults.some(r => r.success && (r.confidence || 0) > 0.7)
