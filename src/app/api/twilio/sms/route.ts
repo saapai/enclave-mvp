@@ -843,9 +843,12 @@ export async function POST(request: NextRequest) {
     }
     
     // ========================================================================
-    // ORCHESTRATOR-BASED FLOW (if enabled)
+    // ORCHESTRATOR-BASED FLOW (if enabled, but AFTER poll responses)
     // ========================================================================
-    if (USE_ORCHESTRATOR) {
+    // Skip orchestrator if this is a poll response - poll responses need special handling
+    const isPollResponse = finalIsPollResponseContext && !isPollDraftContext && !isPollQuestionInputContext && !isPollRequest(textRaw) && !isAnnouncementRequest(textRaw)
+    
+    if (USE_ORCHESTRATOR && !isPollResponse) {
       try {
         // Get user/org context if available
         const { data: userData } = await supabase

@@ -628,13 +628,46 @@ Only return valid JSON, nothing else.`,
     console.error('[Polls] Failed to parse response:', err);
   }
   
-  // Fallback: simple keyword matching
+  // Fallback: simple keyword matching (handle emojis and edge cases)
   const lowerMsg = message.toLowerCase();
+  
+  // Remove emojis for matching (but keep original for notes)
+  const cleanMsg = message.replace(/[\u{1F300}-\u{1F9FF}]/gu, '').trim()
+  const lowerCleanMsg = cleanMsg.toLowerCase()
+  
+  // Check for explicit "no" patterns (even with emojis)
+  if (/^(no|nope|nah|n)\s*[💔❤️💕😢😭😔]?$/i.test(message.trim()) || 
+      /^(no|nope|nah|n)\s*[💔❤️💕😢😭😔]?$/i.test(cleanMsg.trim())) {
+    const noOption = options.find(opt => opt.toLowerCase() === 'no')
+    if (noOption) {
+      return { option: noOption }
+    }
+  }
+  
+  // Check for explicit "yes" patterns
+  if (/^(yes|yep|yeah|ya|y)\s*[❤️💕😊👍]?$/i.test(message.trim()) || 
+      /^(yes|yep|yeah|ya|y)\s*[❤️💕😊👍]?$/i.test(cleanMsg.trim())) {
+    const yesOption = options.find(opt => opt.toLowerCase() === 'yes')
+    if (yesOption) {
+      return { option: yesOption }
+    }
+  }
+  
+  // Check for "maybe"
+  if (/^(maybe|perhaps|might)\s*[?]?$/i.test(message.trim()) || 
+      /^(maybe|perhaps|might)\s*[?]?$/i.test(cleanMsg.trim())) {
+    const maybeOption = options.find(opt => opt.toLowerCase() === 'maybe')
+    if (maybeOption) {
+      return { option: maybeOption }
+    }
+  }
+  
+  // Standard keyword matching on cleaned message
   for (const opt of options) {
-    if (lowerMsg.includes(opt.toLowerCase())) {
+    if (lowerCleanMsg.includes(opt.toLowerCase())) {
       // Extract notes (anything after the option)
-      const optIndex = lowerMsg.indexOf(opt.toLowerCase());
-      const afterOption = message.substring(optIndex + opt.length).trim();
+      const optIndex = lowerCleanMsg.indexOf(opt.toLowerCase());
+      const afterOption = cleanMsg.substring(optIndex + opt.length).trim();
       const notes = afterOption.replace(/^(but|and|,)\s*/i, '').trim();
       
       return {
