@@ -112,88 +112,91 @@ export async function executeAnswer(
         // Short enough and doesn't look like raw document, use directly
         finalText = composed.text
       } else if (toolResults.length > 0 && toolResults[0].data?.results && toolResults[0].data.results.length > 0) {
-        // Too long or raw document, use AI summarization
+        // Too long or raw document, try AI summarization with timeout, then fallback to document
         const allResults = toolResults[0].data.results
+        const topResult = allResults[0]
         
-        // Try AI summarization for event queries
-        for (const result of allResults) {
-          if (!result.body || result.body.length < 10) continue
+        // Extract document snippet first (in case AI fails)
+        let documentSnippet = ''
+        if (topResult?.body) {
+          const bodyLower = topResult.body.toLowerCase()
+          const queryLower = query.toLowerCase()
           
-          const chunks: string[] = []
-          const chunkSize = 1500
+          // Try to find relevant snippet around query keywords
+          const keywords = queryLower.split(' ').filter(w => w.length > 2)
+          let keywordIndex = -1
           
-          if (result.body.length <= chunkSize) {
-            chunks.push(result.body)
-          } else {
-            for (let i = 0; i < result.body.length; i += chunkSize - 200) {
-              chunks.push(result.body.substring(i, i + chunkSize))
+          for (const keyword of keywords) {
+            const idx = bodyLower.indexOf(keyword)
+            if (idx > -1) {
+              keywordIndex = idx
+              break
             }
           }
           
-          for (const chunk of chunks) {
-            const context = `Title: ${result.title}\nContent: ${chunk}`
+          if (keywordIndex > -1) {
+            // Extract snippet around keyword (200 chars before, 300 chars after)
+            documentSnippet = topResult.body.substring(
+              Math.max(0, keywordIndex - 200), 
+              Math.min(topResult.body.length, keywordIndex + 300)
+            ).trim()
+          } else {
+            // No keyword found, use first 500 chars
+            documentSnippet = topResult.body.substring(0, 500).trim()
+          }
+        } else {
+          documentSnippet = topResult?.title || ''
+        }
+        
+        // Try AI summarization with timeout (max 5 seconds)
+        let aiSucceeded = false
+        if (topResult?.body && topResult.body.length > 10) {
+          try {
+            const aiUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'https://www.tryenclave.com'}/api/ai`
+            const controller = new AbortController()
+            const timeoutId = setTimeout(() => controller.abort(), 5000) // 5 second timeout
             
-            try {
-              const aiUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'https://www.tryenclave.com'}/api/ai`
-              const aiRes = await fetch(aiUrl, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  query,
-                  context,
-                  type: 'summary'
-                })
-              })
+            const aiRes = await fetch(aiUrl, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                query,
+                context: `Title: ${topResult.title}\nContent: ${topResult.body.substring(0, 2000)}`,
+                type: 'summary'
+              }),
+              signal: controller.signal
+            })
+            
+            clearTimeout(timeoutId)
+            
+            if (aiRes.ok) {
+              const aiData = await aiRes.json()
+              const response = aiData.response || ''
               
-              if (aiRes.ok) {
-                const aiData = await aiRes.json()
-                const response = aiData.response || ''
-                
-                const lowerResponse = response.toLowerCase()
-                const noInfoPatterns = ['no information', 'not found', 'does not contain', 'cannot provide']
-                const hasNoInfo = noInfoPatterns.some(p => lowerResponse.includes(p))
-                
-                if (!hasNoInfo && response.length > 20) {
-                  finalText = response
-                  break
-                }
+              const lowerResponse = response.toLowerCase()
+              const noInfoPatterns = ['no information', 'not found', 'does not contain', 'cannot provide']
+              const hasNoInfo = noInfoPatterns.some(p => lowerResponse.includes(p))
+              
+              if (!hasNoInfo && response.length > 20) {
+                finalText = response
+                aiSucceeded = true
+                console.log(`[Execute Answer] AI summarization succeeded, length: ${finalText.length}`)
               }
-            } catch (err) {
+            }
+          } catch (err) {
+            if (err instanceof Error && err.name === 'AbortError') {
+              console.log(`[Execute Answer] AI summarization timed out, using document snippet`)
+            } else {
               console.error(`[Execute Answer] AI call failed:`, err)
             }
           }
-          
-          if (finalText && finalText.length > 20) break
         }
         
-        // Fallback to first result body or title if AI failed
-        // If finalText is still the raw composed text (too long), extract from document
-        if (!finalText || finalText.length < 20 || finalText === composed.text) {
-          // Try to extract just the relevant part from the document
-          const topResult = allResults[0]
-          if (topResult?.body) {
-            // For event queries, try to find date/time info in the document
-            const bodyLower = topResult.body.toLowerCase()
-            const queryLower = query.toLowerCase()
-            
-            // If document contains the query keywords, use a snippet around it
-            if (bodyLower.includes('active meeting') || bodyLower.includes('big little')) {
-              // Extract a relevant snippet (first 500 chars or around the keyword)
-              const keywordIndex = bodyLower.indexOf(queryLower.split(' ')[0]) // Find first keyword
-              if (keywordIndex > -1) {
-                const snippet = topResult.body.substring(Math.max(0, keywordIndex - 100), keywordIndex + 400)
-                finalText = snippet.trim()
-              } else {
-                finalText = topResult.body.substring(0, 500).trim()
-              }
-            } else {
-              finalText = topResult.body.substring(0, 500).trim()
-            }
-          } else {
-            finalText = topResult?.title || composed.text || "I couldn't find any upcoming events matching that."
-          }
+        // If AI failed or timed out, use document snippet
+        if (!aiSucceeded) {
+          finalText = documentSnippet || topResult?.title || "I couldn't find any upcoming events matching that."
+          console.log(`[Execute Answer] Using document snippet, length: ${finalText.length}`)
         }
-        console.log(`[Execute Answer] Event query final text length: ${finalText?.length || 0}`)
       } else {
         // No results, use composed fallback
         finalText = composed.text || "I couldn't find any upcoming events matching that."
