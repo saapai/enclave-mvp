@@ -41,16 +41,30 @@ export async function handleTurn(
     // 4. Execute
     const result = await execute(mode, frame, envelope)
     
+    // Log result for debugging
+    console.log(`[Orchestrator] Execute result: ${result.messages.length} messages, mode=${mode}`)
+    if (result.messages.length > 0) {
+      console.log(`[Orchestrator] First message preview: "${result.messages[0].substring(0, 100)}..."`)
+    } else {
+      console.error(`[Orchestrator] WARNING: No messages in result!`)
+    }
+    
     // 5. Log decision
     const normalizedPhone = normalizePhone(phoneNumber)
     try {
       await supabase.from('sms_conversation_history').insert({
         phone_number: normalizedPhone,
         user_message: text,
-        bot_response: result.messages.join('\n\n')
+        bot_response: result.messages.join('\n\n') || 'No response generated'
       })
     } catch (err) {
       console.error(`[Orchestrator] Failed to save conversation history:`, err)
+    }
+    
+    // 6. Ensure we always have at least one message
+    if (!result.messages || result.messages.length === 0) {
+      console.error(`[Orchestrator] ERROR: Empty messages array, using fallback`)
+      result.messages = ['I couldn\'t process that request. Please try again.']
     }
     
     // 6. Return result

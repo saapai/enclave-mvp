@@ -100,6 +100,7 @@ export async function executeAnswer(
     
     // Compose response
     const composed = await composeResponse(query, plan, toolResults)
+    console.log(`[Execute Answer] Composed response: text length=${composed.text?.length || 0}, intent=${plan.intent}, toolResults=${toolResults.length}`)
     
     // Try AI summarization if we have results
     let finalText = composed.text || ''
@@ -166,9 +167,33 @@ export async function executeAnswer(
         }
         
         // Fallback to first result body or title if AI failed
-        if (!finalText || finalText.length < 20) {
-          finalText = allResults[0]?.body || allResults[0]?.title || composed.text || "I couldn't find any upcoming events matching that."
+        // If finalText is still the raw composed text (too long), extract from document
+        if (!finalText || finalText.length < 20 || finalText === composed.text) {
+          // Try to extract just the relevant part from the document
+          const topResult = allResults[0]
+          if (topResult?.body) {
+            // For event queries, try to find date/time info in the document
+            const bodyLower = topResult.body.toLowerCase()
+            const queryLower = query.toLowerCase()
+            
+            // If document contains the query keywords, use a snippet around it
+            if (bodyLower.includes('active meeting') || bodyLower.includes('big little')) {
+              // Extract a relevant snippet (first 500 chars or around the keyword)
+              const keywordIndex = bodyLower.indexOf(queryLower.split(' ')[0]) // Find first keyword
+              if (keywordIndex > -1) {
+                const snippet = topResult.body.substring(Math.max(0, keywordIndex - 100), keywordIndex + 400)
+                finalText = snippet.trim()
+              } else {
+                finalText = topResult.body.substring(0, 500).trim()
+              }
+            } else {
+              finalText = topResult.body.substring(0, 500).trim()
+            }
+          } else {
+            finalText = topResult?.title || composed.text || "I couldn't find any upcoming events matching that."
+          }
         }
+        console.log(`[Execute Answer] Event query final text length: ${finalText?.length || 0}`)
       } else {
         // No results, use composed fallback
         finalText = composed.text || "I couldn't find any upcoming events matching that."
@@ -239,13 +264,26 @@ export async function executeAnswer(
       }
     }
     
-    // Ensure we have a response
-    const responseMessage = finalText?.trim() || 'I couldn\'t find information about that. Try asking about events, policies, or people.'
+    // Ensure we have a response - always provide something
+    let responseMessage = finalText?.trim() || ''
     
-    // Log for debugging
+    // If still empty, use fallbacks
     if (!responseMessage || responseMessage.length < 10) {
-      console.error(`[Execute Answer] Empty or too short response. Composed: "${composed.text}", Final: "${finalText}"`)
+      console.error(`[Execute Answer] Empty or too short response. Composed: "${composed.text?.substring(0, 100)}", Final: "${finalText?.substring(0, 100)}"`)
+      
+      // Try to get something from results
+      if (toolResults.length > 0 && toolResults[0].data?.results && toolResults[0].data.results.length > 0) {
+        const firstResult = toolResults[0].data.results[0]
+        responseMessage = firstResult.body?.substring(0, 500) || firstResult.title || ''
+      }
+      
+      // Final fallback
+      if (!responseMessage || responseMessage.length < 10) {
+        responseMessage = 'I couldn\'t find information about that. Try asking about events, policies, or people.'
+      }
     }
+    
+    console.log(`[Execute Answer] Returning response: length=${responseMessage.length}, preview="${responseMessage.substring(0, 100)}..."`)
     
     return {
       messages: [responseMessage],
