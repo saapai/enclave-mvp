@@ -104,6 +104,11 @@ export function plan(frame: TurnFrame): ResponseMode {
       return 'PollEdit'
     
     case 'CONFIRM_SEND':
+      // If user is asking an explicit question, answer it (but stay in CONFIRM_SEND mode)
+      if (isExplicitQuestion(frame.text)) {
+        return 'Answer'
+      }
+      
       // User confirmed
       if (isAffirmative(frame.text)) {
         return 'ActionExecute'
