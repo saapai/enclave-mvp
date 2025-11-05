@@ -134,17 +134,52 @@ async function createActiveMeetingFields(): Promise<{
  */
 async function getUserResponseAfterPoll(
   phoneNumber: string,
-  pollSentAt: string
+  pollSentAt: string,
+  pollId: string
 ): Promise<{ text: string; timestamp: string } | null> {
   try {
     const normalizedPhone = normalizePhone(phoneNumber)
+    const phoneE164 = toE164(normalizedPhone)
     
-    // Get conversation history after poll was sent
+    // First, check if there's an actual poll response record (most reliable)
+    const { data: pollResponse, error: pollError } = await supabaseAdmin
+      .from('sms_poll_response')
+      .select('option_label, notes, received_at')
+      .eq('poll_id', pollId)
+      .eq('phone', phoneE164)
+      .eq('response_status', 'answered')
+      .maybeSingle()
+    
+    if (!pollError && pollResponse && pollResponse.received_at) {
+      // Verify the response was received AFTER the poll was sent
+      const responseTime = new Date(pollResponse.received_at)
+      const pollTime = new Date(pollSentAt)
+      
+      if (responseTime > pollTime) {
+        // Use the poll response record (most reliable)
+        const responseText = pollResponse.option_label || ''
+        const notesText = pollResponse.notes || ''
+        
+        // Combine option and notes for parsing
+        const fullText = notesText ? `${responseText}, ${notesText}` : responseText
+        
+        return {
+          text: fullText,
+          timestamp: pollResponse.received_at
+        }
+      }
+    }
+    
+    // Fallback: Get conversation history STRICTLY after poll was sent
+    // Add a small buffer (1 second) to ensure we only get messages after the poll
+    const pollTime = new Date(pollSentAt)
+    const minTime = new Date(pollTime.getTime() + 1000) // 1 second after poll sent
+    
     const { data: messages, error } = await supabaseAdmin
       .from('sms_conversation_history')
       .select('user_message, bot_response, created_at')
       .eq('phone_number', normalizedPhone)
-      .gte('created_at', pollSentAt)
+      .gt('created_at', minTime.toISOString()) // STRICTLY greater than (not >=)
       .order('created_at', { ascending: true })
     
     if (error || !messages || messages.length === 0) {
@@ -159,18 +194,30 @@ async function getUserResponseAfterPoll(
       
       // Skip if it's clearly a query or command
       const lowerMsg = userMsg.toLowerCase()
-      if (
+      const isQuery = (
         lowerMsg.startsWith('when') ||
         lowerMsg.startsWith('what') ||
         lowerMsg.startsWith('where') ||
         lowerMsg.startsWith('who') ||
         lowerMsg.startsWith('how') ||
+        lowerMsg.startsWith('why') ||
         lowerMsg.includes('?') ||
         lowerMsg.includes('make') ||
         lowerMsg.includes('create') ||
-        lowerMsg.includes('send')
-      ) {
+        lowerMsg.includes('send') ||
+        lowerMsg.includes('delete') ||
+        lowerMsg.includes('cancel') ||
+        lowerMsg.length > 200 // Likely not a simple poll response
+      )
+      
+      if (isQuery) {
         continue
+      }
+      
+      // Verify message timestamp is after poll
+      const msgTime = new Date(msg.created_at)
+      if (msgTime <= pollTime) {
+        continue // Skip if somehow before poll (shouldn't happen with gt filter, but double-check)
       }
       
       // This might be a poll response
@@ -236,7 +283,7 @@ export async function syncActiveMeetingPollResponses(): Promise<{
         const phoneE164 = toE164(user.phone)
         
         // Get user's response after poll was sent
-        const userResponse = await getUserResponseAfterPoll(phoneE164, poll.sent_at)
+        const userResponse = await getUserResponseAfterPoll(phoneE164, poll.sent_at, poll.id)
         
         if (!userResponse) {
           skipped++
