@@ -149,8 +149,9 @@ export async function syncPollResponsesToAirtable(pollId: string): Promise<{
 /**
  * Sync the most recent poll (by most recent response received)
  * This finds the poll that has the most recent responses, indicating it's the active poll
+ * Can optionally filter by question keywords
  */
-export async function syncMostRecentPollToAirtable(): Promise<{
+export async function syncMostRecentPollToAirtable(questionKeywords?: string): Promise<{
   synced: number
   errors: number
   pollId?: string
@@ -158,6 +159,61 @@ export async function syncMostRecentPollToAirtable(): Promise<{
   errorsList: Array<{ phone: string; error: string }>
 }> {
   try {
+    // Strategy 0: If keywords provided, search for poll matching those keywords first
+    if (questionKeywords) {
+      const keywords = questionKeywords.toLowerCase().split(/\s+/).filter(Boolean)
+      console.log(`[Retroactive Sync] Searching for poll with keywords: ${keywords.join(', ')}`)
+      
+      // Get all polls with recent responses
+      const { data: recentResponses, error: responseError } = await supabaseAdmin
+        .from('sms_poll_response')
+        .select('poll_id, received_at, sms_poll!inner(id, question, sent_at, created_at, status)')
+        .order('received_at', { ascending: false })
+        .limit(50) // Check last 50 responses to find matching poll
+      
+      if (!responseError && recentResponses) {
+        // Find poll whose question matches the keywords
+        for (const response of recentResponses) {
+          if (response.sms_poll) {
+            const questionLower = response.sms_poll.question.toLowerCase()
+            const matchesKeywords = keywords.every(keyword => questionLower.includes(keyword))
+            
+            if (matchesKeywords) {
+              const poll = response.sms_poll
+              console.log(`[Retroactive Sync] Found matching poll: ${poll.id} - "${poll.question.substring(0, 50)}..." (matches: ${keywords.join(', ')})`)
+              const result = await syncPollResponsesToAirtable(poll.id)
+              return {
+                ...result,
+                pollId: poll.id,
+                question: poll.question
+              }
+            }
+          }
+        }
+        
+        // If no exact match, try partial match (any keyword matches)
+        for (const response of recentResponses) {
+          if (response.sms_poll) {
+            const questionLower = response.sms_poll.question.toLowerCase()
+            const matchesAnyKeyword = keywords.some(keyword => questionLower.includes(keyword))
+            
+            if (matchesAnyKeyword) {
+              const poll = response.sms_poll
+              console.log(`[Retroactive Sync] Found partially matching poll: ${poll.id} - "${poll.question.substring(0, 50)}..." (matches some: ${keywords.join(', ')})`)
+              const result = await syncPollResponsesToAirtable(poll.id)
+              return {
+                ...result,
+                pollId: poll.id,
+                question: poll.question
+              }
+            }
+          }
+        }
+        
+        console.log(`[Retroactive Sync] No poll found matching keywords: ${keywords.join(', ')}, falling back to most recent`)
+      }
+    }
+    
     // Strategy 1: Find poll with most recent response received (most reliable indicator of active poll)
     const { data: recentResponse, error: responseError } = await supabaseAdmin
       .from('sms_poll_response')

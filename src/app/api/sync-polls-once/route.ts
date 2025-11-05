@@ -30,11 +30,13 @@ export async function GET(request: NextRequest) {
     // Check query params for sync type
     const { searchParams } = new URL(request.url)
     const syncType = searchParams.get('type') // 'recent' or 'all' (default)
+    const questionKeywords = searchParams.get('question') // Optional: keywords to search for in poll question
     
     if (syncType === 'recent') {
       // Sync just the most recent poll (regardless of status)
+      // If question keywords provided, search for matching poll first
       console.log('[One-Time Sync] Syncing most recent poll...')
-      const result = await syncMostRecentPollToAirtable()
+      const result = await syncMostRecentPollToAirtable(questionKeywords || undefined)
       
       return NextResponse.json({
         success: true,
