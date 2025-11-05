@@ -561,6 +561,15 @@ export async function composeResponse(
   if (plan.intent === 'chat') {
     return composeChatResponse(query, bestResult ? [bestResult] : results)
   } else if (plan.intent === 'event_lookup') {
+    // For event lookups, if no results found, provide a helpful message
+    if (!bestResult || !bestResult.data || !bestResult.data.events || bestResult.data.events.length === 0) {
+      return {
+        text: "I couldn't find any upcoming events matching that. Try asking about specific events or check your calendar.",
+        sources: [],
+        confidence: 0,
+        needsClarification: false
+      }
+    }
     return composeEventResponse(bestResult)
   } else if (plan.intent === 'policy_lookup') {
     return composePolicyResponse(bestResult)
