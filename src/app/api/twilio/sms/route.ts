@@ -46,6 +46,10 @@ import { classifyConversationalContext } from '@/lib/nlp/conversationalContext'
 import { routeAction } from '@/lib/nlp/actionRouter'
 import { enclaveConciseAnswer } from '@/lib/enclave/answers'
 import { smsTighten } from '@/lib/text/limits'
+import { handleTurn, toTwiml } from '@/lib/orchestrator/handleTurn'
+
+// Feature flag: Enable orchestrator-based flow
+const USE_ORCHESTRATOR = true
 
 // Feature flag: Enable new planner-based flow
 const USE_PLANNER = true
@@ -839,6 +843,33 @@ export async function POST(request: NextRequest) {
     }
     
     // ========================================================================
+    // ORCHESTRATOR-BASED FLOW (if enabled)
+    // ========================================================================
+    if (USE_ORCHESTRATOR) {
+      try {
+        // Get user/org context if available
+        const { data: userData } = await supabase
+          .from('sms_optin')
+          .select('user_id, space_id')
+          .eq('phone', phoneNumber)
+          .maybeSingle()
+        
+        const userId = userData?.user_id || undefined
+        const orgId = userData?.space_id || undefined
+        
+        // Handle turn with orchestrator
+        const result = await handleTurn(phoneNumber, body, userId, orgId)
+        
+        // Convert to TwiML and return
+        const twiml = toTwiml(result.messages)
+        return new NextResponse(twiml, { headers: { 'Content-Type': 'application/xml' } })
+      } catch (error) {
+        console.error('[Twilio SMS] Orchestrator error, falling back to old flow:', error)
+        // Fall through to old flow
+      }
+    }
+    
+    // ========================================================================
     // PRIORITY 2: Poll Question Input (after "what would you like to ask in the poll?")
     // ========================================================================
     if (isPollQuestionInputContext && !isPollRequest(textRaw) && !isAnnouncementRequest(textRaw) && textRaw.length < 200) {
@@ -1137,30 +1168,77 @@ export async function POST(request: NextRequest) {
     }
     
     // Announcement content input (when bot asked "what would you like the announcement to say?" but no draft exists yet)
-    console.log(`[Twilio SMS] Announcement input check: isAnnouncementDraftContext=${isAnnouncementDraftContext}, activeDraft=${!!activeDraft}, isPollRequest=${isPollRequest(textRaw)}, isAnnouncementRequest=${isAnnouncementRequest(textRaw)}, looksLikeQuery=${looksLikeQuery}`)
-    if (isAnnouncementDraftContext && !activeDraft && !isPollRequest(textRaw) && !isAnnouncementRequest(textRaw) && !looksLikeQuery) {
-      console.log(`[Twilio SMS] Creating announcement draft with user content: "${textRaw}"`)
-      
-      const announcementText = extractRawAnnouncementText(body)
-      
-      // Generate draft from the content
-      const spaceIds = await getWorkspaceIds()
-      const draft = await generateAnnouncementDraft({ content: announcementText })
-      console.log(`[Twilio SMS] Generated draft: "${draft}"`)
-      
-      // Save new draft
-      const draftId = await saveDraft(phoneNumber, {
-        content: draft,
-        tone: 'casual',
-        scheduledFor: undefined,
-        targetAudience: undefined,
-        workspaceId: spaceIds[0]
-      }, spaceIds[0])
-      
-      return new NextResponse(
-        `<?xml version="1.0" encoding="UTF-8"?><Response><Message>okay here's what the announcement will say:\n\n${draft}\n\nreply "send it" to broadcast or reply to edit the message</Message></Response>`,
-        { headers: { 'Content-Type': 'application/xml' } }
-      )
+    // OR if bot asked for content and draft exists - treat as editing (prioritize over query detection)
+    console.log(`[Twilio SMS] Announcement input check: isAnnouncementDraftContext=${isAnnouncementDraftContext}, activeDraft=${!!activeDraft}, isPollRequest=${isPollRequest(textRaw)}, isAnnouncementRequest=${isAnnouncementRequest(textRaw)}, looksLikeQuery=${looksLikeQuery}, lastBotAskedForAnnouncement=${lastBotAskedForAnnouncement}`)
+    
+    // If bot asked for announcement content and user provides input, prioritize announcement handling over query
+    // This handles both new draft creation AND editing existing drafts when bot asked for content
+    if (isAnnouncementDraftContext && lastBotAskedForAnnouncement && !isPollRequest(textRaw) && !isAnnouncementRequest(textRaw)) {
+      // If no draft exists, create one
+      if (!activeDraft) {
+        console.log(`[Twilio SMS] Creating announcement draft with user content: "${textRaw}"`)
+        
+        const announcementText = extractRawAnnouncementText(body)
+        
+        // Generate draft from the content
+        const spaceIds = await getWorkspaceIds()
+        const draft = await generateAnnouncementDraft({ content: announcementText })
+        console.log(`[Twilio SMS] Generated draft: "${draft}"`)
+        
+        // Save new draft
+        const draftId = await saveDraft(phoneNumber, {
+          content: draft,
+          tone: 'casual',
+          scheduledFor: undefined,
+          targetAudience: undefined,
+          workspaceId: spaceIds[0]
+        }, spaceIds[0])
+        
+        return new NextResponse(
+          `<?xml version="1.0" encoding="UTF-8"?><Response><Message>okay here's what the announcement will say:\n\n${draft}\n\nreply "send it" to broadcast or reply to edit the message</Message></Response>`,
+          { headers: { 'Content-Type': 'application/xml' } }
+        )
+      } else {
+        // Draft exists - treat as editing (use intelligent patching)
+        console.log(`[Twilio SMS] Editing announcement draft with user content: "${textRaw}" (prioritized over query detection)`)
+        
+        let patchedContent: string
+        const wantsToCopy = /(copy|use|take)\s+(what|exactly\s+what)\s+(i|I)\s+(wrote|said|typed|sent)/i.test(textRaw) || 
+                            /that'?s\s+(the\s+same\s+thing|what\s+i\s+wrote|exactly\s+what\s+i\s+wrote)/i.test(textRaw)
+        
+        if (wantsToCopy && recentMessages.length > 0) {
+          const previousUserMessage = recentMessages.find(m => {
+            const msg = m.user_message.toLowerCase().trim()
+            return msg.length > 10 && !/^(thanks?|thank\s+you|ty|ok|okay)/i.test(msg)
+          })?.user_message
+          
+          if (previousUserMessage && previousUserMessage.length > 10) {
+            console.log(`[Twilio SMS] Copying previous user message: "${previousUserMessage}"`)
+            patchedContent = previousUserMessage.trim()
+          } else {
+            patchedContent = extractRawAnnouncementText(body)
+          }
+        } else if (isExactTextRequest(body)) {
+          patchedContent = extractRawAnnouncementText(body)
+        } else {
+          // Use intelligent patching to merge the new content
+          patchedContent = patchAnnouncementDraft(activeDraft.content || '', textRaw)
+        }
+        
+        await saveDraft(phoneNumber, {
+          id: activeDraft.id,
+          content: patchedContent,
+          tone: activeDraft.tone,
+          scheduledFor: activeDraft.scheduledFor,
+          targetAudience: activeDraft.targetAudience,
+          workspaceId: activeDraft.workspaceId
+        }, activeDraft.workspaceId!)
+        
+        return new NextResponse(
+          `<?xml version="1.0" encoding="UTF-8"?><Response><Message>updated:\n\n${patchedContent}\n\nreply "send it" to broadcast</Message></Response>`,
+          { headers: { 'Content-Type': 'application/xml' } }
+        )
+      }
     }
     
     // Announcement draft editing (only if in announcement context AND not a query)
@@ -1989,8 +2067,11 @@ export async function POST(request: NextRequest) {
           }
         }
         
+        // Ensure we have a response - use finalText if available, otherwise fall back to composed.text
+        const finalResponse = finalText || composed.text || 'I couldn\'t find information about that. Try asking about events, policies, or people.'
+        
         // Store query answer for later
-        queryAnswer = finalText || composed.text
+        queryAnswer = finalResponse
         
         // Format response
         let responseMessage = ''
@@ -2001,7 +2082,7 @@ export async function POST(request: NextRequest) {
         }
         
         // Add main response
-        responseMessage += finalText
+        responseMessage += finalResponse
         
         // Check for abandoned drafts to mention (but NOT if actively creating a poll/question)
         let draftFollowUp = ''
@@ -2021,17 +2102,33 @@ export async function POST(request: NextRequest) {
           responseMessage += draftFollowUp
         }
         
+        // Ensure responseMessage is not empty
+        if (!responseMessage || responseMessage.trim().length === 0) {
+          console.error(`[Twilio SMS] ERROR: responseMessage is empty! finalText=${finalText}, composed.text=${composed.text}`)
+          responseMessage = 'I couldn\'t process that request. Try asking about events, policies, or people.'
+        }
+        
         // Save conversation history
-        await supabase
-          .from('sms_conversation_history')
-          .insert({
-            phone_number: phoneNumber,
-            user_message: query,
-            bot_response: responseMessage
-          })
+        try {
+          await supabase
+            .from('sms_conversation_history')
+            .insert({
+              phone_number: phoneNumber,
+              user_message: query,
+              bot_response: responseMessage
+            })
+        } catch (err) {
+          console.error(`[Twilio SMS] Failed to save conversation history:`, err)
+          // Continue anyway - don't fail the response
+        }
         
         // Split and send
         const messages = splitLongMessage(responseMessage, 1600)
+        
+        if (messages.length === 0) {
+          console.error(`[Twilio SMS] ERROR: splitLongMessage returned empty array!`)
+          messages.push('I couldn\'t process that request. Try asking about events, policies, or people.')
+        }
         
         if (messages.length === 1) {
           return new NextResponse(

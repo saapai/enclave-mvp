@@ -17,12 +17,61 @@ export type Intent =
   | 'mixed'
 
 export type ResponseMode = 
-  | 'Answer' 
-  | 'DraftProposal' 
-  | 'DraftEdit' 
-  | 'ActionConfirm' 
-  | 'ActionExecute' 
   | 'ChitChat'
+  | 'Answer'
+  | 'DraftCreate'
+  | 'DraftEdit'
+  | 'PollCreate'
+  | 'PollEdit'
+  | 'ActionConfirm'
+  | 'ActionExecute'
+
+export type Mode = 
+  | 'IDLE'
+  | 'ANNOUNCEMENT_INPUT'
+  | 'POLL_INPUT'
+  | 'CONFIRM_SEND'
+
+export type Command = 
+  | 'SEND'
+  | 'EDIT'
+  | 'CANCEL'
+  | 'MAKE_ANNOUNCEMENT'
+  | 'MAKE_POLL'
+  | null
+
+export type Toxicity = 'ok' | 'rude' | 'abusive'
+
+export interface ParsedTime {
+  hour: number
+  minute: number
+  ampm?: 'am' | 'pm'
+}
+
+export interface TurnFrame {
+  now: Date
+  user: { id: string; role?: string }
+  convo: {
+    lastN: Array<{ speaker: 'user' | 'bot'; text: string; ts: string }>
+    lastBotAct?: { type: string; text: string; ts: string }
+  }
+  state: {
+    mode: Mode
+    pending?: Draft | PollState
+  }
+  text: string
+  signals: {
+    quoted: string[]
+    hasQuestionMark: boolean
+    command: Command
+    entities: {
+      time?: ParsedTime
+      date?: Date
+      people?: string[]
+    }
+    toxicity: Toxicity
+  }
+}
 
 export interface TurnContext {
   user_id?: string
