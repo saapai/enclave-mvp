@@ -147,7 +147,8 @@ export async function syncPollResponsesToAirtable(pollId: string): Promise<{
 }
 
 /**
- * Sync the most recent poll (by sent_at or created_at)
+ * Sync the most recent poll (by most recent response received)
+ * This finds the poll that has the most recent responses, indicating it's the active poll
  */
 export async function syncMostRecentPollToAirtable(): Promise<{
   synced: number
@@ -157,28 +158,65 @@ export async function syncMostRecentPollToAirtable(): Promise<{
   errorsList: Array<{ phone: string; error: string }>
 }> {
   try {
-    // Get the most recent poll (sent or not, ordered by sent_at first, then created_at)
+    // Strategy 1: Find poll with most recent response received (most reliable indicator of active poll)
+    const { data: recentResponse, error: responseError } = await supabaseAdmin
+      .from('sms_poll_response')
+      .select('poll_id, received_at, sms_poll!inner(id, question, sent_at, created_at, status)')
+      .order('received_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+
+    if (!responseError && recentResponse?.sms_poll) {
+      const poll = recentResponse.sms_poll
+      console.log(`[Retroactive Sync] Found poll with most recent response: ${poll.id} - "${poll.question.substring(0, 50)}..." (last response: ${recentResponse.received_at})`)
+      const result = await syncPollResponsesToAirtable(poll.id)
+      return {
+        ...result,
+        pollId: poll.id,
+        question: poll.question
+      }
+    }
+
+    // Strategy 2: Fallback to poll with most recent sent_at
+    console.log(`[Retroactive Sync] No recent responses found, falling back to most recently sent poll...`)
     const { data: polls, error: pollsError } = await supabaseAdmin
       .from('sms_poll')
       .select('id, question, sent_at, created_at, status')
-      .order('sent_at', { ascending: false, nullsFirst: false })
+      .not('sent_at', 'is', null)
+      .order('sent_at', { ascending: false })
+      .limit(1)
+
+    if (!pollsError && polls && polls.length > 0) {
+      const poll = polls[0]
+      console.log(`[Retroactive Sync] Syncing most recently sent poll: ${poll.id} - "${poll.question.substring(0, 50)}..." (sent_at: ${poll.sent_at})`)
+      const result = await syncPollResponsesToAirtable(poll.id)
+      return {
+        ...result,
+        pollId: poll.id,
+        question: poll.question
+      }
+    }
+
+    // Strategy 3: Fallback to most recently created poll
+    const { data: createdPolls, error: createdError } = await supabaseAdmin
+      .from('sms_poll')
+      .select('id, question, created_at, status')
       .order('created_at', { ascending: false })
       .limit(1)
 
-    if (pollsError || !polls || polls.length === 0) {
-      console.error(`[Retroactive Sync] No polls found:`, pollsError)
+    if (createdError || !createdPolls || createdPolls.length === 0) {
+      console.error(`[Retroactive Sync] No polls found:`, createdError)
       return { synced: 0, errors: 1, errorsList: [{ phone: 'unknown', error: 'No polls found' }] }
     }
 
-    const mostRecentPoll = polls[0]
-    console.log(`[Retroactive Sync] Syncing most recent poll: ${mostRecentPoll.id} - "${mostRecentPoll.question.substring(0, 50)}..." (status: ${mostRecentPoll.status})`)
-
-    const result = await syncPollResponsesToAirtable(mostRecentPoll.id)
+    const poll = createdPolls[0]
+    console.log(`[Retroactive Sync] Syncing most recently created poll: ${poll.id} - "${poll.question.substring(0, 50)}..." (created_at: ${poll.created_at})`)
+    const result = await syncPollResponsesToAirtable(poll.id)
     
     return {
       ...result,
-      pollId: mostRecentPoll.id,
-      question: mostRecentPoll.question
+      pollId: poll.id,
+      question: poll.question
     }
   } catch (err) {
     console.error(`[Retroactive Sync] Fatal error syncing most recent poll:`, err)
