@@ -161,7 +161,20 @@ async function determineMode(
   const activeDraft = await getActiveDraft(normalizedPhone)
   const activePollDraft = await getActivePollDraft(normalizedPhone)
   
-  // If bot asked for announcement content, we're in ANNOUNCEMENT_INPUT
+  // PRIORITY 1: Check if user is making a NEW request (not responding to bot)
+  // This must come BEFORE checking for confirm mode to avoid false positives
+  const lowerText = text.toLowerCase()
+  const isNewPollRequest = /(make|create|send)\s+(an?\s+)?(poll|survey)/i.test(text) ||
+                           /i\s+(want|wanna)\s+(to\s+)?(make|create|send)\s+(an?\s+)?(poll|survey)/i.test(text)
+  const isNewAnnouncementRequest = /(make|create|send|post)\s+(an?\s+)?(announcement|announce)/i.test(text) ||
+                                   /i\s+(want|wanna)\s+(to\s+)?(make|create|send|post)\s+(an?\s+)?(announcement|announce)/i.test(text)
+  
+  // If it's a new request, ignore existing drafts and go to IDLE (plan will route to create)
+  if (isNewPollRequest || isNewAnnouncementRequest) {
+    return { mode: 'IDLE' }
+  }
+  
+  // PRIORITY 2: If bot asked for announcement content, we're in ANNOUNCEMENT_INPUT
   if (lastBotMessage.toLowerCase().includes('what would you like the announcement to say')) {
     return { 
       mode: 'ANNOUNCEMENT_INPUT', 

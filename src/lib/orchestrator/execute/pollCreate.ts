@@ -15,13 +15,13 @@ export async function executePollCreate(
   const details = await extractPollDetails(frame.text)
   let question = details.question || ''
   
-  // Check for quoted text
+  // Check for quoted text - if present, use it verbatim (don't pass through generatePollQuestion)
+  let draftQuestion: string
   if (frame.signals.quoted.length > 0) {
-    question = frame.signals.quoted[0]
-  }
-  
-  // If no question, ask for it
-  if (!question || question.trim().length === 0) {
+    // Use quoted text verbatim - preserve exact wording
+    draftQuestion = frame.signals.quoted[0]
+  } else if (!question || question.trim().length === 0) {
+    // If no question, ask for it
     const askMsg = 'what would you like to ask in the poll?'
     
     const { supabase } = await import('@/lib/supabase')
@@ -35,10 +35,10 @@ export async function executePollCreate(
       messages: [askMsg],
       newMode: 'POLL_INPUT'
     }
+  } else {
+    // Generate conversational question only if no quotes
+    draftQuestion = await generatePollQuestion({ question, tone: details.tone || 'casual' })
   }
-  
-  // Generate conversational question
-  const draftQuestion = await generatePollQuestion({ question, tone: details.tone || 'casual' })
   
   // Save draft
   await savePollDraft(normalizedPhone, {
