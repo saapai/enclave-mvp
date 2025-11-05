@@ -27,33 +27,49 @@ function toE164(normalized: string): string {
 
 /**
  * Find poll about active meeting at ash's
+ * Looks for poll with exact text: "can you make it to active meeting at 8 tomorrow (Wed) at Ash's apartment"
  */
 async function findActiveMeetingPoll(): Promise<{ id: string; question: string; sent_at: string; options: string[] } | null> {
   try {
     // Search for polls with keywords related to active meeting
-    const keywords = ['active', 'meeting', 'ash']
+    // The exact text is: "can you make it to active meeting at 8 tomorrow (Wed) at Ash's apartment"
+    const keywords = ['active', 'meeting', 'ash', '8', 'tomorrow']
     
     const { data: polls, error } = await supabaseAdmin
       .from('sms_poll')
       .select('id, question, sent_at, options, status')
       .eq('status', 'sent')
       .order('sent_at', { ascending: false })
-      .limit(50)
+      .limit(100) // Check more polls
     
     if (error || !polls) {
       console.error('[Active Meeting Sync] Error fetching polls:', error)
       return null
     }
     
-    // Score polls by keyword match
+    // Score polls by keyword match and exact text match
     const scoredPolls = polls.map(poll => {
       const questionLower = poll.question.toLowerCase()
       let score = 0
+      
+      // Check for exact phrase matches (higher weight)
+      if (questionLower.includes('can you make it') && questionLower.includes('active meeting')) {
+        score += 10
+      }
+      if (questionLower.includes('ash') && (questionLower.includes("'s") || questionLower.includes('s '))) {
+        score += 5
+      }
+      if (questionLower.includes('8') && (questionLower.includes('tomorrow') || questionLower.includes('wed'))) {
+        score += 5
+      }
+      
+      // Check for individual keywords
       for (const keyword of keywords) {
         if (questionLower.includes(keyword)) {
           score++
         }
       }
+      
       return { poll, score }
     })
     
@@ -63,9 +79,9 @@ async function findActiveMeetingPoll(): Promise<{ id: string; question: string; 
       return new Date(b.poll.sent_at || 0).getTime() - new Date(a.poll.sent_at || 0).getTime()
     })
     
-    const bestMatch = scoredPolls.find(sp => sp.score >= 2) // Need at least 2 keywords
+    const bestMatch = scoredPolls.find(sp => sp.score >= 3) // Need at least 3 keywords or exact match
     if (bestMatch) {
-      console.log(`[Active Meeting Sync] Found poll: ${bestMatch.poll.id} - "${bestMatch.poll.question}"`)
+      console.log(`[Active Meeting Sync] Found poll: ${bestMatch.poll.id} - "${bestMatch.poll.question}" (score: ${bestMatch.score})`)
       return {
         id: bestMatch.poll.id,
         question: bestMatch.poll.question,
@@ -130,56 +146,96 @@ async function createActiveMeetingFields(): Promise<{
 }
 
 /**
- * Get user's response after poll was sent
+ * Get user's response after poll was sent by searching conversation history
+ * Looks for messages after the poll was sent and uses Mistral to determine if it's a poll response
  */
 async function getUserResponseAfterPoll(
   phoneNumber: string,
   pollSentAt: string,
-  pollId: string
-): Promise<{ text: string; timestamp: string } | null> {
+  pollId: string,
+  pollOptions: string[]
+): Promise<{ text: string; timestamp: string; option?: string; notes?: string } | null> {
   try {
     const normalizedPhone = normalizePhone(phoneNumber)
     const phoneE164 = toE164(normalizedPhone)
     
-    // ONLY use poll response records - this is the source of truth
-    // If a response isn't in the poll response table, we don't sync it
-    const { data: pollResponse, error: pollError } = await supabaseAdmin
-      .from('sms_poll_response')
-      .select('option_label, notes, received_at')
-      .eq('poll_id', pollId)
-      .eq('phone', phoneE164)
-      .eq('response_status', 'answered')
-      .maybeSingle()
+    // Add buffer (10 seconds) to ensure we only get messages after the poll was delivered
+    const pollTime = new Date(pollSentAt)
+    const minTime = new Date(pollTime.getTime() + 10000) // 10 seconds after poll sent
     
-    if (!pollError && pollResponse && pollResponse.received_at) {
-      // Verify the response was received AFTER the poll was sent (with 5 second buffer for timing)
-      const responseTime = new Date(pollResponse.received_at)
-      const pollTime = new Date(pollSentAt)
-      const bufferTime = new Date(pollTime.getTime() + 5000) // 5 seconds after poll sent
-      
-      if (responseTime > bufferTime) {
-        // Use the poll response record (most reliable)
-        const responseText = pollResponse.option_label || ''
-        const notesText = pollResponse.notes || ''
-        
-        // Combine option and notes for parsing
-        const fullText = notesText ? `${responseText}, ${notesText}` : responseText
-        
-        console.log(`[Active Meeting Sync] Using poll response record for ${phoneNumber}: ${responseText} (received: ${pollResponse.received_at}, poll sent: ${pollSentAt})`)
-        
-        return {
-          text: fullText,
-          timestamp: pollResponse.received_at
-        }
-      } else {
-        console.log(`[Active Meeting Sync] Poll response for ${phoneNumber} received too early (${pollResponse.received_at} <= ${bufferTime.toISOString()}), ignoring`)
-      }
-    } else {
-      console.log(`[Active Meeting Sync] No poll response record found for ${phoneNumber}, skipping (not in sms_poll_response table)`)
+    // Get conversation history STRICTLY after poll was sent
+    const { data: messages, error } = await supabaseAdmin
+      .from('sms_conversation_history')
+      .select('user_message, bot_response, created_at')
+      .eq('phone_number', normalizedPhone)
+      .gt('created_at', minTime.toISOString()) // STRICTLY greater than
+      .order('created_at', { ascending: true })
+      .limit(20) // Check first 20 messages after poll
+    
+    if (error || !messages || messages.length === 0) {
+      return null
     }
     
-    // DO NOT use conversation history as fallback - only use poll response records
-    // This ensures we only sync responses that were actually recorded as poll responses
+    // Look through messages and use Mistral to determine if any are poll responses
+    for (const msg of messages) {
+      const userMsg = msg.user_message?.trim()
+      if (!userMsg || userMsg.length === 0) continue
+      
+      // Verify message timestamp is after poll
+      const msgTime = new Date(msg.created_at)
+      if (msgTime <= pollTime) {
+        continue
+      }
+      
+      // Skip if it's clearly a query or command
+      const lowerMsg = userMsg.toLowerCase()
+      const isQuery = (
+        lowerMsg.startsWith('when') ||
+        lowerMsg.startsWith('what') ||
+        lowerMsg.startsWith('where') ||
+        lowerMsg.startsWith('who') ||
+        lowerMsg.startsWith('how') ||
+        lowerMsg.startsWith('why') ||
+        lowerMsg.includes('?') ||
+        lowerMsg.includes('make') ||
+        lowerMsg.includes('create') ||
+        lowerMsg.includes('send') ||
+        lowerMsg.includes('delete') ||
+        lowerMsg.includes('cancel') ||
+        lowerMsg.length > 200
+      )
+      
+      if (isQuery) {
+        continue
+      }
+      
+      // Use Mistral to parse if this is a poll response
+      try {
+        const parsed = await parseResponseWithNotes(userMsg, pollOptions)
+        
+        if (parsed.option && parsed.option.trim().length > 0) {
+          // Verify the parsed option is actually one of the poll options
+          const validOption = pollOptions.some(opt => 
+            opt.toLowerCase() === parsed.option.toLowerCase()
+          )
+          
+          if (validOption) {
+            console.log(`[Active Meeting Sync] Found response for ${phoneNumber}: "${userMsg}" → ${parsed.option} (at ${msg.created_at})`)
+            return {
+              text: userMsg,
+              timestamp: msg.created_at,
+              option: parsed.option,
+              notes: parsed.notes
+            }
+          }
+        }
+      } catch (parseError) {
+        // If parsing fails, continue to next message
+        continue
+      }
+    }
+    
+    // No valid response found
     return null
   } catch (err) {
     console.error(`[Active Meeting Sync] Error getting response for ${phoneNumber}:`, err)
@@ -235,53 +291,27 @@ export async function syncActiveMeetingPollResponses(): Promise<{
       try {
         const phoneE164 = toE164(user.phone)
         
-        // Get user's response after poll was sent
-        const userResponse = await getUserResponseAfterPoll(phoneE164, poll.sent_at, poll.id)
+        // Get user's response after poll was sent (searches conversation history)
+        const userResponse = await getUserResponseAfterPoll(phoneE164, poll.sent_at, poll.id, poll.options)
         
-        if (!userResponse) {
+        if (!userResponse || !userResponse.option) {
           skipped++
+          console.log(`[Active Meeting Sync] No valid response found for ${user.phone} after poll was sent`)
           continue
         }
         
-        console.log(`[Active Meeting Sync] User ${user.phone} responded: "${userResponse.text.substring(0, 50)}..."`)
-        
-        // Parse response using Mistral (via parseResponseWithNotes)
-        // Only parse if we have actual text (not empty)
-        if (!userResponse.text || userResponse.text.trim().length === 0) {
-          console.log(`[Active Meeting Sync] Empty response for ${user.phone}, skipping`)
-          skipped++
-          continue
-        }
-        
-        const parsed = await parseResponseWithNotes(userResponse.text, poll.options)
-        
-        if (!parsed.option || parsed.option.trim().length === 0) {
-          console.log(`[Active Meeting Sync] Could not parse response for ${user.phone} ("${userResponse.text}"), skipping`)
-          skipped++
-          continue
-        }
-        
-        // Verify the parsed option is actually one of the poll options
-        const validOption = poll.options.some(opt => 
-          opt.toLowerCase() === parsed.option.toLowerCase()
-        )
-        
-        if (!validOption) {
-          console.log(`[Active Meeting Sync] Parsed option "${parsed.option}" not in poll options [${poll.options.join(', ')}], skipping`)
-          skipped++
-          continue
-        }
+        console.log(`[Active Meeting Sync] User ${user.phone} responded: "${userResponse.text}" → ${userResponse.option}`)
         
         // Prepare Airtable fields
         const personFieldName = ENV.AIRTABLE_PERSON_FIELD || 'Person'
         const airtableFields: Record<string, any> = {
           [personFieldName]: user.name || 'Unknown',
           [fields.questionField]: poll.question,
-          [fields.responseField]: parsed.option,
+          [fields.responseField]: userResponse.option,
         }
         
-        if (parsed.notes) {
-          airtableFields[fields.notesField] = parsed.notes
+        if (userResponse.notes) {
+          airtableFields[fields.notesField] = userResponse.notes
         }
         
         // Upsert to Airtable
