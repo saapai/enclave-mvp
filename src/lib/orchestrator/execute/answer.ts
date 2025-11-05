@@ -123,13 +123,19 @@ export async function executeAnswer(
     // Try AI summarization if we have results
     let finalText = composed.text || ''
     
-    // For event_lookup, use the composed text directly if it's short and already formatted
-    // Otherwise, use AI to summarize the document content
+    // For event_lookup, ALWAYS use AI if we have document results
+    // Only use composed text directly if it's already a good summary (not a fallback or raw document)
     if (plan.intent === 'event_lookup') {
-      if (composed.text && composed.text.length > 10 && composed.text.length < 500 && !composed.text.includes('\n\n')) {
-        // Short enough and doesn't look like raw document, use directly
-        finalText = composed.text
-      } else if (toolResults.length > 0 && toolResults[0].data?.results && toolResults[0].data.results.length > 0) {
+      const hasDocs = toolResults.length > 0 && toolResults[0].data?.results && toolResults[0].data.results.length > 0
+      const isGoodSummary = composed.text && 
+                             composed.text.length > 10 && 
+                             composed.text.length < 500 && 
+                             !composed.text.includes('\n\n') &&
+                             !composed.text.includes("I couldn't find") &&
+                             !composed.text.includes("I couldn't find")
+      
+      // If we have documents, always try AI (unless already a good summary)
+      if (hasDocs && !isGoodSummary) {
         // Too long or raw document, try AI summarization with timeout, then fallback to document
         const allResults = toolResults[0].data.results
         const topResult = allResults[0]
