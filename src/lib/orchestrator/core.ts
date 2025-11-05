@@ -8,6 +8,8 @@ import { Intent, Scope, ResponseMode, ContextEnvelope, TurnContext, ScopeBudget,
 import { retrieveActionState } from './actionState'
 import { retrieveConvoSnapshot } from './convoSnapshot'
 import { routeAction } from '@/lib/nlp/actionRouter'
+import { searchResourcesHybrid } from '@/lib/search'
+import { retrieveEnclave } from '@/lib/retrievers/enclave'
 
 /**
  * Scope budgets per intent (k = max items to retrieve, no token limits)
@@ -77,6 +79,128 @@ const SCOPE_BUDGETS: Record<Intent, Record<Scope, ScopeBudget>> = {
 const THRESHOLDS = {
   primary: 0.6,  // Top-1 relevance score threshold
   auxiliary: 0.4  // Avg top-3 relevance score threshold
+}
+
+const DEFAULT_SPACE_ID = '00000000-0000-0000-0000-000000000000'
+
+function clampScore(value: number | null | undefined, fallback = 0.6): number {
+  if (typeof value !== 'number' || Number.isNaN(value)) {
+    return fallback
+  }
+  if (value < 0) return 0
+  if (value > 1) return 1
+  return value
+}
+
+function computeFreshnessScore(timestamp?: string): number {
+  if (!timestamp) {
+    return 0.6
+  }
+  const parsed = new Date(timestamp)
+  if (Number.isNaN(parsed.getTime())) {
+    return 0.6
+  }
+  const diffMs = Date.now() - parsed.getTime()
+  const diffDays = diffMs / (1000 * 60 * 60 * 24)
+  if (diffDays <= 1) return 1
+  if (diffDays <= 7) return 0.85
+  if (diffDays <= 30) return 0.7
+  if (diffDays <= 90) return 0.5
+  return 0.35
+}
+
+function deriveRoleMatchScore(resourceType?: string | null): number {
+  if (!resourceType) {
+    return 0.6
+  }
+  const normalized = resourceType.toLowerCase()
+  if (normalized.includes('policy') || normalized.includes('guideline')) {
+    return 0.9
+  }
+  if (normalized.includes('event') || normalized.includes('calendar')) {
+    return 0.8
+  }
+  if (normalized.includes('announcement') || normalized.includes('doc')) {
+    return 0.75
+  }
+  return 0.6
+}
+
+function getResultScore(result: any): number {
+  const score = typeof result?.score === 'number' ? result.score : undefined
+  if (typeof score === 'number' && !Number.isNaN(score)) {
+    return score
+  }
+  const rank = typeof result?.rank === 'number' ? result.rank : undefined
+  if (typeof rank === 'number' && !Number.isNaN(rank)) {
+    const normalized = rank > 1 ? rank : rank * 10
+    if (normalized < 0) return 0
+    if (normalized > 1) return 1
+    return normalized
+  }
+  return 0
+}
+
+function mapSearchResultToEvidence(result: any): EvidenceUnit {
+  const title = typeof result?.title === 'string' ? result.title.trim() : ''
+  const rawBody = typeof result?.body === 'string' ? result.body : ''
+  const body = rawBody.replace(/\s+/g, ' ').trim()
+  const snippet = body.length > 500 ? `${body.slice(0, 500)}...` : body
+  const headingPath: string[] = Array.isArray(result?.metadata?.heading_path)
+    ? result.metadata.heading_path.filter((h: unknown): h is string => typeof h === 'string')
+    : []
+  const lines: string[] = []
+  if (title) {
+    lines.push(`Title: ${title}`)
+  }
+  if (headingPath.length > 0) {
+    lines.push(`Section: ${headingPath.join(' > ')}`)
+  }
+  if (snippet) {
+    lines.push(snippet)
+  }
+  if (typeof result?.url === 'string' && result.url.length > 0) {
+    lines.push(`Link: ${result.url}`)
+  }
+  if (lines.length === 0 && result?.type) {
+    lines.push(`Resource type: ${result.type}`)
+  }
+
+  const ts =
+    (typeof result?.updated_at === 'string' && result.updated_at) ||
+    (typeof result?.created_at === 'string' && result.created_at) ||
+    new Date().toISOString()
+
+  const semanticScore = clampScore(result?.score, 0.65)
+  const keywordScore = clampScore(
+    typeof result?.rank === 'number'
+      ? result.rank > 1
+        ? result.rank
+        : result.rank * 10
+      : undefined,
+    semanticScore
+  )
+  const freshnessScore = computeFreshnessScore(ts)
+  const roleMatchScore = deriveRoleMatchScore(result?.type)
+
+  return {
+    scope: 'RESOURCE',
+    source_id: String(
+      result?.id ??
+      result?.metadata?.chunk_id ??
+      result?.url ??
+      `${result?.source || 'resource'}:${ts}`
+    ),
+    text: lines.join('\n\n'),
+    ts,
+    acl_ok: true,
+    scores: {
+      semantic: semanticScore,
+      keyword: keywordScore,
+      freshness: freshnessScore,
+      role_match: roleMatchScore
+    }
+  }
 }
 
 /**
@@ -149,6 +273,13 @@ export async function retrieveEvidence(
   intent: Intent
 ): Promise<EvidenceUnit[]> {
   const allEvidence: EvidenceUnit[] = []
+  let cachedActionState: Awaited<ReturnType<typeof retrieveActionState>> | null = null
+  const getActionState = async () => {
+    if (!cachedActionState) {
+      cachedActionState = await retrieveActionState(turnContext.phone_number)
+    }
+    return cachedActionState
+  }
   
   for (const scope of scopes) {
     const budget = SCOPE_BUDGETS[intent][scope]
@@ -162,20 +293,97 @@ export async function retrieveEvidence(
           break
           
         case 'ACTION':
-          const actionState = await retrieveActionState(turnContext.phone_number)
+          const actionState = await getActionState()
           evidence = actionState.evidence.slice(0, budget.k)
           break
           
         case 'RESOURCE':
-          // TODO: Implement resource retriever (hybrid search)
-          // For now, return empty - will be implemented next
-          evidence = []
+          {
+            const candidateSpaceIds = new Set<string>()
+            if (turnContext.org_id) {
+              candidateSpaceIds.add(turnContext.org_id)
+            }
+            if (turnContext.pending_draft?.workspace_id) {
+              candidateSpaceIds.add(turnContext.pending_draft.workspace_id)
+            }
+            if (candidateSpaceIds.size === 0) {
+              try {
+                const actionStateForResource = await getActionState()
+                if (actionStateForResource.pending_draft?.workspace_id) {
+                  candidateSpaceIds.add(actionStateForResource.pending_draft.workspace_id)
+                }
+              } catch (stateError) {
+                console.error('[Orchestrator] Failed to load action state for resource search:', stateError)
+              }
+            }
+            if (candidateSpaceIds.size === 0 && turnContext.user_id) {
+              candidateSpaceIds.add(DEFAULT_SPACE_ID)
+            }
+            if (candidateSpaceIds.size === 0) {
+              evidence = []
+              break
+            }
+
+            const searchLimit = Math.max(budget.k * 2, 5)
+            const searchResultsLists = await Promise.all(
+              Array.from(candidateSpaceIds).map(async (spaceId) => {
+                try {
+                  return await searchResourcesHybrid(
+                    userMessage,
+                    spaceId,
+                    {},
+                    { limit: searchLimit, offset: 0 },
+                    turnContext.user_id
+                  )
+                } catch (searchError) {
+                  console.error(`[Orchestrator] Resource search failed for space ${spaceId}:`, searchError)
+                  return []
+                }
+              })
+            )
+
+            const combinedResults = searchResultsLists.flat()
+            if (combinedResults.length === 0) {
+              evidence = []
+              break
+            }
+
+            const deduped = new Map<string, any>()
+            for (const result of combinedResults) {
+              const key = String(
+                result?.id ??
+                result?.metadata?.chunk_id ??
+                result?.url ??
+                `${result?.source || 'resource'}:${result?.title || ''}`
+              )
+              const existing = deduped.get(key)
+              if (!existing || getResultScore(result) > getResultScore(existing)) {
+                deduped.set(key, result)
+              }
+            }
+
+            const sortedResults = Array.from(deduped.values()).sort(
+              (a, b) => getResultScore(b) - getResultScore(a)
+            )
+
+            evidence = sortedResults.slice(0, budget.k).map(mapSearchResultToEvidence)
+          }
           break
           
         case 'ENCLAVE':
-          // TODO: Implement Enclave product retriever
-          // For now, return empty - will be implemented next
-          evidence = []
+          const enclaveItems = await retrieveEnclave(userMessage)
+          evidence = enclaveItems.slice(0, budget.k).map(item => ({
+            scope: 'ENCLAVE' as const,
+            source_id: item.id,
+            text: item.title ? `${item.title}\n\n${item.snippet}` : item.snippet,
+            acl_ok: true,
+            scores: {
+              semantic: item.score,
+              keyword: item.score,
+              freshness: 0.2,
+              role_match: 0.8
+            }
+          }))
           break
           
         case 'SMALLTALK':
@@ -361,4 +569,3 @@ export async function handleTurn(
   
   return { envelope, mode }
 }
-
