@@ -147,6 +147,46 @@ export async function syncPollResponsesToAirtable(pollId: string): Promise<{
 }
 
 /**
+ * Sync the most recent poll (by sent_at or created_at)
+ */
+export async function syncMostRecentPollToAirtable(): Promise<{
+  synced: number
+  errors: number
+  pollId?: string
+  question?: string
+  errorsList: Array<{ phone: string; error: string }>
+}> {
+  try {
+    // Get the most recent poll (sent or not, ordered by sent_at first, then created_at)
+    const { data: polls, error: pollsError } = await supabaseAdmin
+      .from('sms_poll')
+      .select('id, question, sent_at, created_at, status')
+      .order('sent_at', { ascending: false, nullsFirst: false })
+      .order('created_at', { ascending: false })
+      .limit(1)
+
+    if (pollsError || !polls || polls.length === 0) {
+      console.error(`[Retroactive Sync] No polls found:`, pollsError)
+      return { synced: 0, errors: 1, errorsList: [{ phone: 'unknown', error: 'No polls found' }] }
+    }
+
+    const mostRecentPoll = polls[0]
+    console.log(`[Retroactive Sync] Syncing most recent poll: ${mostRecentPoll.id} - "${mostRecentPoll.question.substring(0, 50)}..." (status: ${mostRecentPoll.status})`)
+
+    const result = await syncPollResponsesToAirtable(mostRecentPoll.id)
+    
+    return {
+      ...result,
+      pollId: mostRecentPoll.id,
+      question: mostRecentPoll.question
+    }
+  } catch (err) {
+    console.error(`[Retroactive Sync] Fatal error syncing most recent poll:`, err)
+    return { synced: 0, errors: 1, errorsList: [{ phone: 'unknown', error: err instanceof Error ? err.message : String(err) }] }
+  }
+}
+
+/**
  * Sync all poll responses for all sent polls
  */
 export async function syncAllPollResponsesToAirtable(): Promise<{

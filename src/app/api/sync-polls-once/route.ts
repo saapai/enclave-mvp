@@ -8,7 +8,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server'
-import { syncAllPollResponsesToAirtable } from '@/lib/polls/retroactiveSync'
+import { syncAllPollResponsesToAirtable, syncMostRecentPollToAirtable } from '@/lib/polls/retroactiveSync'
 
 export const dynamic = 'force-dynamic'
 
@@ -27,15 +27,35 @@ export async function GET(request: NextRequest) {
       }, { status: 403 })
     }
     
+    // Check query params for sync type
+    const { searchParams } = new URL(request.url)
+    const syncType = searchParams.get('type') // 'recent' or 'all' (default)
+    
+    if (syncType === 'recent') {
+      // Sync just the most recent poll (regardless of status)
+      console.log('[One-Time Sync] Syncing most recent poll...')
+      const result = await syncMostRecentPollToAirtable()
+      
+      return NextResponse.json({
+        success: true,
+        message: 'Most recent poll synced',
+        pollId: result.pollId,
+        question: result.question?.substring(0, 50) + '...',
+        synced: result.synced,
+        errors: result.errors,
+        errorsList: result.errorsList
+      })
+    }
+    
     // Check if already run (simple in-memory check - will reset on deploy)
     if (hasRun) {
       return NextResponse.json({ 
         error: 'Sync has already been run',
-        message: 'This is a one-time sync endpoint. Redeploy or restart to reset the flag.'
+        message: 'This is a one-time sync endpoint. Redeploy or restart to reset the flag. Or use ?type=recent to sync just the most recent poll.'
       }, { status: 403 })
     }
     
-    // Run the sync
+    // Run the sync for all polls
     console.log('[One-Time Sync] Starting retroactive sync of all poll responses...')
     const result = await syncAllPollResponsesToAirtable()
     
