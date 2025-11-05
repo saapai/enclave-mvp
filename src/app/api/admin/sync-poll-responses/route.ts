@@ -12,13 +12,18 @@ export const dynamic = 'force-dynamic'
 
 export async function POST(request: NextRequest) {
   try {
+    // Allow auth via Clerk OR secret key (for one-time sync)
     const { userId } = await auth()
-    if (!userId) {
+    const body = await request.json()
+    const { pollId, secretKey } = body
+    
+    // Check secret key (set in env as SYNC_POLL_SECRET_KEY)
+    const validSecret = process.env.SYNC_POLL_SECRET_KEY && secretKey === process.env.SYNC_POLL_SECRET_KEY
+    
+    if (!userId && !validSecret) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    const body = await request.json()
-    const { pollId } = body
 
     if (pollId) {
       // Sync specific poll

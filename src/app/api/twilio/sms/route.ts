@@ -773,12 +773,26 @@ export async function POST(request: NextRequest) {
           const options: string[] = poll.options as string[]
 
           // Router-aware guard: classify high-level intent, and strictly validate poll answer
+          // BUT: If conversational context classifier says poll_response with high confidence, trust it
           const routePre = classifyIntent(textRaw, contextMessages)
           const looksLikeAnswer = isLikelyPollAnswer(textRaw, options)
-          if (!looksLikeAnswer || routePre.intent === 'abusive' || routePre.intent === 'smalltalk' || routePre.intent === 'enclave_help') {
+          
+          // If conversational context says poll_response with high confidence, prioritize that
+          const isHighConfidencePollResponse = finalIsPollResponseContext && conversationalContext.confidence >= 0.8
+          
+          // Only reject if:
+          // 1. Doesn't look like answer AND not high-confidence poll response
+          // 2. OR is explicitly abusive (never treat abuse as poll response)
+          // 3. BUT allow smalltalk/chitChat if it's a high-confidence poll response (sometimes "yes" is classified as smalltalk)
+          if (!isHighConfidencePollResponse && (!looksLikeAnswer || routePre.intent === 'abusive')) {
             // Not a clean poll answer — fall through to other handlers
-            console.log('[Twilio SMS] Not treating message as poll response (failed strict check or intent)')
+            console.log(`[Twilio SMS] Not treating message as poll response (looksLikeAnswer=${looksLikeAnswer}, routeIntent=${routePre.intent}, highConfPoll=${isHighConfidencePollResponse})`)
             throw new Error('NotAPollAnswer')
+          }
+          
+          // If high confidence but route says smalltalk, that's okay - "yes" can be both
+          if (isHighConfidencePollResponse) {
+            console.log(`[Twilio SMS] High-confidence poll response detected, proceeding despite route intent: ${routePre.intent}`)
           }
           
           // Get name
