@@ -131,8 +131,7 @@ export async function executeAnswer(
                              composed.text.length > 10 && 
                              composed.text.length < 500 && 
                              !composed.text.includes('\n\n') &&
-                             !composed.text.includes("I couldn't find") &&
-                             !composed.text.includes("I couldn't find")
+                             !composed.text.toLowerCase().includes("i couldn't find")
       
       // If we have documents, always try AI (unless already a good summary)
       if (hasDocs && !isGoodSummary) {
