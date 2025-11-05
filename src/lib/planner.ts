@@ -695,14 +695,18 @@ function composePolicyResponse(result: ToolResult): ComposedResponse {
  * Compose doc search response using AI summarization
  */
 function composeDocResponse(primaryResult: ToolResult, allResults?: ToolResult[]): ComposedResponse {
-  if (primaryResult.tool === 'search_docs' && primaryResult.data?.results) {
+  // Handle both search_docs and calendar_find (which returns doc search results)
+  const hasResults = (primaryResult.tool === 'search_docs' || primaryResult.tool === 'calendar_find') && 
+                     primaryResult.data?.results
+  
+  if (hasResults) {
     // Use multiple results to get comprehensive context
     const resultsToUse = allResults || [primaryResult]
     const allDocs: any[] = []
     
     // Collect all document results
     for (const result of resultsToUse) {
-      if (result.tool === 'search_docs' && result.data?.results) {
+      if ((result.tool === 'search_docs' || result.tool === 'calendar_find') && result.data?.results) {
         allDocs.push(...result.data.results.slice(0, 3)) // Top 3 from each result
       }
     }
