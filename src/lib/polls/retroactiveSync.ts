@@ -53,24 +53,23 @@ export async function syncPollResponsesToAirtable(pollId: string): Promise<{
     console.log(`[Retroactive Sync] Ensuring Airtable fields exist for poll: "${poll.question.substring(0, 50)}..."`)
     const airtableFields = await createAirtableFieldsForPoll(poll.question)
 
-    // Update poll with field names if they weren't set
-    if (!poll.airtable_question_field || !poll.airtable_response_field || !poll.airtable_notes_field) {
-      await supabaseAdmin
-        .from('sms_poll')
-        .update({
-          airtable_question_field: airtableFields.questionField,
-          airtable_response_field: airtableFields.responseField,
-          airtable_notes_field: airtableFields.notesField
-        } as any)
-        .eq('id', pollId)
-      
-      console.log(`[Retroactive Sync] Updated poll with field names: ${airtableFields.questionField}, ${airtableFields.responseField}, ${airtableFields.notesField}`)
-    }
+    // ALWAYS update poll with newly created field names (they're guaranteed to exist)
+    // This ensures we use the correct fields even if old ones were stored with different dates
+    await supabaseAdmin
+      .from('sms_poll')
+      .update({
+        airtable_question_field: airtableFields.questionField,
+        airtable_response_field: airtableFields.responseField,
+        airtable_notes_field: airtableFields.notesField
+      } as any)
+      .eq('id', pollId)
+    
+    console.log(`[Retroactive Sync] Updated poll with field names: ${airtableFields.questionField}, ${airtableFields.responseField}, ${airtableFields.notesField}`)
 
-    // Use the field names from poll (or newly created ones)
-    const questionField = poll.airtable_question_field || airtableFields.questionField
-    const responseField = poll.airtable_response_field || airtableFields.responseField
-    const notesField = poll.airtable_notes_field || airtableFields.notesField
+    // Use the newly created field names (guaranteed to exist in Airtable)
+    const questionField = airtableFields.questionField
+    const responseField = airtableFields.responseField
+    const notesField = airtableFields.notesField
 
     // Get all responses for this poll
     const { data: responses, error: responsesError } = await supabaseAdmin
