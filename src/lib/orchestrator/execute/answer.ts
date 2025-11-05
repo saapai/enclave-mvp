@@ -102,12 +102,79 @@ export async function executeAnswer(
     const composed = await composeResponse(query, plan, toolResults)
     
     // Try AI summarization if we have results
-    let finalText = composed.text
+    let finalText = composed.text || ''
     
-    // For event_lookup, use the composed text directly (it's already formatted)
-    if (plan.intent === 'event_lookup' && composed.text && composed.text.length > 10) {
-      finalText = composed.text
+    // For event_lookup, use the composed text directly if it's short and already formatted
+    // Otherwise, use AI to summarize the document content
+    if (plan.intent === 'event_lookup') {
+      if (composed.text && composed.text.length > 10 && composed.text.length < 500 && !composed.text.includes('\n\n')) {
+        // Short enough and doesn't look like raw document, use directly
+        finalText = composed.text
+      } else if (toolResults.length > 0 && toolResults[0].data?.results && toolResults[0].data.results.length > 0) {
+        // Too long or raw document, use AI summarization
+        const allResults = toolResults[0].data.results
+        
+        // Try AI summarization for event queries
+        for (const result of allResults) {
+          if (!result.body || result.body.length < 10) continue
+          
+          const chunks: string[] = []
+          const chunkSize = 1500
+          
+          if (result.body.length <= chunkSize) {
+            chunks.push(result.body)
+          } else {
+            for (let i = 0; i < result.body.length; i += chunkSize - 200) {
+              chunks.push(result.body.substring(i, i + chunkSize))
+            }
+          }
+          
+          for (const chunk of chunks) {
+            const context = `Title: ${result.title}\nContent: ${chunk}`
+            
+            try {
+              const aiUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'https://www.tryenclave.com'}/api/ai`
+              const aiRes = await fetch(aiUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  query,
+                  context,
+                  type: 'summary'
+                })
+              })
+              
+              if (aiRes.ok) {
+                const aiData = await aiRes.json()
+                const response = aiData.response || ''
+                
+                const lowerResponse = response.toLowerCase()
+                const noInfoPatterns = ['no information', 'not found', 'does not contain', 'cannot provide']
+                const hasNoInfo = noInfoPatterns.some(p => lowerResponse.includes(p))
+                
+                if (!hasNoInfo && response.length > 20) {
+                  finalText = response
+                  break
+                }
+              }
+            } catch (err) {
+              console.error(`[Execute Answer] AI call failed:`, err)
+            }
+          }
+          
+          if (finalText && finalText.length > 20) break
+        }
+        
+        // Fallback to first result body or title if AI failed
+        if (!finalText || finalText.length < 20) {
+          finalText = allResults[0]?.body || allResults[0]?.title || composed.text || "I couldn't find any upcoming events matching that."
+        }
+      } else {
+        // No results, use composed fallback
+        finalText = composed.text || "I couldn't find any upcoming events matching that."
+      }
     } else if (plan.intent !== 'chat' && toolResults.length > 0 && toolResults[0].data?.results) {
+      // AI summarization for doc search results (non-event queries)
       const allResults = toolResults[0].data.results
       
       // Try each result in order
@@ -173,7 +240,12 @@ export async function executeAnswer(
     }
     
     // Ensure we have a response
-    const responseMessage = finalText || 'I couldn\'t find information about that. Try asking about events, policies, or people.'
+    const responseMessage = finalText?.trim() || 'I couldn\'t find information about that. Try asking about events, policies, or people.'
+    
+    // Log for debugging
+    if (!responseMessage || responseMessage.length < 10) {
+      console.error(`[Execute Answer] Empty or too short response. Composed: "${composed.text}", Final: "${finalText}"`)
+    }
     
     return {
       messages: [responseMessage],
