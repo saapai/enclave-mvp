@@ -305,20 +305,25 @@ export async function POST(request: NextRequest) {
     // ========================================================================
     const isBotIdentityQuestion = /(who'?s\s+this|who\s+are\s+you|who\s+is\s+this|what'?s\s+your\s+name|what\s+are\s+you)/i.test(body)
     if (isBotIdentityQuestion) {
+      console.log(`[Bot Identity] Bot identity question detected: "${body}"`)
       // Check if user has a name
       const hasName = optInDataAll?.name && optInDataAll.name.trim().length > 0
+      console.log(`[Bot Identity] User state: hasName=${hasName}, optInDataAll=${!!optInDataAll}, needs_name=${optInDataAll?.needs_name}`)
       
       let responseMessage: string
       if (hasName) {
         // User has name - just tell them who we are
         responseMessage = `hey ${optInDataAll.name}! i'm jarvis, powered by enclave. i can help you find info about events, docs, and more.`
+        console.log(`[Bot Identity] User has name, responding with greeting`)
       } else {
         // User doesn't have name - intro + ask for name
         responseMessage = `hey! i'm jarvis, powered by enclave. i can help you find info about events, docs, and more. what's your name?`
+        console.log(`[Bot Identity] User doesn't have name, asking for it`)
         
         // If they're not in the system yet, add them
         if (!optInDataAll) {
-          await supabase
+          console.log(`[Bot Identity] Adding new user to sms_optin`)
+          const { error: insertError } = await supabase
             .from('sms_optin')
             .insert({
               phone: phoneNumber,
@@ -331,21 +336,65 @@ export async function POST(request: NextRequest) {
               created_at: new Date().toISOString(),
               updated_at: new Date().toISOString()
             })
+          
+          if (insertError) {
+            console.error(`[Bot Identity] Error inserting new user:`, JSON.stringify(insertError, null, 2))
+          } else {
+            console.log(`[Bot Identity] ✓ Added new user to sms_optin`)
+          }
         } else if (!optInDataAll.needs_name) {
           // They exist but don't have needs_name set - set it
-          await supabase
+          console.log(`[Bot Identity] Setting needs_name=true for existing user`)
+          const { error: updateError } = await supabase
             .from('sms_optin')
             .update({ needs_name: true })
             .eq('phone', phoneNumber)
+          
+          if (updateError) {
+            console.error(`[Bot Identity] Error updating needs_name:`, JSON.stringify(updateError, null, 2))
+          } else {
+            console.log(`[Bot Identity] ✓ Set needs_name=true for existing user`)
+          }
+        }
+        
+        // Ensure user exists in Airtable
+        const { ENV } = await import('@/lib/env')
+        const { ensureAirtableUser } = await import('@/lib/airtable')
+        
+        if (ENV.AIRTABLE_API_KEY && ENV.AIRTABLE_BASE_ID && ENV.AIRTABLE_TABLE_NAME) {
+          console.log(`[Bot Identity] Ensuring Airtable user exists: phone=${from}`)
+          try {
+            const airtableResult = await ensureAirtableUser(
+              ENV.AIRTABLE_BASE_ID,
+              ENV.AIRTABLE_TABLE_NAME,
+              from,
+              undefined
+            )
+            
+            if (airtableResult.ok) {
+              console.log(`[Bot Identity] ✓ Airtable user ensured (created=${airtableResult.created}, id=${airtableResult.id || 'none'})`)
+            } else {
+              console.error(`[Bot Identity] ✗ Failed to ensure Airtable user: ${airtableResult.error}`)
+            }
+          } catch (err) {
+            console.error(`[Bot Identity] ✗ Exception ensuring Airtable user:`, err)
+          }
         }
       }
       
       // Save conversation history
-      await supabase.from('sms_conversation_history').insert({
+      console.log(`[Bot Identity] Saving conversation history`)
+      const { error: historyError } = await supabase.from('sms_conversation_history').insert({
         phone_number: phoneNumber,
         user_message: body,
         bot_response: responseMessage
       })
+      
+      if (historyError) {
+        console.error(`[Bot Identity] ✗ Failed to save conversation history:`, JSON.stringify(historyError, null, 2))
+      } else {
+        console.log(`[Bot Identity] ✓ Saved conversation history`)
+      }
       
       return new NextResponse(
         `<?xml version="1.0" encoding="UTF-8"?><Response><Message>${responseMessage}</Message></Response>`,
