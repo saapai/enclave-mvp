@@ -300,6 +300,123 @@ export async function POST(request: NextRequest) {
     // Handle commands: STOP, HELP first (before checking if new user)
     const command = body?.trim().toUpperCase()
 
+    // ========================================================================
+    // PRIORITY 0: Bot Identity Questions (BEFORE orchestrator)
+    // ========================================================================
+    const isBotIdentityQuestion = /(who'?s\s+this|who\s+are\s+you|who\s+is\s+this|what'?s\s+your\s+name|what\s+are\s+you)/i.test(body)
+    if (isBotIdentityQuestion) {
+      const introMessage = `hey! i'm jarvis, powered by enclave. i can help you find info about events, docs, and more. what's your name?`
+      
+      // Save conversation history
+      await supabase.from('sms_conversation_history').insert({
+        phone_number: phoneNumber,
+        user_message: body,
+        bot_response: introMessage
+      })
+      
+      return new NextResponse(
+        `<?xml version="1.0" encoding="UTF-8"?><Response><Message>${introMessage}</Message></Response>`,
+        { headers: { 'Content-Type': 'application/xml' } }
+      )
+    }
+
+    // ========================================================================
+    // PRIORITY 0.5: New User Welcome Flow (BEFORE orchestrator)
+    // ========================================================================
+    // Check if user is truly new (not in sms_optin at all)
+    const isTrulyNewUser = !optInDataAll
+    
+    if (isTrulyNewUser) {
+      console.log(`[Twilio SMS] Brand new user ${phoneNumber}, sending intro and asking for name`)
+      
+      // Auto-opt in the user with needs_name status
+      const { error: insertError } = await supabase
+        .from('sms_optin')
+        .insert({
+          phone: phoneNumber,
+          name: null,
+          method: 'sms_keyword',
+          keyword: 'SEP',
+          opted_out: false,
+          needs_name: true,
+          consent_timestamp: new Date().toISOString(),
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        })
+      
+      if (insertError && insertError.code !== '23505') {
+        console.error(`[Twilio SMS] Error inserting optin:`, insertError)
+      }
+      
+      // Send intro message asking for name
+      const introMessage = `hey! i'm jarvis, powered by enclave. i can help you find info about events, docs, and more. what's your name?`
+      
+      // Save conversation history
+      await supabase.from('sms_conversation_history').insert({
+        phone_number: phoneNumber,
+        user_message: body,
+        bot_response: introMessage
+      })
+      
+      return new NextResponse(
+        `<?xml version="1.0" encoding="UTF-8"?><Response><Message>${introMessage}</Message></Response>`,
+        { headers: { 'Content-Type': 'application/xml' } }
+      )
+    }
+    
+    // Check if existing user needs to provide name
+    if (optInDataAll && optInDataAll.needs_name) {
+      console.log(`[Twilio SMS] User ${phoneNumber} needs to provide name`)
+      
+      // Check if this message looks like a name declaration
+      const nameCheck = await isNameDeclaration(body)
+      
+      if (nameCheck.isName && nameCheck.name) {
+        // Save the name
+        await supabase
+          .from('sms_optin')
+          .update({ 
+            name: nameCheck.name,
+            needs_name: false,
+            updated_at: new Date().toISOString()
+          })
+          .eq('phone', phoneNumber)
+        
+        // Update Airtable
+        await updateNameEverywhere(from, nameCheck.name)
+        
+        // Send setup complete message
+        const setupMessage = `all set up! feel free to ask me any questions about sep`
+        
+        // Save conversation history
+        await supabase.from('sms_conversation_history').insert({
+          phone_number: phoneNumber,
+          user_message: body,
+          bot_response: setupMessage
+        })
+        
+        return new NextResponse(
+          `<?xml version="1.0" encoding="UTF-8"?><Response><Message>${setupMessage}</Message></Response>`,
+          { headers: { 'Content-Type': 'application/xml' } }
+        )
+      } else {
+        // Doesn't look like a name, ask again
+        const askAgainMessage = `what's your name? (just reply with your first name)`
+        
+        // Save conversation history
+        await supabase.from('sms_conversation_history').insert({
+          phone_number: phoneNumber,
+          user_message: body,
+          bot_response: askAgainMessage
+        })
+        
+        return new NextResponse(
+          `<?xml version="1.0" encoding="UTF-8"?><Response><Message>${askAgainMessage}</Message></Response>`,
+          { headers: { 'Content-Type': 'application/xml' } }
+        )
+      }
+    }
+
     // ============ NAME DETECTION (HIGHEST PRIORITY) ============
     // Check if user is declaring their name - but NOT if it's a question about the bot's name
     const isBotNameQuestion = /(is\s+this\s+jarvis|are\s+you\s+jarvis|is\s+this\s+enclave|are\s+you\s+enclave)/i.test(body)
@@ -1194,9 +1311,9 @@ export async function POST(request: NextRequest) {
       // If no draft exists, create one
       if (!activeDraft) {
         console.log(`[Twilio SMS] Creating announcement draft with user content: "${textRaw}"`)
-        
-        const announcementText = extractRawAnnouncementText(body)
-        
+      
+      const announcementText = extractRawAnnouncementText(body)
+      
         // Generate draft from the content
         const spaceIds = await getWorkspaceIds()
         const draft = await generateAnnouncementDraft({ content: announcementText })
@@ -1242,16 +1359,16 @@ export async function POST(request: NextRequest) {
           patchedContent = patchAnnouncementDraft(activeDraft.content || '', textRaw)
         }
         
-        await saveDraft(phoneNumber, {
-          id: activeDraft.id,
+      await saveDraft(phoneNumber, {
+        id: activeDraft.id,
           content: patchedContent,
-          tone: activeDraft.tone,
-          scheduledFor: activeDraft.scheduledFor,
-          targetAudience: activeDraft.targetAudience,
-          workspaceId: activeDraft.workspaceId
-        }, activeDraft.workspaceId!)
-        
-        return new NextResponse(
+        tone: activeDraft.tone,
+        scheduledFor: activeDraft.scheduledFor,
+        targetAudience: activeDraft.targetAudience,
+        workspaceId: activeDraft.workspaceId
+      }, activeDraft.workspaceId!)
+      
+      return new NextResponse(
           `<?xml version="1.0" encoding="UTF-8"?><Response><Message>updated:\n\n${patchedContent}\n\nreply "send it" to broadcast</Message></Response>`,
           { headers: { 'Content-Type': 'application/xml' } }
         )
@@ -2127,13 +2244,13 @@ export async function POST(request: NextRequest) {
         
         // Save conversation history
         try {
-          await supabase
-            .from('sms_conversation_history')
-            .insert({
-              phone_number: phoneNumber,
-              user_message: query,
-              bot_response: responseMessage
-            })
+        await supabase
+          .from('sms_conversation_history')
+          .insert({
+            phone_number: phoneNumber,
+            user_message: query,
+            bot_response: responseMessage
+          })
         } catch (err) {
           console.error(`[Twilio SMS] Failed to save conversation history:`, err)
           // Continue anyway - don't fail the response
