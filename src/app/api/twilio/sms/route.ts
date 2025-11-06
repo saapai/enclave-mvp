@@ -444,14 +444,48 @@ export async function POST(request: NextRequest) {
       
       // Update name everywhere (Supabase poll responses + Airtable)
       await updateNameEverywhere(from, nameCheck.name)
+      
+      // Check if this was a new user (needs_name was true)
+      const { data: userData } = await supabase
+        .from('sms_optin')
+        .select('needs_name')
+        .eq('phone', phoneNumber)
+        .maybeSingle()
+      
+      const wasNewUser = userData?.needs_name
+      
+      // If was new user, send setup complete message
+      if (wasNewUser) {
+        const setupMessage = `all set up! feel free to ask me any questions about sep`
         
-        const introMsg = `got it! i'll call you ${nameCheck.name}. i'm jarvis — i can help you find info about events, docs, and more. try asking "what's happening this week" or any question you have!`
+        // Save conversation history
+        await supabase.from('sms_conversation_history').insert({
+          phone_number: phoneNumber,
+          user_message: body,
+          bot_response: setupMessage
+        })
       
       return new NextResponse(
-          `<?xml version="1.0" encoding="UTF-8"?><Response><Message>${introMsg}</Message></Response>`,
+          `<?xml version="1.0" encoding="UTF-8"?><Response><Message>${setupMessage}</Message></Response>`,
+          { headers: { 'Content-Type': 'application/xml' } }
+        )
+      } else {
+        // Existing user updating name
+        const confirmMsg = `got it! i'll call you ${nameCheck.name}.`
+        
+        // Save conversation history
+        await supabase.from('sms_conversation_history').insert({
+          phone_number: phoneNumber,
+          user_message: body,
+          bot_response: confirmMsg
+        })
+        
+        return new NextResponse(
+          `<?xml version="1.0" encoding="UTF-8"?><Response><Message>${confirmMsg}</Message></Response>`,
         { headers: { 'Content-Type': 'application/xml' } }
       )
       }
+    }
     }
     
     // Send affirmation handling moved to PRIORITY 0 above (after context detection)
