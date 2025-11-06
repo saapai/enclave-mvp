@@ -176,7 +176,7 @@ export async function GET(request: NextRequest) {
           .insert({
             phone: phone,
             name: null,
-            method: 'retroactive_sync',
+            method: 'sms_keyword', // Must be 'web_form' or 'sms_keyword' per database constraint
             keyword: 'SEP',
             opted_out: false,
             needs_name: true,
@@ -185,8 +185,12 @@ export async function GET(request: NextRequest) {
             updated_at: new Date().toISOString()
           })
         
-        if (insertError && insertError.code !== '23505') {
-          console.error(`[Retroactive Name Sync] Error adding user to sms_optin:`, insertError)
+        if (insertError) {
+          if (insertError.code === '23505') {
+            console.log(`[Retroactive Name Sync] User ${phone} already exists in sms_optin (duplicate key)`)
+          } else {
+            console.error(`[Retroactive Name Sync] Error adding user to sms_optin:`, JSON.stringify(insertError, null, 2))
+          }
         } else {
           console.log(`[Retroactive Name Sync] ✓ Added user ${phone} to sms_optin`)
         }
