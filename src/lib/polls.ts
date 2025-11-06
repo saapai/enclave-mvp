@@ -735,23 +735,44 @@ export async function saveName(phone: string, name: string): Promise<void> {
  * Exported for use in SMS handler
  */
 export async function updateNameEverywhere(phone: string, name: string): Promise<void> {
+  console.log(`[Name Collection] updateNameEverywhere: phone=${phone}, name="${name}"`)
+  
   try {
     // 1. Update sms_optin table
     const normalizedPhone = normalizePhoneForAirtable(phone).replace('+', '')
-    await supabaseAdmin
+    console.log(`[Name Collection] updateNameEverywhere: Updating sms_optin with normalized phone=${normalizedPhone}`)
+    
+    const { error: optinError } = await supabaseAdmin
       .from('sms_optin')
       .update({ name: name, needs_name: false, updated_at: new Date().toISOString() } as any)
       .eq('phone', normalizedPhone);
+    
+    if (optinError) {
+      console.error(`[Name Collection] updateNameEverywhere: ✗ Failed to update sms_optin:`, JSON.stringify(optinError, null, 2))
+    } else {
+      console.log(`[Name Collection] updateNameEverywhere: ✓ Updated sms_optin`)
+    }
 
     // 2. Update all sms_poll_response records for this phone
-    await supabaseAdmin
+    console.log(`[Name Collection] updateNameEverywhere: Updating sms_poll_response records`)
+    const { error: pollResponseError } = await supabaseAdmin
       .from('sms_poll_response')
       .update({ person_name: name } as any)
       .eq('phone', phone);
+    
+    if (pollResponseError) {
+      console.error(`[Name Collection] updateNameEverywhere: ✗ Failed to update sms_poll_response:`, JSON.stringify(pollResponseError, null, 2))
+    } else {
+      console.log(`[Name Collection] updateNameEverywhere: ✓ Updated sms_poll_response records`)
+    }
 
     // 3. Update Airtable record (upsert by phone number)
+    console.log(`[Name Collection] updateNameEverywhere: Checking Airtable config: API_KEY=${!!ENV.AIRTABLE_API_KEY}, BASE_ID=${!!ENV.AIRTABLE_BASE_ID}, TABLE_NAME=${!!ENV.AIRTABLE_TABLE_NAME}`)
+    
     if (ENV.AIRTABLE_API_KEY && ENV.AIRTABLE_BASE_ID && ENV.AIRTABLE_TABLE_NAME) {
       const personFieldName = ENV.AIRTABLE_PERSON_FIELD || 'Person'
+      console.log(`[Name Collection] updateNameEverywhere: Upserting Airtable: base=${ENV.AIRTABLE_BASE_ID}, table=${ENV.AIRTABLE_TABLE_NAME}, phone=${phone}, field=${personFieldName}, name="${name}"`)
+      
       const result = await upsertAirtableRecord(
         ENV.AIRTABLE_BASE_ID,
         ENV.AIRTABLE_TABLE_NAME,
@@ -760,15 +781,20 @@ export async function updateNameEverywhere(phone: string, name: string): Promise
       );
 
       if (result.ok) {
-        console.log(`[Polls] Updated name in Airtable for ${phone} to "${name}"`);
+        console.log(`[Name Collection] updateNameEverywhere: ✓ Updated name in Airtable for ${phone} to "${name}" (record ID: ${result.id || 'none'})`);
       } else {
-        console.warn(`[Polls] Failed to update name in Airtable:`, result.error);
+        console.error(`[Name Collection] updateNameEverywhere: ✗ Failed to update name in Airtable: ${result.error}`);
       }
+    } else {
+      console.warn(`[Name Collection] updateNameEverywhere: Skipping Airtable update - missing config`);
     }
 
-    console.log(`[Polls] ✓ Updated name "${name}" everywhere for phone ${phone}`);
+    console.log(`[Name Collection] updateNameEverywhere: ✓ Completed updating name "${name}" everywhere for phone ${phone}`);
   } catch (err) {
-    console.error('[Polls] Failed to update name everywhere:', err);
+    console.error('[Name Collection] updateNameEverywhere: ✗ Exception:', err);
+    if (err instanceof Error) {
+      console.error(`[Name Collection] updateNameEverywhere: Exception details: ${err.message}\n${err.stack}`)
+    }
   }
 }
 

@@ -67,6 +67,7 @@ export async function checkAirtableUserExists(
 ): Promise<{ exists: boolean; recordId?: string; error?: string }> {
   const apiKey = process.env.AIRTABLE_API_KEY
   if (!apiKey) {
+    console.error(`[Airtable] checkAirtableUserExists: Missing AIRTABLE_API_KEY`)
     return { exists: false, error: 'Missing AIRTABLE_API_KEY' }
   }
 
@@ -75,6 +76,8 @@ export async function checkAirtableUserExists(
     const phoneFieldName = process.env.AIRTABLE_PHONE_FIELD || 'phone number'
     const encodedTableName = encodeURIComponent(tableName)
     const searchUrl = `https://api.airtable.com/v0/${baseId}/${encodedTableName}?filterByFormula=${encodeURIComponent(`{${phoneFieldName}} = "${normalizedPhone}"`)}&maxRecords=1`
+    
+    console.log(`[Airtable] checkAirtableUserExists: phone=${phone} → normalized=${normalizedPhone}, field=${phoneFieldName}, url=${searchUrl.substring(0, 100)}...`)
     
     const trimmedApiKey = apiKey.trim()
     const searchRes = await fetch(searchUrl, {
@@ -86,16 +89,25 @@ export async function checkAirtableUserExists(
     
     const searchData = await searchRes.json()
     
+    if (!searchRes.ok) {
+      console.error(`[Airtable] checkAirtableUserExists: HTTP ${searchRes.status} - ${JSON.stringify(searchData, null, 2)}`)
+      return { exists: false, error: searchData.error?.message || `HTTP ${searchRes.status}` }
+    }
+    
     if (searchData.error) {
+      console.error(`[Airtable] checkAirtableUserExists: Airtable error - ${JSON.stringify(searchData.error, null, 2)}`)
       return { exists: false, error: searchData.error.message || 'Airtable search failed' }
     }
     
     if (searchData.records && searchData.records.length > 0) {
+      console.log(`[Airtable] checkAirtableUserExists: Found user, recordId=${searchData.records[0].id}`)
       return { exists: true, recordId: searchData.records[0].id }
     }
     
+    console.log(`[Airtable] checkAirtableUserExists: User not found`)
     return { exists: false }
   } catch (e: any) {
+    console.error(`[Airtable] checkAirtableUserExists: Exception - ${e?.message}`, e)
     return { exists: false, error: e?.message || 'Airtable request failed' }
   }
 }
@@ -109,20 +121,30 @@ export async function ensureAirtableUser(
   phone: string,
   name?: string
 ): Promise<{ ok: boolean; created: boolean; id?: string; error?: string }> {
+  console.log(`[Airtable] ensureAirtableUser: phone=${phone}, name=${name || 'none'}, base=${baseId}, table=${tableName}`)
+  
   try {
     // Check if user exists
+    console.log(`[Airtable] ensureAirtableUser: Checking if user exists...`)
     const checkResult = await checkAirtableUserExists(baseId, tableName, phone)
+    console.log(`[Airtable] ensureAirtableUser: Check result: exists=${checkResult.exists}, recordId=${checkResult.recordId || 'none'}, error=${checkResult.error || 'none'}`)
     
     if (checkResult.exists && checkResult.recordId) {
+      console.log(`[Airtable] ensureAirtableUser: User exists, recordId=${checkResult.recordId}`)
+      
       // User exists - update name if provided
       if (name) {
+        console.log(`[Airtable] ensureAirtableUser: Updating name to "${name}"`)
         const personFieldName = process.env.AIRTABLE_PERSON_FIELD || 'Person'
         const apiKey = process.env.AIRTABLE_API_KEY?.trim()
         if (!apiKey) {
+          console.error(`[Airtable] ensureAirtableUser: Missing AIRTABLE_API_KEY`)
           return { ok: false, created: false, error: 'Missing AIRTABLE_API_KEY' }
         }
         
         const updateUrl = `https://api.airtable.com/v0/${baseId}/${encodeURIComponent(tableName)}`
+        console.log(`[Airtable] ensureAirtableUser: PATCH ${updateUrl}`)
+        
         const updateRes = await fetch(updateUrl, {
           method: 'PATCH',
           headers: {
@@ -137,18 +159,23 @@ export async function ensureAirtableUser(
           })
         })
         
+        const updateData = await updateRes.json()
+        
         if (!updateRes.ok) {
-          const errorData = await updateRes.json()
-          return { ok: false, created: false, error: errorData?.error?.message || 'Update failed' }
+          console.error(`[Airtable] ensureAirtableUser: Update failed - HTTP ${updateRes.status}: ${JSON.stringify(updateData, null, 2)}`)
+          return { ok: false, created: false, error: updateData?.error?.message || 'Update failed' }
         }
         
+        console.log(`[Airtable] ensureAirtableUser: ✓ Updated name successfully`)
         return { ok: true, created: false, id: checkResult.recordId }
       }
       
+      console.log(`[Airtable] ensureAirtableUser: ✓ User exists, no name update needed`)
       return { ok: true, created: false, id: checkResult.recordId }
     }
     
     // User doesn't exist - create them
+    console.log(`[Airtable] ensureAirtableUser: User doesn't exist, creating new record...`)
     const normalizedPhone = normalizePhoneForAirtable(phone)
     const phoneFieldName = process.env.AIRTABLE_PHONE_FIELD || 'phone number'
     const personFieldName = process.env.AIRTABLE_PERSON_FIELD || 'Person'
@@ -161,7 +188,10 @@ export async function ensureAirtableUser(
       fields[personFieldName] = name
     }
     
+    console.log(`[Airtable] ensureAirtableUser: Creating record with fields: ${JSON.stringify(fields, null, 2)}`)
     const result = await upsertAirtableRecord(baseId, tableName, phone, fields)
+    
+    console.log(`[Airtable] ensureAirtableUser: Upsert result: ok=${result.ok}, created=${result.created}, id=${result.id || 'none'}, error=${result.error || 'none'}`)
     
     return {
       ok: result.ok,
@@ -170,6 +200,7 @@ export async function ensureAirtableUser(
       error: result.error
     }
   } catch (e: any) {
+    console.error(`[Airtable] ensureAirtableUser: Exception - ${e?.message}`, e)
     return { ok: false, created: false, error: e?.message || 'Airtable request failed' }
   }
 }
