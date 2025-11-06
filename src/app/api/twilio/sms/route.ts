@@ -305,17 +305,50 @@ export async function POST(request: NextRequest) {
     // ========================================================================
     const isBotIdentityQuestion = /(who'?s\s+this|who\s+are\s+you|who\s+is\s+this|what'?s\s+your\s+name|what\s+are\s+you)/i.test(body)
     if (isBotIdentityQuestion) {
-      const introMessage = `hey! i'm jarvis, powered by enclave. i can help you find info about events, docs, and more. what's your name?`
+      // Check if user has a name
+      const hasName = optInDataAll?.name && optInDataAll.name.trim().length > 0
+      
+      let responseMessage: string
+      if (hasName) {
+        // User has name - just tell them who we are
+        responseMessage = `hey ${optInDataAll.name}! i'm jarvis, powered by enclave. i can help you find info about events, docs, and more.`
+      } else {
+        // User doesn't have name - intro + ask for name
+        responseMessage = `hey! i'm jarvis, powered by enclave. i can help you find info about events, docs, and more. what's your name?`
+        
+        // If they're not in the system yet, add them
+        if (!optInDataAll) {
+          await supabase
+            .from('sms_optin')
+            .insert({
+              phone: phoneNumber,
+              name: null,
+              method: 'sms_keyword',
+              keyword: 'SEP',
+              opted_out: false,
+              needs_name: true,
+              consent_timestamp: new Date().toISOString(),
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString()
+            })
+        } else if (!optInDataAll.needs_name) {
+          // They exist but don't have needs_name set - set it
+          await supabase
+            .from('sms_optin')
+            .update({ needs_name: true })
+            .eq('phone', phoneNumber)
+        }
+      }
       
       // Save conversation history
       await supabase.from('sms_conversation_history').insert({
         phone_number: phoneNumber,
         user_message: body,
-        bot_response: introMessage
+        bot_response: responseMessage
       })
       
       return new NextResponse(
-        `<?xml version="1.0" encoding="UTF-8"?><Response><Message>${introMessage}</Message></Response>`,
+        `<?xml version="1.0" encoding="UTF-8"?><Response><Message>${responseMessage}</Message></Response>`,
         { headers: { 'Content-Type': 'application/xml' } }
       )
     }
