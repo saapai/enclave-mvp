@@ -58,6 +58,123 @@ export async function airtableInsert(
 }
 
 /**
+ * Check if a user exists in Airtable by phone number
+ */
+export async function checkAirtableUserExists(
+  baseId: string,
+  tableName: string,
+  phone: string
+): Promise<{ exists: boolean; recordId?: string; error?: string }> {
+  const apiKey = process.env.AIRTABLE_API_KEY
+  if (!apiKey) {
+    return { exists: false, error: 'Missing AIRTABLE_API_KEY' }
+  }
+
+  try {
+    const normalizedPhone = normalizePhoneForAirtable(phone)
+    const phoneFieldName = process.env.AIRTABLE_PHONE_FIELD || 'phone number'
+    const encodedTableName = encodeURIComponent(tableName)
+    const searchUrl = `https://api.airtable.com/v0/${baseId}/${encodedTableName}?filterByFormula=${encodeURIComponent(`{${phoneFieldName}} = "${normalizedPhone}"`)}&maxRecords=1`
+    
+    const trimmedApiKey = apiKey.trim()
+    const searchRes = await fetch(searchUrl, {
+      headers: {
+        'Authorization': `Bearer ${trimmedApiKey}`,
+        'Content-Type': 'application/json'
+      }
+    })
+    
+    const searchData = await searchRes.json()
+    
+    if (searchData.error) {
+      return { exists: false, error: searchData.error.message || 'Airtable search failed' }
+    }
+    
+    if (searchData.records && searchData.records.length > 0) {
+      return { exists: true, recordId: searchData.records[0].id }
+    }
+    
+    return { exists: false }
+  } catch (e: any) {
+    return { exists: false, error: e?.message || 'Airtable request failed' }
+  }
+}
+
+/**
+ * Ensure user exists in Airtable (create if not exists)
+ */
+export async function ensureAirtableUser(
+  baseId: string,
+  tableName: string,
+  phone: string,
+  name?: string
+): Promise<{ ok: boolean; created: boolean; id?: string; error?: string }> {
+  try {
+    // Check if user exists
+    const checkResult = await checkAirtableUserExists(baseId, tableName, phone)
+    
+    if (checkResult.exists && checkResult.recordId) {
+      // User exists - update name if provided
+      if (name) {
+        const personFieldName = process.env.AIRTABLE_PERSON_FIELD || 'Person'
+        const apiKey = process.env.AIRTABLE_API_KEY?.trim()
+        if (!apiKey) {
+          return { ok: false, created: false, error: 'Missing AIRTABLE_API_KEY' }
+        }
+        
+        const updateUrl = `https://api.airtable.com/v0/${baseId}/${encodeURIComponent(tableName)}`
+        const updateRes = await fetch(updateUrl, {
+          method: 'PATCH',
+          headers: {
+            'Authorization': `Bearer ${apiKey}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            records: [{
+              id: checkResult.recordId,
+              fields: { [personFieldName]: name }
+            }]
+          })
+        })
+        
+        if (!updateRes.ok) {
+          const errorData = await updateRes.json()
+          return { ok: false, created: false, error: errorData?.error?.message || 'Update failed' }
+        }
+        
+        return { ok: true, created: false, id: checkResult.recordId }
+      }
+      
+      return { ok: true, created: false, id: checkResult.recordId }
+    }
+    
+    // User doesn't exist - create them
+    const normalizedPhone = normalizePhoneForAirtable(phone)
+    const phoneFieldName = process.env.AIRTABLE_PHONE_FIELD || 'phone number'
+    const personFieldName = process.env.AIRTABLE_PERSON_FIELD || 'Person'
+    
+    const fields: Record<string, any> = {
+      [phoneFieldName]: normalizedPhone
+    }
+    
+    if (name) {
+      fields[personFieldName] = name
+    }
+    
+    const result = await upsertAirtableRecord(baseId, tableName, phone, fields)
+    
+    return {
+      ok: result.ok,
+      created: result.created || false,
+      id: result.id,
+      error: result.error
+    }
+  } catch (e: any) {
+    return { ok: false, created: false, error: e?.message || 'Airtable request failed' }
+  }
+}
+
+/**
  * Upsert a record in Airtable by phone number
  */
 export async function upsertAirtableRecord(
@@ -585,5 +702,4 @@ export async function createAirtableFields(
     return { ok: false, created, errors: [`Metadata API failed: ${err.message}`], existing }
   }
 }
-
 

@@ -382,6 +382,33 @@ export async function POST(request: NextRequest) {
         console.error(`[Twilio SMS] Error inserting optin:`, insertError)
       }
       
+      // Create Airtable row for new user (even without name)
+      const { ENV } = await import('@/lib/env')
+      const { ensureAirtableUser } = await import('@/lib/airtable')
+      
+      if (ENV.AIRTABLE_API_KEY && ENV.AIRTABLE_BASE_ID && ENV.AIRTABLE_TABLE_NAME) {
+        try {
+          const airtableResult = await ensureAirtableUser(
+            ENV.AIRTABLE_BASE_ID,
+            ENV.AIRTABLE_TABLE_NAME,
+            from, // Use full E.164 format from Twilio
+            undefined // No name yet
+          )
+          
+          if (airtableResult.ok) {
+            if (airtableResult.created) {
+              console.log(`[Twilio SMS] Created new Airtable row for new user ${phoneNumber}`)
+            } else {
+              console.log(`[Twilio SMS] New user ${phoneNumber} already exists in Airtable`)
+            }
+          } else {
+            console.error(`[Twilio SMS] Failed to create Airtable row for new user:`, airtableResult.error)
+          }
+        } catch (err) {
+          console.error(`[Twilio SMS] Error creating Airtable row for new user:`, err)
+        }
+      }
+      
       // Send intro message asking for name
       const introMessage = `hey! i'm jarvis, powered by enclave. i can help you find info about events, docs, and more. what's your name?`
       
@@ -402,12 +429,49 @@ export async function POST(request: NextRequest) {
     if (needsName) {
       console.log(`[Twilio SMS] User ${phoneNumber} needs to provide name`)
       
+      // Ensure user exists in Airtable (create row if not exists, even without name)
+      const { ENV } = await import('@/lib/env')
+      const { ensureAirtableUser } = await import('@/lib/airtable')
+      
+      if (ENV.AIRTABLE_API_KEY && ENV.AIRTABLE_BASE_ID && ENV.AIRTABLE_TABLE_NAME) {
+        try {
+          const airtableResult = await ensureAirtableUser(
+            ENV.AIRTABLE_BASE_ID,
+            ENV.AIRTABLE_TABLE_NAME,
+            from, // Use full E.164 format from Twilio
+            undefined // No name yet
+          )
+          
+          if (airtableResult.ok) {
+            if (airtableResult.created) {
+              console.log(`[Twilio SMS] Created new Airtable row for user ${phoneNumber}`)
+            } else {
+              console.log(`[Twilio SMS] User ${phoneNumber} already exists in Airtable`)
+            }
+          } else {
+            console.error(`[Twilio SMS] Failed to ensure Airtable user:`, airtableResult.error)
+          }
+        } catch (err) {
+          console.error(`[Twilio SMS] Error ensuring Airtable user:`, err)
+        }
+      }
+      
       // Check if this message looks like a name declaration
       const nameCheck = await isNameDeclaration(body)
       
       if (nameCheck.isName && nameCheck.name) {
-        // Save the name
-        await supabase
+        // Check if this was a new user (needs_name was true) BEFORE updating
+        const { data: userDataBefore } = await supabase
+          .from('sms_optin')
+          .select('needs_name')
+          .eq('phone', phoneNumber)
+          .maybeSingle()
+        
+        const wasNewUser = userDataBefore?.needs_name === true
+        
+        // Update sms_optin first to ensure needs_name is cleared
+        // Use phoneNumber (already normalized) to match how the table stores it
+        const { error: updateError } = await supabase
           .from('sms_optin')
           .update({ 
             name: nameCheck.name,
@@ -416,38 +480,77 @@ export async function POST(request: NextRequest) {
           })
           .eq('phone', phoneNumber)
         
-        // Update Airtable
+        if (updateError) {
+          console.error(`[Twilio SMS] Error updating sms_optin for name:`, updateError)
+        } else {
+          console.log(`[Twilio SMS] Updated sms_optin: set name="${nameCheck.name}", needs_name=false for ${phoneNumber}`)
+        }
+        
+        // Update name everywhere (Supabase poll responses + Airtable)
         await updateNameEverywhere(from, nameCheck.name)
         
-        // Send setup complete message
-        const setupMessage = `all set up! feel free to ask me any questions about sep`
-        
-        // Save conversation history
-        await supabase.from('sms_conversation_history').insert({
-          phone_number: phoneNumber,
-          user_message: body,
-          bot_response: setupMessage
-        })
-        
-        return new NextResponse(
-          `<?xml version="1.0" encoding="UTF-8"?><Response><Message>${setupMessage}</Message></Response>`,
-          { headers: { 'Content-Type': 'application/xml' } }
-        )
+        // If was new user, send setup complete message
+        if (wasNewUser) {
+          const setupMessage = `all set up! feel free to ask me any questions about sep`
+          
+          // Save conversation history
+          await supabase.from('sms_conversation_history').insert({
+            phone_number: phoneNumber,
+            user_message: body,
+            bot_response: setupMessage
+          })
+          
+          return new NextResponse(
+            `<?xml version="1.0" encoding="UTF-8"?><Response><Message>${setupMessage}</Message></Response>`,
+            { headers: { 'Content-Type': 'application/xml' } }
+          )
+        } else {
+          // Existing user updating name
+          const confirmMsg = `got it! i'll call you ${nameCheck.name}.`
+          
+          // Save conversation history
+          await supabase.from('sms_conversation_history').insert({
+            phone_number: phoneNumber,
+            user_message: body,
+            bot_response: confirmMsg
+          })
+          
+          return new NextResponse(
+            `<?xml version="1.0" encoding="UTF-8"?><Response><Message>${confirmMsg}</Message></Response>`,
+            { headers: { 'Content-Type': 'application/xml' } }
+          )
+        }
       } else {
-        // Doesn't look like a name, ask again
-        const askAgainMessage = `what's your name? (just reply with your first name)`
+        // Doesn't look like a name, proactively ask for it
+        // Check if we've already asked recently (within last 5 minutes) to avoid spam
+        const { data: recentAsk } = await supabase
+          .from('sms_conversation_history')
+          .select('created_at')
+          .eq('phone_number', phoneNumber)
+          .ilike('bot_response', '%what\'s your name%')
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle()
         
-        // Save conversation history
-        await supabase.from('sms_conversation_history').insert({
-          phone_number: phoneNumber,
-          user_message: body,
-          bot_response: askAgainMessage
-        })
+        const shouldAsk = !recentAsk || 
+          (new Date().getTime() - new Date(recentAsk.created_at).getTime() > 5 * 60 * 1000) // 5 minutes
         
-        return new NextResponse(
-          `<?xml version="1.0" encoding="UTF-8"?><Response><Message>${askAgainMessage}</Message></Response>`,
-          { headers: { 'Content-Type': 'application/xml' } }
-        )
+        if (shouldAsk) {
+          const askAgainMessage = `what's your name? (just reply with your first name)`
+          
+          // Save conversation history
+          await supabase.from('sms_conversation_history').insert({
+            phone_number: phoneNumber,
+            user_message: body,
+            bot_response: askAgainMessage
+          })
+          
+          return new NextResponse(
+            `<?xml version="1.0" encoding="UTF-8"?><Response><Message>${askAgainMessage}</Message></Response>`,
+            { headers: { 'Content-Type': 'application/xml' } }
+          )
+        }
+        // If we asked recently, fall through to normal message handling
       }
     }
 
