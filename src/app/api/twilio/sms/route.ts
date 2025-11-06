@@ -425,6 +425,15 @@ export async function POST(request: NextRequest) {
     if (nameCheck.isName && nameCheck.name) {
       console.log(`[Twilio SMS] Name declared: ${nameCheck.name} for ${phoneNumber}`)
       
+      // Check if this was a new user (needs_name was true) BEFORE updating
+      const { data: userDataBefore } = await supabase
+        .from('sms_optin')
+        .select('needs_name')
+        .eq('phone', phoneNumber)
+        .maybeSingle()
+      
+      const wasNewUser = userDataBefore?.needs_name === true
+      
       // Update sms_optin first to ensure needs_name is cleared
       // Use phoneNumber (already normalized) to match how the table stores it
       const { error: updateError } = await supabase
@@ -444,15 +453,6 @@ export async function POST(request: NextRequest) {
       
       // Update name everywhere (Supabase poll responses + Airtable)
       await updateNameEverywhere(from, nameCheck.name)
-      
-      // Check if this was a new user (needs_name was true)
-      const { data: userData } = await supabase
-        .from('sms_optin')
-        .select('needs_name')
-        .eq('phone', phoneNumber)
-        .maybeSingle()
-      
-      const wasNewUser = userData?.needs_name
       
       // If was new user, send setup complete message
       if (wasNewUser) {
