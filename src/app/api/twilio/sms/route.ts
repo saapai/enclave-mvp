@@ -356,8 +356,9 @@ export async function POST(request: NextRequest) {
     // ========================================================================
     // PRIORITY 0.5: New User Welcome Flow (BEFORE orchestrator)
     // ========================================================================
-    // Check if user is truly new (not in sms_optin at all)
+    // Check if user is truly new (not in sms_optin at all) OR needs name
     const isTrulyNewUser = !optInDataAll
+    const needsName = optInDataAll?.needs_name === true || (optInDataAll && (!optInDataAll.name || optInDataAll.name.trim().length === 0))
     
     if (isTrulyNewUser) {
       console.log(`[Twilio SMS] Brand new user ${phoneNumber}, sending intro and asking for name`)
@@ -397,8 +398,8 @@ export async function POST(request: NextRequest) {
       )
     }
     
-    // Check if existing user needs to provide name
-    if (optInDataAll && optInDataAll.needs_name) {
+    // Check if existing user needs to provide name (including those who slipped through)
+    if (needsName) {
       console.log(`[Twilio SMS] User ${phoneNumber} needs to provide name`)
       
       // Check if this message looks like a name declaration
