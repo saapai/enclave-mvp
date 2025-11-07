@@ -1,0 +1,287 @@
+/**
+ * Context-Aware Intent Classifier
+ * 
+ * Uses weighted conversation history (last 5-10 messages) to understand
+ * user intent with full conversational context.
+ */
+
+import { ENV } from '@/lib/env'
+
+export type IntentType = 
+  | 'content_query'      // Questions about documents, events, resources
+  | 'enclave_query'      // Questions about Enclave itself
+  | 'random_conversation' // Casual chat, greetings, smalltalk
+  | 'announcement_command' // Command to create/send announcement
+  | 'poll_command'       // Command to create/send poll
+  | 'poll_response'      // Response to an active poll
+  | 'announcement_edit'  // Editing an existing announcement draft
+  | 'poll_edit'          // Editing an existing poll draft
+  | 'name_declaration'   // User declaring their name
+  | 'control_command'    // send it, cancel, etc.
+
+export interface ConversationMessage {
+  role: 'user' | 'bot'
+  text: string
+  timestamp: string
+}
+
+export interface ClassifiedIntent {
+  type: IntentType
+  confidence: number
+  reasoning?: string
+  // For announcements/polls
+  verbatimText?: string
+  instructions?: string[]
+  needsGeneration?: boolean
+  // For edits
+  editType?: 'replace' | 'append' | 'modify'
+  fieldsToUpdate?: string[]
+}
+
+/**
+ * Load conversation history with weighting
+ * More recent messages have higher weight
+ */
+export async function loadWeightedHistory(
+  phoneNumber: string,
+  limit: number = 10
+): Promise<ConversationMessage[]> {
+  try {
+    const { supabaseAdmin } = await import('@/lib/supabase')
+    if (!supabaseAdmin) return []
+
+    const { data } = await supabaseAdmin
+      .from('sms_conversation_history')
+      .select('id, user_message, bot_response, created_at')
+      .eq('phone_number', phoneNumber)
+      .order('created_at', { ascending: false })
+      .limit(limit)
+
+    if (!data) return []
+
+    const messages: ConversationMessage[] = []
+    for (const row of data.reverse()) {
+      if (row.user_message) {
+        messages.push({
+          role: 'user',
+          text: row.user_message,
+          timestamp: row.created_at
+        })
+      }
+      if (row.bot_response) {
+        messages.push({
+          role: 'bot',
+          text: row.bot_response,
+          timestamp: row.created_at
+        })
+      }
+    }
+
+    return messages
+  } catch (err) {
+    console.error('[ContextClassifier] Failed to load history:', err)
+    return []
+  }
+}
+
+/**
+ * Classify intent using LLM with full conversation context
+ */
+export async function classifyIntent(
+  currentMessage: string,
+  history: ConversationMessage[] = []
+): Promise<ClassifiedIntent> {
+  // Build weighted context string
+  const contextMessages = history.slice(-10) // Last 10 messages
+  const contextString = contextMessages
+    .map((msg, idx) => {
+      const weight = (idx + 1) / contextMessages.length // More recent = higher weight
+      const role = msg.role === 'user' ? 'User' : 'Bot'
+      return `[Weight: ${weight.toFixed(2)}] ${role}: ${msg.text}`
+    })
+    .join('\n')
+
+  const fullContext = contextString 
+    ? `Recent conversation:\n${contextString}\n\nCurrent message: "${currentMessage}"`
+    : `Current message: "${currentMessage}"`
+
+  try {
+    const response = await fetch('https://api.mistral.ai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${ENV.MISTRAL_API_KEY}`
+      },
+      body: JSON.stringify({
+        model: 'mistral-small-latest',
+        messages: [
+          {
+            role: 'system',
+            content: `You are an intent classifier for Jarvis, an SMS bot powered by Enclave.
+
+Classify the user's message into ONE of these intents:
+- content_query: Questions about documents, events, resources, policies (e.g., "when is active meeting", "what's happening this week")
+- enclave_query: Questions about Enclave itself (e.g., "what is enclave", "what can you do")
+- random_conversation: Casual chat, greetings, smalltalk (e.g., "hey", "thanks", "what's up")
+- announcement_command: User wants to create/send an announcement (e.g., "send out a message", "make an announcement", "broadcast")
+- poll_command: User wants to create/send a poll (e.g., "make a poll", "create a poll", "send a poll")
+- poll_response: User is responding to an active poll (e.g., "yes", "no", "option 1")
+- announcement_edit: User is editing an announcement draft (e.g., "make it say X", "change the time to Y")
+- poll_edit: User is editing a poll draft
+- name_declaration: User is stating their name (e.g., "I'm John", "my name is Sarah")
+- control_command: Control commands (e.g., "send it", "cancel", "yes", "no")
+
+For announcement/poll commands, also extract:
+- verbatimText: Exact text the user wants to use (if they say "use my exact wording" or quote text)
+- instructions: List of specific instructions (e.g., ["make sure to say it's at 9am", "mention the location"])
+- needsGeneration: true if the bot should generate content, false if user provided exact text
+
+Return ONLY valid JSON:
+{
+  "type": "intent_type",
+  "confidence": 0.0-1.0,
+  "reasoning": "brief explanation",
+  "verbatimText": "exact text if provided",
+  "instructions": ["instruction1", "instruction2"],
+  "needsGeneration": true/false
+}`
+          },
+          {
+            role: 'user',
+            content: fullContext
+          }
+        ],
+        temperature: 0.1,
+        max_tokens: 500
+      })
+    })
+
+    if (!response.ok) {
+      throw new Error(`Mistral API error: ${response.status}`)
+    }
+
+    const data = await response.json()
+    const content = data.choices?.[0]?.message?.content || '{}'
+    
+    // Extract JSON from response
+    const jsonMatch = content.match(/\{[\s\S]*\}/)
+    if (jsonMatch) {
+      const parsed = JSON.parse(jsonMatch[0])
+      return {
+        type: parsed.type || 'random_conversation',
+        confidence: parsed.confidence || 0.5,
+        reasoning: parsed.reasoning,
+        verbatimText: parsed.verbatimText,
+        instructions: parsed.instructions || [],
+        needsGeneration: parsed.needsGeneration !== false // Default to true
+      }
+    }
+  } catch (err) {
+    console.error('[ContextClassifier] LLM classification failed:', err)
+  }
+
+  // Fallback to rule-based classification
+  return fallbackClassify(currentMessage, history)
+}
+
+/**
+ * Fallback rule-based classifier
+ */
+function fallbackClassify(
+  message: string,
+  history: ConversationMessage[]
+): ClassifiedIntent {
+  const lower = message.toLowerCase().trim()
+  const lastBotMessage = history.filter(m => m.role === 'bot').pop()?.text || ''
+  const lowerLastBot = lastBotMessage.toLowerCase()
+
+  // Control commands
+  if (/^(send\s+it|send\s+now|yes|yep|yeah|y|broadcast|ship\s+it|confirm|go\s+ahead|cancel|stop|never\s+mind|forget\s+it|discard|no|nope|edit|change|update)$/i.test(lower)) {
+    return {
+      type: 'control_command',
+      confidence: 0.95
+    }
+  }
+
+  // Name declaration patterns
+  if (/^(i'?m|i\s+am|my\s+name\s+is|call\s+me|this\s+is)\s+[A-Za-z]+/i.test(message)) {
+    return {
+      type: 'name_declaration',
+      confidence: 0.9
+    }
+  }
+
+  // Announcement commands
+  if (/\b(send|make|create|broadcast|blast)(?:\s+out)?(?:\s+an?\s+)?(?:message|announcement)\b/i.test(lower)) {
+    return {
+      type: 'announcement_command',
+      confidence: 0.9,
+      needsGeneration: true
+    }
+  }
+
+  // Poll commands
+  if (/\b(make|create|send)(?:\s+an?\s+)?(?:poll|survey)\b/i.test(lower)) {
+    return {
+      type: 'poll_command',
+      confidence: 0.9,
+      needsGeneration: true
+    }
+  }
+
+  // Poll response (if last bot message was a poll)
+  if (lowerLastBot.includes('poll') && (lower === 'yes' || lower === 'no' || lower === 'maybe' || /^\d+$/.test(lower))) {
+    return {
+      type: 'poll_response',
+      confidence: 0.9
+    }
+  }
+
+  // Announcement edit (if bot asked for announcement content)
+  if (lowerLastBot.includes('what would you like the announcement to say')) {
+    return {
+      type: 'announcement_edit',
+      confidence: 0.95,
+      needsGeneration: false
+    }
+  }
+
+  // Poll edit (if bot asked for poll question)
+  if (lowerLastBot.includes('what would you like to ask in the poll')) {
+    return {
+      type: 'poll_edit',
+      confidence: 0.95,
+      needsGeneration: false
+    }
+  }
+
+  // Questions
+  if (message.includes('?') || /^(what|when|where|who|how|why|is|are|was|were|do|does|did|will|can|could|should)\s/i.test(message)) {
+    // Check if it's about Enclave
+    if (/\benclave\b/i.test(message)) {
+      return {
+        type: 'enclave_query',
+        confidence: 0.8
+      }
+    }
+    return {
+      type: 'content_query',
+      confidence: 0.7
+    }
+  }
+
+  // Smalltalk
+  if (/^(hi|hey|hello|sup|what'?s\s+up|yo|thanks?|thank\s+you|ty|thx|ok|okay|sure|alright|got\s+it|cool|nice|sweet)$/i.test(lower)) {
+    return {
+      type: 'random_conversation',
+      confidence: 0.9
+    }
+  }
+
+  // Default
+  return {
+    type: 'random_conversation',
+    confidence: 0.5
+  }
+}
+

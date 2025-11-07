@@ -48,6 +48,8 @@ import { enclaveConciseAnswer } from '@/lib/enclave/answers'
 import { smsTighten } from '@/lib/text/limits'
 import { handleTurn, toTwiml } from '@/lib/orchestrator/handleTurn'
 import { handleTurn as handleSessionTurn } from '@/lib/session/handler'
+import { handleSMSMessage } from '@/lib/sms/unified-handler'
+import { splitLongMessage } from '@/lib/text/limits'
 
 // Feature flag: Enable new session-based state machine (takes highest priority)
 const USE_SESSION_STATE_MACHINE = true
@@ -836,6 +838,47 @@ export async function POST(request: NextRequest) {
       )
     }
 
+    // ========================================================================
+    // UNIFIED CONTEXT-AWARE HANDLER (Primary Path)
+    // ========================================================================
+    try {
+      const result = await handleSMSMessage(phoneNumber, from, body)
+      
+      // Save conversation history if needed
+      if (result.shouldSaveHistory) {
+        try {
+          await supabase.from('sms_conversation_history').insert({
+            phone_number: phoneNumber,
+            user_message: body,
+            bot_response: result.response
+          })
+        } catch (err) {
+          console.error('[Twilio SMS] Failed to save conversation history:', err)
+        }
+      }
+      
+      // Split long messages
+      const messages = splitLongMessage(result.response, 1600)
+      
+      if (messages.length === 1) {
+        return new NextResponse(
+          `<?xml version="1.0" encoding="UTF-8"?><Response><Message>${messages[0]}</Message></Response>`,
+          { headers: { 'Content-Type': 'application/xml' } }
+        )
+      } else {
+        const messagesXml = messages.map(msg => `  <Message>${msg}</Message>`).join('\n')
+        return new NextResponse(
+          `<?xml version="1.0" encoding="UTF-8"?><Response>\n${messagesXml}\n</Response>`,
+          { headers: { 'Content-Type': 'application/xml' } }
+        )
+      }
+    } catch (err) {
+      console.error('[Twilio SMS] Unified handler error:', err)
+      // Fall through to legacy handlers below
+    }
+
+    // ========================================================================
+    // LEGACY HANDLERS (Fallback - kept for compatibility)
     // ========================================================================
     // COMMAND: CREATE POLL / ANNOUNCEMENT BLAST FROM SMS
     // ========================================================================
