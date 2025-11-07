@@ -2293,7 +2293,7 @@ export async function POST(request: NextRequest) {
         return new NextResponse(`<?xml version=\"1.0\" encoding=\"UTF-8\"?><Response><Message>${moreMsg}</Message></Response>`, { headers: { 'Content-Type': 'application/xml' } })
       }
       if (early.isConfusedFeedback) {
-        const clar = "got you — what didn’t make sense? want me to explain what/when/where?"
+        const clar = "got you — what didn't make sense? want me to explain what/when/where?"
         return new NextResponse(`<?xml version=\"1.0\" encoding=\"UTF-8\"?><Response><Message>${clar}</Message></Response>`, { headers: { 'Content-Type': 'application/xml' } })
       }
       const msg = ((toneDecision.prefix || '') + variants[Math.floor(Math.random() * variants.length)])
