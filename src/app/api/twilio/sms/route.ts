@@ -47,6 +47,10 @@ import { routeAction } from '@/lib/nlp/actionRouter'
 import { enclaveConciseAnswer } from '@/lib/enclave/answers'
 import { smsTighten } from '@/lib/text/limits'
 import { handleTurn, toTwiml } from '@/lib/orchestrator/handleTurn'
+import { handleTurn as handleSessionTurn } from '@/lib/session/handler'
+
+// Feature flag: Enable new session-based state machine (takes highest priority)
+const USE_SESSION_STATE_MACHINE = true
 
 // Feature flag: Enable orchestrator-based flow
 const USE_ORCHESTRATOR = true
@@ -1306,11 +1310,39 @@ export async function POST(request: NextRequest) {
     }
     
     // ========================================================================
-    // ORCHESTRATOR-BASED FLOW (if enabled, but AFTER poll responses)
+    // SESSION STATE MACHINE (if enabled - HIGHEST PRIORITY after polls)
     // ========================================================================
-    // Skip orchestrator if this is a poll response - poll responses need special handling
+    // Skip if this is a poll response - poll responses need special handling
     const isPollResponse = finalIsPollResponseContext && !isPollDraftContext && !isPollQuestionInputContext && !isPollRequest(textRaw) && !isAnnouncementRequest(textRaw)
     
+    if (USE_SESSION_STATE_MACHINE && !isPollResponse) {
+      try {
+        console.log(`[Session State Machine] Handling turn for ${phoneNumber}`)
+        
+        // Use the new session-based state machine
+        const { response, state } = await handleSessionTurn(phoneNumber, body)
+        
+        console.log(`[Session State Machine] Response: "${response}", Mode: ${state.mode}`)
+        
+        // Save to conversation history
+        await supabase.from('sms_conversation_history').insert({
+          phone_number: phoneNumber,
+          user_message: body,
+          bot_response: response
+        })
+        
+        // Convert to TwiML and return
+        const twiml = `<?xml version="1.0" encoding="UTF-8"?><Response><Message>${response}</Message></Response>`
+        return new NextResponse(twiml, { headers: { 'Content-Type': 'application/xml' } })
+      } catch (error) {
+        console.error('[Session State Machine] Error, falling back to orchestrator:', error)
+        // Fall through to orchestrator
+      }
+    }
+    
+    // ========================================================================
+    // ORCHESTRATOR-BASED FLOW (if enabled, but AFTER poll responses)
+    // ========================================================================
     if (USE_ORCHESTRATOR && !isPollResponse) {
       try {
         // Get user/org context if available
