@@ -49,6 +49,7 @@ import { smsTighten } from '@/lib/text/limits'
 import { handleTurn, toTwiml } from '@/lib/orchestrator/handleTurn'
 import { handleTurn as handleSessionTurn } from '@/lib/session/handler'
 import { handleSMSMessage } from '@/lib/sms/unified-handler'
+import { splitLongMessage } from '@/lib/text/limits'
 
 // Feature flag: Enable new session-based state machine (takes highest priority)
 const USE_SESSION_STATE_MACHINE = true

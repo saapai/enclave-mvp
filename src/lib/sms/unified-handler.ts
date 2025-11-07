@@ -195,22 +195,22 @@ async function handleAnnouncementCommand(
   // Save draft using existing function
   try {
     const { saveDraft } = await import('@/lib/announcements')
+    const { getWorkspaceIds } = await import('@/lib/workspace')
     
     // Get workspace IDs
-    const { data: memberships } = await supabaseAdmin
-      ?.from('app_user')
-      .select('space_id')
-      .eq('phone', phoneNumber)
-      .limit(1)
+    const spaceIds = await getWorkspaceIds()
+    const workspaceId = spaceIds[0] || null
     
-    const workspaceId = memberships?.[0]?.space_id || null
-    
-    await saveDraft(phoneNumber, {
-      content: draft.content,
-      targetAudience: draft.audience || 'all',
-      scheduledFor: draft.date ? new Date(draft.date) : undefined,
-      workspaceId
-    }, workspaceId || '')
+    if (workspaceId) {
+      await saveDraft(phoneNumber, {
+        content: draft.content,
+        targetAudience: draft.audience || 'all',
+        scheduledFor: draft.date ? new Date(draft.date) : undefined,
+        workspaceId
+      }, workspaceId)
+    } else {
+      console.warn('[UnifiedHandler] No workspace found, skipping draft save')
+    }
   } catch (err) {
     console.error('[UnifiedHandler] Error saving announcement draft:', err)
   }
@@ -318,22 +318,22 @@ async function handleAnnouncementEdit(
   // Update draft using existing function
   try {
     const { saveDraft } = await import('@/lib/announcements')
+    const { getWorkspaceIds } = await import('@/lib/workspace')
     
     // Get workspace IDs
-    const { data: memberships } = await supabaseAdmin
-      ?.from('app_user')
-      .select('space_id')
-      .eq('phone', phoneNumber)
-      .limit(1)
+    const spaceIds = await getWorkspaceIds()
+    const workspaceId = existingDraft?.workspaceId || spaceIds[0] || null
     
-    const workspaceId = memberships?.[0]?.space_id || null
-    
-    await saveDraft(phoneNumber, {
-      id: existingDraft?.id,
-      content: draft.content,
-      targetAudience: draft.audience || 'all',
-      workspaceId: existingDraft?.workspaceId || workspaceId || null
-    }, workspaceId || '')
+    if (workspaceId) {
+      await saveDraft(phoneNumber, {
+        id: existingDraft?.id,
+        content: draft.content,
+        targetAudience: draft.audience || 'all',
+        workspaceId
+      }, workspaceId)
+    } else {
+      console.warn('[UnifiedHandler] No workspace found, skipping draft update')
+    }
   } catch (err) {
     console.error('[UnifiedHandler] Error updating announcement draft:', err)
   }
