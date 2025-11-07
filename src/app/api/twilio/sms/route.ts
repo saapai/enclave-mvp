@@ -1148,6 +1148,49 @@ export async function POST(request: NextRequest) {
       return false
     }
     
+    const inferOptionFromInput = (input: string, options: string[]): string | null => {
+      const trimmed = (input || '').trim()
+      const lower = trimmed.toLowerCase()
+      
+      // Numeric selection (1-indexed)
+      const numMatch = trimmed.match(/^\s*(\d{1,2})\s*$/)
+      if (numMatch) {
+        const idx = parseInt(numMatch[1], 10) - 1
+        if (idx >= 0 && idx < options.length) {
+          return options[idx]
+        }
+      }
+      
+      // Direct option match (case-insensitive, ignore punctuation)
+      const cleaned = lower.replace(/[^a-z0-9\s]/g, '').trim()
+      const normalizedOptions = options.map(opt => opt.toLowerCase().replace(/[^a-z0-9\s]/g, '').trim())
+      const directIdx = normalizedOptions.findIndex(opt => opt === cleaned)
+      if (directIdx !== -1) {
+        return options[directIdx]
+      }
+      
+      // Keyword heuristics for yes/no/maybe style options
+      const yesWords = ['yes', 'yeah', 'yup', 'yep', 'sure', 'absolutely', 'def', 'definitely', 'in', "i'm in", 'count me in', 'i will', 'i\'ll be', 'i can make', 'coming', 'be there']
+      const noWords = ['no', 'nah', 'nope', 'can\'t', 'cannot', 'won\'t', 'not coming', 'out', 'i can\'t', 'i cannot', 'i won\'t', 'i\'m out']
+      const maybeWords = ['maybe', 'not sure', 'depends', 'possibly', 'might']
+      
+      const containsAny = (words: string[]) => words.some(word => lower.includes(word))
+      
+      if (options.some(opt => opt.toLowerCase() === 'yes') && containsAny(yesWords)) {
+        return options.find(opt => opt.toLowerCase() === 'yes') || null
+      }
+      
+      if (options.some(opt => opt.toLowerCase() === 'no') && containsAny(noWords)) {
+        return options.find(opt => opt.toLowerCase() === 'no') || null
+      }
+      
+      if (options.some(opt => opt.toLowerCase() === 'maybe') && containsAny(maybeWords)) {
+        return options.find(opt => opt.toLowerCase() === 'maybe') || null
+      }
+      
+      return null
+    }
+    
     // ========================================================================
     // PRIORITY 1: Poll Response (HIGH - before queries)
     // ========================================================================
@@ -1184,25 +1227,20 @@ export async function POST(request: NextRequest) {
         if (poll && Array.isArray(poll.options)) {
           const options: string[] = poll.options as string[]
 
-          // Router-aware guard: classify high-level intent, and strictly validate poll answer
-          // BUT: If conversational context classifier says poll_response with high confidence, trust it
+          // Router-aware guard: classify high-level intent
           const routePre = classifyIntent(textRaw, contextMessages)
           const looksLikeAnswer = isLikelyPollAnswer(textRaw, options)
+          const parsed = await parseResponseWithNotes(body, options)
           
-          // If conversational context says poll_response with high confidence, prioritize that
+          // If conversational context classifier says poll_response with high confidence, trust it
           const isHighConfidencePollResponse = finalIsPollResponseContext && conversationalContext.confidence >= 0.8
+          const qualifiesAsPollAnswer = !!parsed.option || looksLikeAnswer || isHighConfidencePollResponse
           
-          // Only reject if:
-          // 1. Doesn't look like answer AND not high-confidence poll response
-          // 2. OR is explicitly abusive (never treat abuse as poll response)
-          // 3. BUT allow smalltalk/chitChat if it's a high-confidence poll response (sometimes "yes" is classified as smalltalk)
-          if (!isHighConfidencePollResponse && (!looksLikeAnswer || routePre.intent === 'abusive')) {
-            // Not a clean poll answer — fall through to other handlers
-            console.log(`[Twilio SMS] Not treating message as poll response (looksLikeAnswer=${looksLikeAnswer}, routeIntent=${routePre.intent}, highConfPoll=${isHighConfidencePollResponse})`)
+          if (!qualifiesAsPollAnswer || routePre.intent === 'abusive') {
+            console.log(`[Twilio SMS] Not treating message as poll response (qualifies=${qualifiesAsPollAnswer}, looksLikeAnswer=${looksLikeAnswer}, routeIntent=${routePre.intent}, highConfPoll=${isHighConfidencePollResponse}, parsed=${parsed.option})`)
             throw new Error('NotAPollAnswer')
           }
           
-          // If high confidence but route says smalltalk, that's okay - "yes" can be both
           if (isHighConfidencePollResponse) {
             console.log(`[Twilio SMS] High-confidence poll response detected, proceeding despite route intent: ${routePre.intent}`)
           }
@@ -1218,15 +1256,14 @@ export async function POST(request: NextRequest) {
           let personName = optinData?.name || 'Unknown'
           console.log(`[Twilio SMS] Poll response from ${normalizedPhone}, name: ${personName}`)
           
-          // Parse response
-          const parsed = await parseResponseWithNotes(body, options)
+          const resolvedOption = parsed.option ?? inferOptionFromInput(body, options)
           
-          if (parsed.option) {
+          if (resolvedOption) {
             // Successfully parsed - record it
             const success = await recordPollResponse(
               poll.id,
               phoneE164,
-              parsed.option,
+              resolvedOption,
               parsed.notes,
               personName
             )
@@ -1245,10 +1282,10 @@ export async function POST(request: NextRequest) {
             const linkLine = publicResultsUrl ? `\n\nView results: ${publicResultsUrl}` : ''
             const notesText = parsed.notes ? ` (note: ${parsed.notes})` : ''
             const sassy = [
-              `got you, ${personName}. marked: ${parsed.option}${notesText}`,
-              `copy that ${personName} — logged ${parsed.option}${notesText}`,
-              `${personName}, noted: ${parsed.option}${notesText}`,
-              `all right ${personName}, putting you down as ${parsed.option}${notesText}`
+              `got you, ${personName}. marked: ${resolvedOption}${notesText}`,
+              `copy that ${personName} — logged ${resolvedOption}${notesText}`,
+              `${personName}, noted: ${resolvedOption}${notesText}`,
+              `all right ${personName}, putting you down as ${resolvedOption}${notesText}`
             ]
             const reply = `${sassy[Math.floor(Math.random()*sassy.length)]}${linkLine}`
             
@@ -1258,8 +1295,8 @@ export async function POST(request: NextRequest) {
               { headers: { 'Content-Type': 'application/xml' } }
             )
           } else {
-            // Couldn't parse - might be a command, fall through
-            console.log('[Twilio SMS] Could not parse poll response, falling through')
+            // Couldn't resolve option even though it looked like a poll answer
+            console.log('[Twilio SMS] Could not parse poll response after inference, falling through')
           }
         }
       } catch (err) {

@@ -45,13 +45,35 @@ function isAffirmative(text: string): boolean {
 
 /**
  * Check if text wants to edit (no, change it, etc.)
+ * Also detects content-bearing instructions like "with this exact text:", "use this instead:", etc.
  */
 function wantsEdit(text: string): boolean {
   const lower = text.toLowerCase().trim()
   
-  return /^(no|nope|change|edit|update|make\s+it|actually)/.test(lower) ||
-         lower.includes('change it') ||
-         lower.includes('make it')
+  // Explicit edit commands
+  if (/^(no|nope|change|edit|update|make\s+it|actually)/.test(lower) ||
+      lower.includes('change it') ||
+      lower.includes('make it')) {
+    return true
+  }
+  
+  // Instructions with new content (colon patterns)
+  if (/(?:with\s+this\s+exact\s+text|use\s+this\s+instead|use\s+this\s+exact|send\s+this\s+instead|make\s+it\s+say|exact\s+(?:text|wording|message)|say\s+exactly)\s*:/i.test(text)) {
+    return true
+  }
+  
+  // "make sure" instructions
+  if (/make\s+sure\s+(?:to\s+)?(?:say|include|mention)/i.test(text)) {
+    return true
+  }
+  
+  // If message has quoted content or specific time/location details, likely an edit
+  if (text.includes('"') || /\d{1,2}(?:am|pm)/i.test(text)) {
+    // Check if it's not just a question about existing content
+    return !lower.startsWith('when') && !lower.startsWith('what') && !lower.startsWith('where')
+  }
+  
+  return false
 }
 
 /**

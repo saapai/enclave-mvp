@@ -166,8 +166,9 @@ async function determineMode(
   const lowerText = text.toLowerCase()
   const isNewPollRequest = /(make|create|send)\s+(an?\s+)?(poll|survey)/i.test(text) ||
                            /i\s+(want|wanna)\s+(to\s+)?(make|create|send)\s+(an?\s+)?(poll|survey)/i.test(text)
-  const isNewAnnouncementRequest = /(make|create|send|post)\s+(an?\s+)?(announcement|announce)/i.test(text) ||
-                                   /i\s+(want|wanna)\s+(to\s+)?(make|create|send|post)\s+(an?\s+)?(announcement|announce)/i.test(text)
+  const isNewAnnouncementRequest = /(make|create|send|post)\s+(an?\s+|out\s+an?\s+)?(announcement|announce|message|blast)/i.test(text) ||
+                                   /i\s+(want|wanna)\s+(to\s+)?(make|create|send|post)\s+(an?\s+)?(announcement|announce)/i.test(text) ||
+                                   /(broadcast|blast)\s*:/i.test(text) // Colon-style commands are always new
   
   // Check if user is asking an explicit question (should be treated as query, not draft input)
   // Questions can have '?' or just start with question words

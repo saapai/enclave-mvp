@@ -44,6 +44,13 @@ export function extractRawAnnouncementText(message: string): string {
     if (quotedText) return quotedText;
   }
   
+  // Check for "with this exact text:", "use this exact text:", "send this exact text:", etc.
+  // This catches patterns like "With this exact text: football tomorrow at 6am im fields"
+  const colonExactMatch = message.match(/(?:with\s+this|use\s+this|send\s+this|say)\s+exact\s+(?:text|wording|message)\s*:\s*(.+)/is);
+  if (colonExactMatch) {
+    return colonExactMatch[1].trim();
+  }
+  
   // Check for "no it should say X" or "it should say X" - common correction pattern
   const shouldSayMatch = message.match(/(?:no,?\s+)?it\s+should\s+say\s+"?([^"]+)"?$/i);
   if (shouldSayMatch) {
@@ -106,7 +113,13 @@ export function isExactTextRequest(message: string): boolean {
     lowerMsg.includes('use my exact') ||
     lowerMsg.includes('exact wording') ||
     lowerMsg.includes('exact text') ||
+    lowerMsg.includes('this exact text') ||
+    lowerMsg.includes('exact message') ||
+    lowerMsg.includes('use this exact') ||
+    lowerMsg.includes('with this exact') ||
+    lowerMsg.includes('send this exact') ||
     lowerMsg.includes('edit it to this exactly') ||
+    lowerMsg.includes('say exactly') ||
     (lowerMsg.startsWith('no') && lowerMsg.includes('exactly')) ||
     /(?:no,?\s+)?it\s+should\s+say/i.test(lowerMsg) || // "no it should say X"
     /^no,?\s+.*should\s+say/i.test(lowerMsg) // "no X should say Y"
@@ -206,6 +219,20 @@ export async function extractAnnouncementDetails(message: string): Promise<{
   targetAudience?: string;
 }> {
   try {
+    // Pattern: "send out a message: ..." or "broadcast: ..."
+    const colonCommandMatch = message.match(/(?:send(?:\s+out)?\s+(?:an?\s+)?(?:message|announcement)(?:\s+to\s+[^\:]+)?|broadcast|blast)\s*:\s*(.+)$/i)
+    if (colonCommandMatch) {
+      const content = colonCommandMatch[1]?.trim()
+      if (content) {
+        return {
+          content,
+          scheduledFor: null,
+          tone: 'casual',
+          targetAudience: undefined
+        }
+      }
+    }
+    
     // First check if there's quoted text - use that exactly
     if (hasQuotes(message)) {
       const quotedText = parseAnnouncementQuotes(message);

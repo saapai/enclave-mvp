@@ -6,6 +6,20 @@ import twilio from 'twilio'
 
 export const dynamic = 'force-dynamic'
 
+const PHONE_DIGITS_ONLY = /^\d{10}$/
+
+function normalizeToE164(phone: string): string | null {
+  if (!phone) return null
+  const digits = phone.replace(/[^\d]/g, '')
+  if (digits.length === 11 && digits.startsWith('1')) {
+    return `+${digits}`
+  }
+  if (PHONE_DIGITS_ONLY.test(digits)) {
+    return `+1${digits}`
+  }
+  return null
+}
+
 /**
  * Retroactively sync users who slipped through and proactively ask for their names
  * 
@@ -199,26 +213,32 @@ export async function GET(request: NextRequest) {
       // 1. Ensure user exists in Airtable
       if (ENV.AIRTABLE_API_KEY && ENV.AIRTABLE_BASE_ID && ENV.AIRTABLE_TABLE_NAME) {
         try {
-          // Convert phone to E.164 format for Airtable
-          const phoneE164 = phone.startsWith('+1') ? phone : `+1${phone}`
+          const phoneE164 = normalizeToE164(phone)
           
-          console.log(`[Retroactive Name Sync] Ensuring Airtable user: phone=${phoneE164}`)
-          const airtableResult = await ensureAirtableUser(
-            ENV.AIRTABLE_BASE_ID,
-            ENV.AIRTABLE_TABLE_NAME,
-            phoneE164,
-            undefined // Don't set name yet - we'll ask for it
-          )
-          
-          if (airtableResult.ok) {
-            detail.airtableSynced = true
-            results.airtableSynced++
-            console.log(`[Retroactive Name Sync] ✓ Airtable synced for ${phone}`)
-          } else {
-            detail.airtableError = airtableResult.error || 'Unknown error'
+          if (!phoneE164) {
+            detail.airtableError = 'Invalid phone format'
             results.airtableErrors++
-            console.error(`[Retroactive Name Sync] ✗ Airtable sync failed for ${phone}: ${airtableResult.error}`)
+            console.warn(`[Retroactive Name Sync] Skipping Airtable sync for ${phone} - invalid format`)
+          } else {
+            console.log(`[Retroactive Name Sync] Ensuring Airtable user: phone=${phoneE164}`)
+            const airtableResult = await ensureAirtableUser(
+              ENV.AIRTABLE_BASE_ID,
+              ENV.AIRTABLE_TABLE_NAME,
+              phoneE164,
+              undefined // Don't set name yet - we'll ask for it
+            )
+            
+            if (airtableResult.ok) {
+              detail.airtableSynced = true
+              results.airtableSynced++
+              console.log(`[Retroactive Name Sync] ✓ Airtable synced for ${phone}`)
+            } else {
+              detail.airtableError = airtableResult.error || 'Unknown error'
+              results.airtableErrors++
+              console.error(`[Retroactive Name Sync] ✗ Airtable sync failed for ${phone}: ${airtableResult.error}`)
+            }
           }
+          
         } catch (err) {
           detail.airtableError = err instanceof Error ? err.message : String(err)
           results.airtableErrors++
@@ -243,8 +263,13 @@ export async function GET(request: NextRequest) {
               throw new Error('Twilio client not initialized')
             }
             
-            // Convert phone to E.164 format for Twilio
-            const phoneE164 = phone.startsWith('+1') ? phone : `+1${phone}`
+            const phoneE164 = normalizeToE164(phone)
+            if (!phoneE164) {
+              detail.messageError = 'Invalid phone format'
+              results.messageErrors++
+              console.warn(`[Retroactive Name Sync] Skipping SMS for ${phone} - invalid format`)
+              continue
+            }
             
             console.log(`[Retroactive Name Sync] Sending message to ${phoneE164}`)
             const messageResult = await twilioClient.messages.create({
