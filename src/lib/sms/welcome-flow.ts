@@ -8,7 +8,8 @@
  */
 
 import { supabaseAdmin } from '@/lib/supabase'
-import { ensureAirtableUser, updateNameEverywhere } from '@/lib/polls'
+import { ensureAirtableUser } from '@/lib/airtable'
+import { updateNameEverywhere } from '@/lib/polls'
 import { ENV } from '@/lib/env'
 
 export interface WelcomeState {
