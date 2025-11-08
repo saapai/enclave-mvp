@@ -686,6 +686,8 @@ async function handleQuery(
     const { handleTurn } = await import('@/lib/orchestrator/handleTurn')
     const result = await handleTurn(phoneNumber, messageText)
     
+    console.log(`[UnifiedHandler] Orchestrator result: ${result.messages?.length || 0} messages`)
+    
     // Ensure we have messages
     if (!result.messages || result.messages.length === 0) {
       console.error('[UnifiedHandler] Orchestrator returned no messages!')
@@ -711,6 +713,8 @@ async function handleQuery(
         }
       }
     }
+    
+    console.log(`[UnifiedHandler] Returning query response: "${responseText.substring(0, 100)}..."`)
     
     // Save action memory for query
     const hasResults = !responseText.toLowerCase().includes("couldn't find") && 

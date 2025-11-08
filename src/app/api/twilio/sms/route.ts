@@ -780,7 +780,16 @@ export async function POST(request: NextRequest) {
     // UNIFIED CONTEXT-AWARE HANDLER (Primary Path)
     // ========================================================================
     try {
+      console.log(`[Twilio SMS] Calling unified handler for: ${body.substring(0, 50)}`)
       const result = await handleSMSMessage(phoneNumber, from, body)
+      
+      console.log(`[Twilio SMS] Unified handler returned: "${result.response.substring(0, 100)}..."`)
+      
+      // Ensure we have a response
+      if (!result.response || result.response.trim().length === 0) {
+        console.error('[Twilio SMS] Unified handler returned empty response!')
+        throw new Error('Empty response from unified handler')
+      }
       
       // Save conversation history if needed
       if (result.shouldSaveHistory) {
@@ -797,6 +806,8 @@ export async function POST(request: NextRequest) {
       
       // Split long messages
       const messages = splitLongMessage(result.response, 1600)
+      
+      console.log(`[Twilio SMS] Sending ${messages.length} message(s) to user`)
       
       if (messages.length === 1) {
         return new NextResponse(

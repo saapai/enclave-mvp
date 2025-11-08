@@ -95,6 +95,8 @@ export async function checkActionQuery(
     /(did|have)\s+i\s+(respond|answer|reply)/i,
     /(did|was)\s+(my|the)\s+(response|answer|reply|message|poll)\s+(tracked|recorded|sent|saved)/i,
     /what\s+(did|was)\s+(you|i)\s+(find|send|do)/i,
+    /did\s+you\s+find\s+(that|the|it|info|information)/i,
+    /(did|have)\s+you\s+(find|found)\s+(that|the|it|info|information)/i,
   ]
   
   const isActionQuery = actionQueryPatterns.some(pattern => pattern.test(messageText))

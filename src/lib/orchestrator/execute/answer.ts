@@ -179,12 +179,17 @@ export async function executeAnswer(
             const controller = new AbortController()
             const timeoutId = setTimeout(() => controller.abort(), 5000) // 5 second timeout
             
+            // Extract date information from document for better context
+            const now = new Date()
+            const currentDate = now.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
+            const currentDayOfWeek = now.toLocaleDateString('en-US', { weekday: 'long' })
+            
             const aiRes = await fetch(aiUrl, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
                 query,
-                context: `Title: ${topResult.title}\nContent: ${topResult.body.substring(0, 2000)}`,
+                context: `Title: ${topResult.title}\nContent: ${topResult.body.substring(0, 2000)}\n\nIMPORTANT: Today is ${currentDayOfWeek}, ${currentDate}. Extract the ACTUAL date from the document content, not "today". If the document says "Nov 13" or "November 13", use that exact date. Do not use relative dates like "today" unless the document explicitly says "today".`,
                 type: 'summary'
               }),
               signal: controller.signal
