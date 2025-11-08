@@ -4,7 +4,7 @@
  * Retrieves last ~10 messages, extracts entities, detects unresolved intents.
  */
 
-import { supabase } from '@/lib/supabase'
+import { supabase, supabaseAdmin } from '@/lib/supabase'
 import { EvidenceUnit } from './types'
 
 /**
@@ -23,17 +23,38 @@ function normalizePhone(phone: string): string {
  */
 export async function retrieveConvoSnapshot(phoneNumber: string, maxMessages: number = 10): Promise<EvidenceUnit[]> {
   const normalizedPhone = normalizePhone(phoneNumber)
-  
-  const { data: messages } = await supabase
-    .from('sms_conversation_history')
-    .select('user_message, bot_response, created_at')
-    .eq('phone_number', normalizedPhone)
-    .order('created_at', { ascending: false })
-    .limit(maxMessages)
-  
-  if (!messages || messages.length === 0) {
+  const client = supabaseAdmin || supabase
+
+  if (!client) {
+    console.error('[ConvoSnapshot] No Supabase client available')
     return []
   }
+
+  try {
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => {
+      controller.abort()
+      console.error('[ConvoSnapshot] Conversation history query timed out after 3000ms')
+    }, 3000)
+
+    const { data: messages, error } = await client
+      .from('sms_conversation_history')
+      .select('user_message, bot_response, created_at')
+      .eq('phone_number', normalizedPhone)
+      .order('created_at', { ascending: false })
+      .limit(maxMessages)
+      .abortSignal(controller.signal)
+
+    clearTimeout(timeoutId)
+
+    if (error) {
+      console.error('[ConvoSnapshot] Failed to load conversation history:', error)
+      return []
+    }
+
+    if (!messages || messages.length === 0) {
+      return []
+    }
   
   // Build conversation context
   const conversationText = messages
@@ -83,5 +104,13 @@ export async function retrieveConvoSnapshot(phoneNumber: string, maxMessages: nu
   }
   
   return [evidence]
+  } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError') {
+      console.error('[ConvoSnapshot] Conversation history query aborted due to timeout')
+    } else {
+      console.error('[ConvoSnapshot] Unexpected error retrieving conversation snapshot:', err)
+    }
+    return []
+  }
 }
 
