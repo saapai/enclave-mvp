@@ -804,9 +804,21 @@ export async function POST(request: NextRequest) {
         
         // Process query asynchronously (don't await)
         console.log(`[Twilio SMS] Starting async handler for content query: "${body.substring(0, 50)}"`)
-        // Re-process the message asynchronously (tempResult was just for classification)
+        
+        // Set a timeout to ensure we don't hang forever
+        const asyncTimeout = setTimeout(async () => {
+          console.error(`[Twilio SMS] Async handler timeout after 60s for query: "${body.substring(0, 50)}"`)
+          try {
+            await sendSms(from, "Sorry, that query took too long. Please try again.")
+          } catch (err) {
+            console.error('[Twilio SMS] Failed to send timeout message:', err)
+          }
+        }, 60000) // 60 second timeout
+        
+        // Re-process the message asynchronously
         handleSMSMessage(phoneNumber, from, body)
           .then(async (result) => {
+            clearTimeout(asyncTimeout)
             console.log(`[Twilio SMS] Async handler completed successfully`)
             console.log(`[Twilio SMS] Async handler returned: "${result?.response?.substring(0, 100) || 'NO RESPONSE'}..."`)
             
@@ -853,19 +865,21 @@ export async function POST(request: NextRequest) {
             }
             console.log(`[Twilio SMS] Finished sending all async messages`)
           })
-          .catch((err) => {
+          .catch(async (err) => {
+            clearTimeout(asyncTimeout)
             console.error('[Twilio SMS] Async handler error:', err)
-            console.error('[Twilio SMS] Error stack:', err?.stack)
+            console.error('[Twilio SMS] Error stack:', err instanceof Error ? err.stack : 'No stack trace')
             // Send error message to user
-            sendSms(from, "Sorry, I encountered an error processing your query. Please try again.")
-              .then(result => {
-                if (result.ok) {
-                  console.log(`[Twilio SMS] Error message sent successfully`)
-                } else {
-                  console.error(`[Twilio SMS] Failed to send error message: ${result.error}`)
-                }
-              })
-              .catch(e => console.error('[Twilio SMS] Failed to send error message:', e))
+            try {
+              const smsResult = await sendSms(from, "Sorry, I encountered an error processing your query. Please try again.")
+              if (smsResult.ok) {
+                console.log(`[Twilio SMS] Error message sent successfully`)
+              } else {
+                console.error(`[Twilio SMS] Failed to send error message: ${smsResult.error}`)
+              }
+            } catch (e) {
+              console.error('[Twilio SMS] Failed to send error message:', e)
+            }
           })
         
         return ackResponse

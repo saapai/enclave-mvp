@@ -92,15 +92,37 @@ export async function handleSMSMessage(
     const { getRecentActions } = await import('./action-memory')
     const recentActions = await getRecentActions(phoneNumber, 10)
     
-    // Find ALL recent query actions that haven't been answered yet
-    const recentQueries = recentActions.filter(a => a.type === 'query').slice(0, 3) // Last 3 queries
+    // Find ALL recent query actions - prioritize the MOST RECENT one
+    const recentQueries = recentActions.filter(a => a.type === 'query').slice(0, 5) // Last 5 queries
     
     if (recentQueries.length > 0) {
-      // Check if any queries have answers
-      const answeredQueries = recentQueries.filter(q => (q.details.queryResults || 0) > 0 && q.details.queryAnswer)
+      // Get the MOST RECENT query (first in array since getRecentActions returns newest first)
+      const mostRecentQuery = recentQueries[0]
       
+      // Check if the most recent query has an answer
+      if (mostRecentQuery.details.queryAnswer && (mostRecentQuery.details.queryResults || 0) > 0) {
+        console.log(`[UnifiedHandler] Found most recent query result: "${mostRecentQuery.details.query}"`)
+        return {
+          response: mostRecentQuery.details.queryAnswer || "i couldn't find information about that.",
+          shouldSaveHistory: true,
+          metadata: { intent: 'content_query' }
+        }
+      }
+      
+      // Check if the most recent query is still processing (no answer yet, but recent)
+      const isRecent = new Date(mostRecentQuery.timestamp).getTime() > Date.now() - 120000 // Within last 2 minutes
+      if (isRecent && !mostRecentQuery.details.queryAnswer && !mostRecentQuery.details.queryResults) {
+        console.log(`[UnifiedHandler] Most recent query "${mostRecentQuery.details.query}" is still processing`)
+        return {
+          response: `still processing "${mostRecentQuery.details.query}", give me a sec!`,
+          shouldSaveHistory: true,
+          metadata: { intent: 'content_query' }
+        }
+      }
+      
+      // Check if any queries have answers (fallback to any answered query)
+      const answeredQueries = recentQueries.filter(q => (q.details.queryResults || 0) > 0 && q.details.queryAnswer)
       if (answeredQueries.length > 0) {
-        // Return the most recent answered query
         const lastAnswered = answeredQueries[0]
         console.log(`[UnifiedHandler] Found previous query result: "${lastAnswered.details.query}"`)
         return {
@@ -108,24 +130,24 @@ export async function handleSMSMessage(
           shouldSaveHistory: true,
           metadata: { intent: 'content_query' }
         }
+      }
+      
+      // Check if queries are still processing (recent but no results yet)
+      const pendingQueries = recentQueries.filter(q => !q.details.queryResults && !q.details.queryAnswer)
+      if (pendingQueries.length > 0) {
+        return {
+          response: `still processing "${pendingQueries[0].details.query}", give me a sec!`,
+          shouldSaveHistory: true,
+          metadata: { intent: 'content_query' }
+        }
       } else {
-        // Check if queries are still processing (recent but no results yet)
-        const pendingQueries = recentQueries.filter(q => !q.details.queryResults && !q.details.queryAnswer)
-        if (pendingQueries.length > 0) {
+        // Queries were attempted but found nothing
+        const failedQueries = recentQueries.filter(q => (q.details.queryResults || 0) === 0)
+        if (failedQueries.length > 0) {
           return {
-            response: "still processing your queries, give me a sec!",
+            response: `i couldn't find information about "${failedQueries[0].details.query}".`,
             shouldSaveHistory: true,
             metadata: { intent: 'content_query' }
-          }
-        } else {
-          // Queries were attempted but found nothing
-          const failedQueries = recentQueries.filter(q => q.details.queryResults === 0)
-          if (failedQueries.length > 0) {
-            return {
-              response: `i couldn't find information about "${failedQueries[0].details.query}".`,
-              shouldSaveHistory: true,
-              metadata: { intent: 'content_query' }
-            }
           }
         }
       }
@@ -999,9 +1021,20 @@ Answer factually based on the reference above.`
     }
   }
   
+  // Save query to action memory BEFORE processing (so follow-ups can detect it's processing)
+  await saveAction(phoneNumber, {
+    type: 'query',
+    details: {
+      query: messageText,
+      queryResults: undefined, // Will be updated after processing
+      queryAnswer: undefined // Will be updated after processing
+    }
+  }).catch(err => console.error('[UnifiedHandler] Failed to save initial query action:', err))
+  
   try {
     // Use orchestrator for content query handling
     const { handleTurn } = await import('@/lib/orchestrator/handleTurn')
+    console.log(`[UnifiedHandler] Calling orchestrator for query: "${messageText}"`)
     const result = await handleTurn(phoneNumber, messageText)
     
     console.log(`[UnifiedHandler] Orchestrator result: ${result.messages?.length || 0} messages`)
@@ -1009,6 +1042,16 @@ Answer factually based on the reference above.`
     // Ensure we have messages
     if (!result.messages || result.messages.length === 0) {
       console.error('[UnifiedHandler] Orchestrator returned no messages!')
+      // Update action memory with failure
+      await saveAction(phoneNumber, {
+        type: 'query',
+        details: {
+          query: messageText,
+          queryResults: 0,
+          queryAnswer: undefined
+        }
+      }).catch(err => console.error('[UnifiedHandler] Failed to update action memory:', err))
+      
       return {
         response: "I couldn't find information about that.",
         shouldSaveHistory: true,
@@ -1023,6 +1066,16 @@ Answer factually based on the reference above.`
     // Ensure response is not empty
     if (!responseText || responseText.trim().length === 0) {
       console.error('[UnifiedHandler] Empty response text from orchestrator!')
+      // Update action memory with failure
+      await saveAction(phoneNumber, {
+        type: 'query',
+        details: {
+          query: messageText,
+          queryResults: 0,
+          queryAnswer: undefined
+        }
+      }).catch(err => console.error('[UnifiedHandler] Failed to update action memory:', err))
+      
       return {
         response: "I couldn't find information about that.",
         shouldSaveHistory: true,
@@ -1034,7 +1087,7 @@ Answer factually based on the reference above.`
     
     console.log(`[UnifiedHandler] Returning query response: "${responseText.substring(0, 100)}..."`)
     
-    // Save action memory for query (don't await - fire and forget to avoid blocking)
+    // Determine if we found results
     const hasResults = !responseText.toLowerCase().includes("couldn't find") && 
                        !responseText.toLowerCase().includes("i couldn't") &&
                        !responseText.toLowerCase().includes("looking that up") &&
@@ -1049,17 +1102,16 @@ Answer factually based on the reference above.`
       queryAnswer = firstSentence ? firstSentence[0] : responseText.substring(0, 300)
     }
     
-    // Fire and forget - don't block response
-    saveAction(phoneNumber, {
+    // Update action memory with results (await to ensure it's saved)
+    await saveAction(phoneNumber, {
       type: 'query',
       details: {
         query: messageText,
         queryResults: resultCount,
         queryAnswer: queryAnswer
       }
-    }).catch(err => console.error('[UnifiedHandler] Failed to save action memory:', err))
+    }).catch(err => console.error('[UnifiedHandler] Failed to update action memory:', err))
     
-    // Return immediately - don't wait for action memory save
     return {
       response: responseText,
       shouldSaveHistory: false, // Orchestrator saves history
@@ -1069,6 +1121,18 @@ Answer factually based on the reference above.`
     }
   } catch (err) {
     console.error('[UnifiedHandler] Query handling error:', err)
+    console.error('[UnifiedHandler] Error stack:', err instanceof Error ? err.stack : 'No stack trace')
+    
+    // Update action memory with error
+    await saveAction(phoneNumber, {
+      type: 'query',
+      details: {
+        query: messageText,
+        queryResults: 0,
+        queryAnswer: undefined
+      }
+    }).catch(saveErr => console.error('[UnifiedHandler] Failed to update action memory on error:', saveErr))
+    
     return {
       response: "I couldn't process that query. Please try again.",
       shouldSaveHistory: true,
