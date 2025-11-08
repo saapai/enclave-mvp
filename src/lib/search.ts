@@ -39,11 +39,16 @@ export async function searchResourcesHybrid(
   }
 
   try {
+    console.log(`[Hybrid Search] Starting hybrid search for query: "${query}", spaceId: ${spaceId}`)
     // Generate embedding for vector search
+    console.log(`[Hybrid Search] Generating embedding...`)
     const queryEmbedding = await embedText(query)
+    console.log(`[Hybrid Search] Embedding generated, dimensions: ${queryEmbedding?.length || 0}`)
     
     // Search regular resources with FTS (keyword search)
+    console.log(`[Hybrid Search] Starting FTS search...`)
     const regularResults = await searchResources(query, spaceId, filters, { limit: limit * 2, offset: 0 }, userId)
+    console.log(`[Hybrid Search] FTS search returned ${regularResults.length} results`)
     
     // Search regular resources with vector search (semantic search for PDFs, uploads, etc.)
     console.log(`[Vector Search] Searching for regular resource embeddings - Space: ${spaceId}, User: ${userId}`)

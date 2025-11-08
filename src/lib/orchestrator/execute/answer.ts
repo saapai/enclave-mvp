@@ -43,29 +43,35 @@ export async function executeAnswer(
   }
   
   // Cross-workspace search
+  console.log(`[Execute Answer] Starting hybrid search across ${spaceIds.length} workspaces`)
   const allResults = []
   for (const spaceId of spaceIds) {
     const searchStart = Date.now()
-    const results = await searchResourcesHybrid(
-      query,
-      spaceId,
-      {},
-      { limit: 5, offset: 0 },
-      undefined
-    )
-    console.log(`[Execute Answer] searchResourcesHybrid for space ${spaceId} returned ${results.length} results in ${Date.now() - searchStart}ms`)
-    if (results.length > 0) {
-      console.log(`[Execute Answer] Top result for space ${spaceId}:`, {
-        title: results[0]?.title,
-        type: results[0]?.type,
-        score: results[0]?.score,
-        source: (results[0] as any)?.source
-      })
+    console.log(`[Execute Answer] Searching workspace ${spaceId} for query: "${query}"`)
+    try {
+      const results = await searchResourcesHybrid(
+        query,
+        spaceId,
+        {},
+        { limit: 5, offset: 0 },
+        undefined
+      )
+      console.log(`[Execute Answer] searchResourcesHybrid for space ${spaceId} returned ${results.length} results in ${Date.now() - searchStart}ms`)
+      if (results.length > 0) {
+        console.log(`[Execute Answer] Top result for space ${spaceId}:`, {
+          title: results[0]?.title,
+          type: results[0]?.type,
+          score: results[0]?.score,
+          source: (results[0] as any)?.source
+        })
+      }
+      if (results.length === 0) {
+        console.warn(`[Execute Answer] No results found for space ${spaceId}`)
+      }
+      allResults.push(...results)
+    } catch (err) {
+      console.error(`[Execute Answer] Error searching workspace ${spaceId}:`, err)
     }
-    if (results.length === 0) {
-      console.warn(`[Execute Answer] No results found for space ${spaceId}`)
-    }
-    allResults.push(...results)
   }
 
   console.log(`[Execute Answer] Total aggregated results: ${allResults.length}`)
