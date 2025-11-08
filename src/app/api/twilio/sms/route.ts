@@ -806,18 +806,19 @@ export async function POST(request: NextRequest) {
         // Process query asynchronously (don't await)
         console.log(`[Twilio SMS] [${traceId}] Starting async handler for content query: "${body.substring(0, 50)}"`)
         
-      // WATCHDOG: 8s timeout to prevent silent hangs (Vercel Pro allows 60s)
+      // WATCHDOG: 12s timeout to prevent silent hangs (Vercel Pro allows 60s)
+      // System typically completes in 5-15s, so 12s gives a reasonable buffer
       let watchdogFired = false
       const watchdog = setTimeout(async () => {
         watchdogFired = true
-        console.error(`[Twilio SMS] [${traceId}] WATCHDOG: content_query exceeded 8s, sending degraded reply`)
+        console.error(`[Twilio SMS] [${traceId}] WATCHDOG: content_query exceeded 12s, sending degraded reply`)
         try {
           await sendSms(from, "Still searching... this is taking longer than expected. I'll keep trying.", { retries: 1, retryDelay: 2000 })
           console.log(`[Twilio SMS] [${traceId}] Watchdog message sent`)
         } catch (err) {
           console.error(`[Twilio SMS] [${traceId}] Failed to send watchdog message:`, err)
         }
-      }, 8000) // 8 second watchdog
+      }, 12000) // 12 second watchdog
         
       // Set a hard timeout before Vercel kills us (Pro = 60s)
       let timeoutFired = false

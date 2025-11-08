@@ -21,9 +21,21 @@ export interface WelcomeState {
 /**
  * Check if user needs welcome flow
  */
+// Cache welcome check results for 30s to avoid redundant DB calls
+const welcomeCache = new Map<string, { result: boolean; timestamp: number }>()
+const WELCOME_CACHE_TTL = 30000 // 30 seconds
+
 export async function needsWelcome(phoneNumber: string): Promise<boolean> {
   try {
     console.log(`[WelcomeFlow] needsWelcome: Starting check for ${phoneNumber}`)
+    
+    // Check cache first
+    const cached = welcomeCache.get(phoneNumber)
+    if (cached && Date.now() - cached.timestamp < WELCOME_CACHE_TTL) {
+      console.log(`[WelcomeFlow] needsWelcome: Using cached result (${cached.result})`)
+      return cached.result
+    }
+    
     if (!supabaseAdmin) {
       console.error('[WelcomeFlow] needsWelcome: supabaseAdmin is null/undefined')
       return false
@@ -31,20 +43,59 @@ export async function needsWelcome(phoneNumber: string): Promise<boolean> {
     
     console.log(`[WelcomeFlow] needsWelcome: Querying database`)
     const queryStartTime = Date.now()
-    const { data } = await supabaseAdmin
-      .from('sms_optin')
-      .select('name, needs_name')
-      .eq('phone', phoneNumber)
-      .maybeSingle()
+    
+    // Add AbortController with 1.5s timeout
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => {
+      controller.abort()
+      console.error('[WelcomeFlow] needsWelcome: Query aborted after 1500ms')
+    }, 1500)
+    
+    let data: any = null
+    let error: any = null
+    
+    try {
+      const result = await supabaseAdmin
+        .from('sms_optin')
+        .select('name, needs_name')
+        .eq('phone', phoneNumber)
+        .maybeSingle()
+        .abortSignal(controller.signal)
+      
+      data = result.data
+      error = result.error
+    } catch (err: any) {
+      if (err.name === 'AbortError') {
+        console.error('[WelcomeFlow] needsWelcome: Query aborted due to timeout')
+        // On timeout, assume user exists (safer default)
+        return false
+      }
+      error = err
+    } finally {
+      clearTimeout(timeoutId)
+    }
+    
     const queryDuration = Date.now() - queryStartTime
     console.log(`[WelcomeFlow] needsWelcome: Query completed in ${queryDuration}ms, data=${data ? 'found' : 'null'}`)
 
+    if (error) {
+      console.error('[WelcomeFlow] needsWelcome: Query error:', error)
+      return false
+    }
+
     if (!data) {
       console.log('[WelcomeFlow] needsWelcome: No data found, returning true (new user)')
-      return true // New user
+      const result = true
+      welcomeCache.set(phoneNumber, { result, timestamp: Date.now() })
+      return result
     }
+    
     const result = !data.name || data.name.trim().length === 0 || data.needs_name === true
     console.log(`[WelcomeFlow] needsWelcome: Returning ${result} (name="${data.name}", needs_name=${data.needs_name})`)
+    
+    // Cache the result
+    welcomeCache.set(phoneNumber, { result, timestamp: Date.now() })
+    
     return result
   } catch (err) {
     console.error('[WelcomeFlow] Error checking welcome status:', err)
