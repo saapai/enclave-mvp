@@ -39,6 +39,31 @@ function limitEmojis(text: string, maxEmojis = 1): string {
   })
 }
 
+async function withTimeout<T>(
+  promise: Promise<T>,
+  ms: number,
+  label: string,
+  fallback: T
+): Promise<T> {
+  let timeoutId: NodeJS.Timeout | null = null
+  try {
+    const timeoutPromise = new Promise<T>((resolve) => {
+      timeoutId = setTimeout(() => {
+        console.error(`[UnifiedHandler] ${label} timed out after ${ms}ms`)
+        resolve(fallback)
+      }, ms)
+    })
+
+    const result = await Promise.race([promise, timeoutPromise])
+    if (timeoutId) clearTimeout(timeoutId)
+    return result
+  } catch (err) {
+    console.error(`[UnifiedHandler] ${label} threw an error:`, err)
+    if (timeoutId) clearTimeout(timeoutId)
+    return fallback
+  }
+}
+
 /**
  * Main handler for incoming SMS messages
  */
@@ -49,12 +74,24 @@ export async function handleSMSMessage(
 ): Promise<HandlerResult> {
   console.log(`[UnifiedHandler] Processing message from ${phoneNumber}: "${messageText}"`)
 
-  // Load conversation history
-  const history = await loadWeightedHistory(phoneNumber, 10)
+  // Load conversation history (timeout to avoid hanging on Supabase)
+  const history = await withTimeout(
+    loadWeightedHistory(phoneNumber, 10),
+    4000,
+    'loadWeightedHistory',
+    [] as ConversationMessage[]
+  )
+  console.log(`[UnifiedHandler] Loaded ${history.length} history messages`)
 
   // Check welcome flow first
-  const needsWelcomeFlow = await needsWelcome(phoneNumber)
+  const needsWelcomeFlow = await withTimeout(
+    needsWelcome(phoneNumber),
+    2000,
+    'needsWelcome',
+    false
+  )
   if (needsWelcomeFlow) {
+    console.log('[UnifiedHandler] User needs welcome flow')
     // Check if this is a name declaration
     const nameCheck = await checkNameDeclaration(messageText)
     if (nameCheck.isName && nameCheck.name) {
@@ -85,7 +122,18 @@ export async function handleSMSMessage(
   // Classify intent FIRST using LLM (it will detect follow-ups)
   console.log(`[UnifiedHandler] Classifying intent for: "${messageText}"`)
   const intentStartTime = Date.now()
-  const intent = await classifyIntent(messageText, history)
+  const intent = await withTimeout(
+    classifyIntent(messageText, history),
+    12000,
+    'classifyIntent',
+    {
+      type: 'content_query',
+      confidence: 0.1,
+      reasoning: 'Timeout fallback',
+      instructions: [],
+      needsGeneration: true
+    }
+  )
   const intentDuration = Date.now() - intentStartTime
   console.log(`[UnifiedHandler] Intent classified in ${intentDuration}ms: ${intent.type} (confidence: ${intent.confidence}, isFollowUp: ${intent.isFollowUp})`)
   
@@ -1028,14 +1076,19 @@ Answer factually based on the reference above.`
   // Save query to action memory BEFORE processing (so follow-ups can detect it's processing)
   console.log(`[UnifiedHandler] Saving query to action memory: "${messageText}"`)
   const saveStartTime = Date.now()
-  await saveAction(phoneNumber, {
-    type: 'query',
-    details: {
-      query: messageText,
-      queryResults: undefined, // Will be updated after processing
-      queryAnswer: undefined // Will be updated after processing
-    }
-  }).catch(err => console.error('[UnifiedHandler] Failed to save initial query action:', err))
+  await withTimeout(
+    saveAction(phoneNumber, {
+      type: 'query',
+      details: {
+        query: messageText,
+        queryResults: undefined, // Will be updated after processing
+        queryAnswer: undefined // Will be updated after processing
+      }
+    }),
+    3000,
+    'saveAction (initial)',
+    undefined
+  )
   const saveDuration = Date.now() - saveStartTime
   console.log(`[UnifiedHandler] Saved query to action memory in ${saveDuration}ms`)
   
@@ -1065,14 +1118,19 @@ Answer factually based on the reference above.`
     if (!result.messages || result.messages.length === 0) {
       console.error('[UnifiedHandler] Orchestrator returned no messages!')
       // Update action memory with failure
-      await saveAction(phoneNumber, {
-        type: 'query',
-        details: {
-          query: messageText,
-          queryResults: 0,
-          queryAnswer: undefined
-        }
-      }).catch(err => console.error('[UnifiedHandler] Failed to update action memory:', err))
+      await withTimeout(
+        saveAction(phoneNumber, {
+          type: 'query',
+          details: {
+            query: messageText,
+            queryResults: 0,
+            queryAnswer: undefined
+          }
+        }),
+        3000,
+        'saveAction (no messages)',
+        undefined
+      )
       
       return {
         response: "I couldn't find information about that.",
@@ -1089,14 +1147,19 @@ Answer factually based on the reference above.`
     if (!responseText || responseText.trim().length === 0) {
       console.error('[UnifiedHandler] Empty response text from orchestrator!')
       // Update action memory with failure
-      await saveAction(phoneNumber, {
-        type: 'query',
-        details: {
-          query: messageText,
-          queryResults: 0,
-          queryAnswer: undefined
-        }
-      }).catch(err => console.error('[UnifiedHandler] Failed to update action memory:', err))
+      await withTimeout(
+        saveAction(phoneNumber, {
+          type: 'query',
+          details: {
+            query: messageText,
+            queryResults: 0,
+            queryAnswer: undefined
+          }
+        }),
+        3000,
+        'saveAction (empty response)',
+        undefined
+      )
       
       return {
         response: "I couldn't find information about that.",
@@ -1125,14 +1188,19 @@ Answer factually based on the reference above.`
     }
     
     // Update action memory with results (await to ensure it's saved)
-    await saveAction(phoneNumber, {
-      type: 'query',
-      details: {
-        query: messageText,
-        queryResults: resultCount,
-        queryAnswer: queryAnswer
-      }
-    }).catch(err => console.error('[UnifiedHandler] Failed to update action memory:', err))
+    await withTimeout(
+      saveAction(phoneNumber, {
+        type: 'query',
+        details: {
+          query: messageText,
+          queryResults: resultCount,
+          queryAnswer: queryAnswer
+        }
+      }),
+      3000,
+      'saveAction (result)',
+      undefined
+    )
     
     return {
       response: responseText,
@@ -1154,14 +1222,19 @@ Answer factually based on the reference above.`
       : "I couldn't process that query. Please try again."
     
     // Update action memory with error
-    await saveAction(phoneNumber, {
-      type: 'query',
-      details: {
-        query: messageText,
-        queryResults: 0,
-        queryAnswer: undefined
-      }
-    }).catch(saveErr => console.error('[UnifiedHandler] Failed to update action memory on error:', saveErr))
+    await withTimeout(
+      saveAction(phoneNumber, {
+        type: 'query',
+        details: {
+          query: messageText,
+          queryResults: 0,
+          queryAnswer: undefined
+        }
+      }),
+      3000,
+      'saveAction (error)',
+      undefined
+    )
     
     return {
       response: errorMessage,
