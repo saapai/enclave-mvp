@@ -1101,23 +1101,21 @@ Answer factually based on the reference above.`
   }
   
   // Save query to action memory BEFORE processing (so follow-ups can detect it's processing)
-  console.log(`[UnifiedHandler] Saving query to action memory: "${messageText}"`)
-  const saveStartTime = Date.now()
-  await withTimeout(
-    saveAction(phoneNumber, {
-      type: 'query',
-      details: {
-        query: messageText,
-        queryResults: undefined, // Will be updated after processing
-        queryAnswer: undefined // Will be updated after processing
-      }
-    }),
-    3000,
-    'saveAction (initial)',
-    undefined
-  )
-  const saveDuration = Date.now() - saveStartTime
-  console.log(`[UnifiedHandler] Saved query to action memory in ${saveDuration}ms`)
+  console.log(`[UnifiedHandler] Saving query to action memory (async): "${messageText}"`)
+  saveAction(phoneNumber, {
+    type: 'query',
+    details: {
+      query: messageText,
+      queryResults: undefined, // Will be updated after processing
+      queryAnswer: undefined // Will be updated after processing
+    }
+  })
+    .then(() => {
+      console.log('[UnifiedHandler] Saved query to action memory (async)')
+    })
+    .catch(err => {
+      console.error('[UnifiedHandler] Failed to save initial query action:', err)
+    })
   
   try {
     // Use orchestrator for content query handling

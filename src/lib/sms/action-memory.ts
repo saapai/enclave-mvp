@@ -29,6 +29,7 @@ export async function saveAction(
   action: Omit<ActionMemory, 'timestamp'>
 ): Promise<void> {
   try {
+    console.log(`[ActionMemory] Saving action for ${phoneNumber}: ${action.type}`)
     const { error } = await supabaseAdmin
       .from('sms_action_memory')
       .insert({
@@ -40,6 +41,8 @@ export async function saveAction(
     
     if (error) {
       console.error('[ActionMemory] Failed to save action:', error)
+    } else {
+      console.log('[ActionMemory] Action saved successfully')
     }
   } catch (err) {
     console.error('[ActionMemory] Failed to save action:', err)
