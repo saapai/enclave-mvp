@@ -861,10 +861,16 @@ export async function POST(request: NextRequest) {
             console.log(`[Twilio SMS] Sending ${messages.length} async message(s) to user at ${from}`)
             
             // Send via Twilio API
+            // Add small delay between messages to avoid rate limiting
             for (let i = 0; i < messages.length; i++) {
               const message = messages[i]
               try {
-                console.log(`[Twilio SMS] Sending async message ${i + 1}/${messages.length} (length: ${message.length})`)
+                // Add delay between messages (except first one)
+                if (i > 0) {
+                  await new Promise(resolve => setTimeout(resolve, 500)) // 500ms delay
+                }
+                
+                console.log(`[Twilio SMS] Sending async message ${i + 1}/${messages.length} to ${from} (length: ${message.length})`)
                 const smsResult = await sendSms(from, message, { retries: 1, retryDelay: 2000 })
                 if (smsResult.ok) {
                   if (smsResult.deliveryError) {

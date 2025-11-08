@@ -161,7 +161,9 @@ export async function handleSMSMessage(
   console.log(`[UnifiedHandler] Intent classified in ${intentDuration}ms: ${intent.type} (confidence: ${intent.confidence}, isFollowUp: ${intent.isFollowUp})`)
   
   // Handle follow-up queries based on LLM classification
-  if (intent.type === 'follow_up_query' || intent.isFollowUp) {
+  // IMPORTANT: Only treat as follow-up if intent is EXPLICITLY follow_up_query
+  // Don't treat content_query with isFollowUp=true as follow-up - that's just LLM detecting context
+  if (intent.type === 'follow_up_query') {
     console.log(`[UnifiedHandler] Detected follow-up question, checking action memory`)
     const { getRecentActions } = await import('./action-memory')
     const recentActions = await getRecentActions(phoneNumber, 10)
