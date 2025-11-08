@@ -9,6 +9,17 @@ const DEFAULT_SPACE_ID = '00000000-0000-0000-0000-000000000000'
 interface WorkspaceOptions {
   phoneNumber?: string
   includeSepFallback?: boolean
+  includePhoneLookup?: boolean
+}
+
+type AppUserRow = {
+  space_id: string | null
+  phone: string | null
+}
+
+type SpaceRow = {
+  id: string | null
+  name: string | null
 }
 
 function normalizeDigits(phone: string): string {
@@ -34,52 +45,83 @@ export async function getWorkspaceIds(options: WorkspaceOptions = {}): Promise<s
   const tasks: Promise<void>[] = []
 
   // Lookup by phone -> app_user.phone
-  if (options.phoneNumber) {
+  if (options.phoneNumber && options.includePhoneLookup !== false) {
     const digits = normalizeDigits(options.phoneNumber)
     if (digits.length === 10) {
       tasks.push((async () => {
         try {
+          console.log('[Workspace] Querying app_user for phone digits:', digits)
+          const controller = new AbortController()
+          const timeoutId = setTimeout(() => {
+            controller.abort()
+            console.error('[Workspace] app_user lookup timed out after 3000ms')
+          }, 3000)
+
           const { data, error } = await client
             .from('app_user')
             .select('space_id, phone')
-            .not('phone', 'is', null)
+            .ilike('phone', `%${digits}`)
+            .limit(25)
+            .abortSignal(controller.signal)
+
+          clearTimeout(timeoutId)
 
           if (error) {
             console.error('[Workspace] app_user lookup failed:', error)
             return
           }
 
-          (data || []).forEach(row => {
-            if (!row?.space_id) return
+          const rows = (data ?? []) as AppUserRow[]
+          console.log(`[Workspace] app_user lookup returned ${rows.length} rows`)
+          for (const row of rows) {
+            if (!row?.space_id) continue
             const rowDigits = normalizeDigits(String(row.phone || ''))
             if (rowDigits === digits) {
               resolved.add(row.space_id)
             }
-          })
+          }
         } catch (err) {
           console.error('[Workspace] Error resolving phone-based workspaces:', err)
         }
       })())
+    } else {
+      console.log('[Workspace] Phone digits invalid, skipping phone lookup')
     }
+  } else if (options.phoneNumber) {
+    console.log('[Workspace] Skipping phone lookup (disabled via options)')
   }
 
   // Optional SEP fallback (enabled by default)
   if (options.includeSepFallback !== false) {
     tasks.push((async () => {
       try {
+        console.log('[Workspace] Querying SEP workspaces')
+        const controller = new AbortController()
+        const timeoutId = setTimeout(() => {
+          controller.abort()
+          console.error('[Workspace] SEP workspace lookup timed out after 3000ms')
+        }, 3000)
+
         const { data, error } = await client
           .from('space')
           .select('id, name')
           .ilike('name', '%SEP%')
+          .abortSignal(controller.signal)
+
+        clearTimeout(timeoutId)
 
         if (error) {
           console.error('[Workspace] SEP workspace lookup failed:', error)
           return
         }
 
-        (data || []).forEach(space => {
-          if (space?.id) resolved.add(space.id)
-        })
+        const rows = (data ?? []) as SpaceRow[]
+        console.log(`[Workspace] SEP lookup returned ${rows.length} rows`)
+        for (const space of rows) {
+          if (space?.id) {
+            resolved.add(space.id)
+          }
+        }
       } catch (err) {
         console.error('[Workspace] Error retrieving SEP workspaces:', err)
       }
@@ -87,10 +129,12 @@ export async function getWorkspaceIds(options: WorkspaceOptions = {}): Promise<s
   }
 
   await Promise.all(tasks)
+  console.log('[Workspace] Workspace resolution after tasks:', Array.from(resolved))
 
   // Final fallback: grab a few spaces if we only have the default
   if (resolved.size === 1) {
     try {
+      console.log('[Workspace] Running fallback workspace query (limit 10)')
       const { data, error } = await client
         .from('space')
         .select('id, name')
@@ -99,9 +143,13 @@ export async function getWorkspaceIds(options: WorkspaceOptions = {}): Promise<s
       if (error) {
         console.error('[Workspace] Fallback workspace lookup failed:', error)
       } else {
-        (data || []).forEach(space => {
-          if (space?.id) resolved.add(space.id)
-        })
+        const rows = (data ?? []) as SpaceRow[]
+        console.log(`[Workspace] Fallback lookup returned ${rows.length} rows`)
+        for (const space of rows) {
+          if (space?.id) {
+            resolved.add(space.id)
+          }
+        }
       }
     } catch (err) {
       console.error('[Workspace] Error retrieving fallback workspaces:', err)
