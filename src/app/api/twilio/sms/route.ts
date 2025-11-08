@@ -806,33 +806,33 @@ export async function POST(request: NextRequest) {
         // Process query asynchronously (don't await)
         console.log(`[Twilio SMS] [${traceId}] Starting async handler for content query: "${body.substring(0, 50)}"`)
         
-        // WATCHDOG: 7s timeout to prevent silent hangs
-        let watchdogFired = false
-        const watchdog = setTimeout(async () => {
-          watchdogFired = true
-          console.error(`[Twilio SMS] [${traceId}] WATCHDOG: content_query exceeded 7s, sending degraded reply`)
-          try {
-            await sendSms(from, "I'm fetching that. Try again in a few seconds if I don't reply.", { retries: 1, retryDelay: 2000 })
-            console.log(`[Twilio SMS] [${traceId}] Watchdog message sent`)
-          } catch (err) {
-            console.error(`[Twilio SMS] [${traceId}] Failed to send watchdog message:`, err)
-          }
-        }, 7000) // 7 second watchdog
+      // WATCHDOG: 4s timeout to prevent silent hangs (must be well under Vercel's 10s limit)
+      let watchdogFired = false
+      const watchdog = setTimeout(async () => {
+        watchdogFired = true
+        console.error(`[Twilio SMS] [${traceId}] WATCHDOG: content_query exceeded 4s, sending degraded reply`)
+        try {
+          await sendSms(from, "Still searching... this is taking longer than expected. I'll keep trying.", { retries: 1, retryDelay: 2000 })
+          console.log(`[Twilio SMS] [${traceId}] Watchdog message sent`)
+        } catch (err) {
+          console.error(`[Twilio SMS] [${traceId}] Failed to send watchdog message:`, err)
+        }
+      }, 4000) // 4 second watchdog (leaves 6s for cleanup before Vercel kills us)
         
-        // Set a longer timeout for final error message
-        let timeoutFired = false
-        const asyncTimeout = setTimeout(async () => {
-          timeoutFired = true
-          console.error(`[Twilio SMS] [${traceId}] Async handler timeout after 30s for query: "${body.substring(0, 50)}"`)
-          if (!watchdogFired) {
-            try {
-              await sendSms(from, "Sorry, that query took too long. Please try again.", { retries: 1, retryDelay: 2000 })
-              console.log(`[Twilio SMS] [${traceId}] Timeout message sent`)
-            } catch (err) {
-              console.error(`[Twilio SMS] [${traceId}] Failed to send timeout message:`, err)
-            }
+      // Set a hard timeout before Vercel kills us
+      let timeoutFired = false
+      const asyncTimeout = setTimeout(async () => {
+        timeoutFired = true
+        console.error(`[Twilio SMS] [${traceId}] Async handler timeout after 8s for query: "${body.substring(0, 50)}"`)
+        if (!watchdogFired) {
+          try {
+            await sendSms(from, "Sorry, that query took too long. Please try a simpler question.", { retries: 1, retryDelay: 2000 })
+            console.log(`[Twilio SMS] [${traceId}] Timeout message sent`)
+          } catch (err) {
+            console.error(`[Twilio SMS] [${traceId}] Failed to send timeout message:`, err)
           }
-        }, 30000) // 30 second timeout
+        }
+      }, 8000) // 8 second timeout (2s buffer before Vercel's 10s limit)
         
         // Re-process the message asynchronously
         // Pass the already-classified intent to avoid redundant LLM call
