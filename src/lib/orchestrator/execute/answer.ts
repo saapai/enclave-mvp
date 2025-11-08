@@ -6,11 +6,13 @@
 
 import { TurnFrame, ContextEnvelope } from '../types'
 import { searchResourcesHybrid } from '@/lib/search'
-import { SearchResult } from '@/lib/database.types'
 import { planQuery, composeResponse, executePlan } from '@/lib/planner'
 import { getWorkspaceIds } from '@/lib/workspace'
 import { pTimeout, safeAll, generateTraceId } from '@/lib/utils'
 import pLimit from 'p-limit'
+
+// SearchResult type from search results
+type SearchResult = Awaited<ReturnType<typeof searchResourcesHybrid>>[number]
 
 export interface ExecuteResult {
   messages: string[]
