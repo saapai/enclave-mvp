@@ -8,6 +8,7 @@ import { TurnFrame, ContextEnvelope } from '../types'
 import { searchResourcesHybrid } from '@/lib/search'
 import { planQuery, composeResponse, executePlan } from '@/lib/planner'
 import { getWorkspaceIds } from '@/lib/workspace'
+import { pTimeout, safeAll, generateTraceId } from '@/lib/utils'
 
 export interface ExecuteResult {
   messages: string[]
@@ -21,100 +22,148 @@ export async function executeAnswer(
   frame: TurnFrame,
   envelope: ContextEnvelope
 ): Promise<ExecuteResult> {
+  const traceId = generateTraceId()
   const overallStart = Date.now()
-  console.log('[Execute Answer] Starting executeAnswer')
-  console.log('[Execute Answer] Frame user ID:', frame.user.id)
+  console.log(`[Execute Answer] [${traceId}] Starting executeAnswer`)
+  console.log(`[Execute Answer] [${traceId}] Frame user ID:`, frame.user.id)
   const query = frame.text
   
-  // Get workspace IDs
-  const workspaceStart = Date.now()
-  console.log('[Execute Answer] About to call getWorkspaceIds')
-  const spaceIds = await getWorkspaceIds({
-    phoneNumber: frame.user.id,
-    includeSepFallback: true,
-    includePhoneLookup: false
-  })
-  console.log(`[Execute Answer] Retrieved ${spaceIds.length} workspace ids in ${Date.now() - workspaceStart}ms`)
-  console.log('[Execute Answer] Workspace IDs:', spaceIds)
-  if (spaceIds.length === 0) {
-    return {
-      messages: ['I couldn\'t find any workspaces. Please contact support.']
-    }
-  }
-  
-  // Cross-workspace search
-  console.log(`[Execute Answer] Starting hybrid search across ${spaceIds.length} workspaces`)
-  const allResults = []
-  for (const spaceId of spaceIds) {
-    const searchStart = Date.now()
-    console.log(`[Execute Answer] Searching workspace ${spaceId} for query: "${query}"`)
-    try {
-      const results = await searchResourcesHybrid(
-        query,
-        spaceId,
-        {},
-        { limit: 5, offset: 0 },
-        undefined
-      )
-      console.log(`[Execute Answer] searchResourcesHybrid for space ${spaceId} returned ${results.length} results in ${Date.now() - searchStart}ms`)
-      if (results.length > 0) {
-        console.log(`[Execute Answer] Top result for space ${spaceId}:`, {
-          title: results[0]?.title,
-          type: results[0]?.type,
-          score: results[0]?.score,
-          source: (results[0] as any)?.source
-        })
-      }
-      if (results.length === 0) {
-        console.warn(`[Execute Answer] No results found for space ${spaceId}`)
-      }
-      allResults.push(...results)
-    } catch (err) {
-      console.error(`[Execute Answer] Error searching workspace ${spaceId}:`, err)
-    }
-  }
-
-  console.log(`[Execute Answer] Total aggregated results: ${allResults.length}`)
-
-  // Deduplicate
-  const uniqueResultsMap = new Map()
-  for (const result of allResults) {
-    if (!uniqueResultsMap.has(result.id)) {
-      uniqueResultsMap.set(result.id, result)
-    }
-  }
-  const dedupedResults = Array.from(uniqueResultsMap.values())
-    .sort((a, b) => (b.score || b.rank || 0) - (a.score || a.rank || 0))
-    .slice(0, 3)
-
-  if (dedupedResults.length > 0) {
-    console.log('[Execute Answer] Deduped top results:', dedupedResults.map(r => ({
-      id: r.id,
-      title: r.title,
-      score: r.score,
-      type: r.type
-    })))
-  } else {
-    console.warn('[Execute Answer] No deduped results available after aggregation')
-  }
-  
-  // Use planner-based flow
   try {
-    const planStart = Date.now()
-    const plan = await planQuery(query, spaceIds[0])
-    console.log(`[Execute Answer] planQuery completed in ${Date.now() - planStart}ms (intent=${plan.intent}, confidence=${plan.confidence})`)
+    // Get workspace IDs with timeout
+    const workspaceStart = Date.now()
+    console.log(`[Execute Answer] [${traceId}] About to call getWorkspaceIds`)
+    const spaceIds = await pTimeout(
+      getWorkspaceIds({
+        phoneNumber: frame.user.id,
+        includeSepFallback: true,
+        includePhoneLookup: false
+      }),
+      2500, // 2.5s cap on workspace resolution
+      'getWorkspaceIds'
+    ).catch(() => {
+      console.error(`[Execute Answer] [${traceId}] getWorkspaceIds timed out or failed`)
+      return []
+    })
     
-    // Execute plan across all workspaces and combine results
-    const allToolResults: any[] = []
-    for (const spaceId of spaceIds) {
-      const executePlanStart = Date.now()
-      const toolResults = await executePlan(plan, spaceId)
-      console.log(`[Execute Answer] executePlan returned ${toolResults.length} tool results for space ${spaceId} in ${Date.now() - executePlanStart}ms`)
-      if (toolResults.length > 0) {
-        console.log(`[Execute Answer] Tool summary for space ${spaceId}:`, toolResults.map(t => ({ tool: t.tool, success: t.success, confidence: t.confidence, resultCount: t.data?.results?.length })))
+    const workspaceDuration = Date.now() - workspaceStart
+    console.log(`[Execute Answer] [${traceId}] Retrieved ${spaceIds.length} workspace ids in ${workspaceDuration}ms`)
+    console.log(`[Execute Answer] [${traceId}] Workspace IDs:`, spaceIds)
+    
+    // Early exit if no workspaces
+    if (spaceIds.length === 0) {
+      console.warn(`[Execute Answer] [${traceId}] No workspaces found, returning early`)
+      return {
+        messages: ["I don't have a workspace linked for you yet. Please contact support to get set up."]
       }
-      allToolResults.push(...toolResults)
     }
+    
+    // Cross-workspace search using Promise.allSettled + timeouts (prevents one slow workspace from hanging everything)
+    console.log(`[Execute Answer] [${traceId}] Starting hybrid search across ${spaceIds.length} workspaces`)
+    const searchPromises = spaceIds.map((spaceId) =>
+      pTimeout(
+        (async () => {
+          const searchStart = Date.now()
+          console.log(`[Execute Answer] [${traceId}] Searching workspace ${spaceId} for query: "${query}"`)
+          try {
+            const results = await searchResourcesHybrid(
+              query,
+              spaceId,
+              {},
+              { limit: 5, offset: 0 },
+              undefined
+            )
+            const searchDuration = Date.now() - searchStart
+            console.log(`[Execute Answer] [${traceId}] searchResourcesHybrid for space ${spaceId} returned ${results.length} results in ${searchDuration}ms`)
+            if (results.length > 0) {
+              console.log(`[Execute Answer] [${traceId}] Top result for space ${spaceId}:`, {
+                title: results[0]?.title,
+                type: results[0]?.type,
+                score: results[0]?.score,
+                source: (results[0] as any)?.source
+              })
+            }
+            return results
+          } catch (err) {
+            console.error(`[Execute Answer] [${traceId}] Error searching workspace ${spaceId}:`, err)
+            return []
+          }
+        })(),
+        2500, // 2.5s timeout per workspace search
+        `hybrid_search:${spaceId}`
+      ).catch(() => {
+        console.error(`[Execute Answer] [${traceId}] Workspace ${spaceId} search timed out`)
+        return []
+      })
+    )
+    
+    // Use safeAll to get all results (even if some timed out)
+    const allResultsArrays = await safeAll(searchPromises)
+    const allResults = allResultsArrays.flat()
+
+    console.log(`[Execute Answer] [${traceId}] Total aggregated results: ${allResults.length}`)
+
+    // Deduplicate
+    const uniqueResultsMap = new Map()
+    for (const result of allResults) {
+      if (!uniqueResultsMap.has(result.id)) {
+        uniqueResultsMap.set(result.id, result)
+      }
+    }
+    const dedupedResults = Array.from(uniqueResultsMap.values())
+      .sort((a, b) => (b.score || b.rank || 0) - (a.score || a.rank || 0))
+      .slice(0, 3)
+
+    if (dedupedResults.length > 0) {
+      console.log(`[Execute Answer] [${traceId}] Deduped top results:`, dedupedResults.map(r => ({
+        id: r.id,
+        title: r.title,
+        score: r.score,
+        type: r.type
+      })))
+    } else {
+      console.warn(`[Execute Answer] [${traceId}] No deduped results available after aggregation`)
+    }
+    
+    // Use planner-based flow with timeout
+    const planStart = Date.now()
+    const plan = await pTimeout(
+      planQuery(query, spaceIds[0]),
+      3000, // 3s timeout for planning
+      'planQuery'
+    ).catch(() => {
+      console.error(`[Execute Answer] [${traceId}] planQuery timed out, using fallback`)
+      return {
+        intent: 'doc_search' as const,
+        confidence: 0.5,
+        entities: {},
+        tools: [{ tool: 'search_docs', params: { query }, priority: 1 }]
+      }
+    })
+    
+    console.log(`[Execute Answer] [${traceId}] planQuery completed in ${Date.now() - planStart}ms (intent=${plan.intent}, confidence=${plan.confidence})`)
+    
+    // Execute plan across all workspaces using Promise.allSettled + timeouts
+    const executePlanPromises = spaceIds.map((spaceId) =>
+      pTimeout(
+        (async () => {
+          const executePlanStart = Date.now()
+          const toolResults = await executePlan(plan, spaceId)
+          console.log(`[Execute Answer] [${traceId}] executePlan returned ${toolResults.length} tool results for space ${spaceId} in ${Date.now() - executePlanStart}ms`)
+          if (toolResults.length > 0) {
+            console.log(`[Execute Answer] [${traceId}] Tool summary for space ${spaceId}:`, toolResults.map(t => ({ tool: t.tool, success: t.success, confidence: t.confidence, resultCount: t.data?.results?.length })))
+          }
+          return toolResults
+        })(),
+        3000, // 3s timeout per workspace plan execution
+        `executePlan:${spaceId}`
+      ).catch(() => {
+        console.error(`[Execute Answer] [${traceId}] executePlan for space ${spaceId} timed out`)
+        return []
+      })
+    )
+    
+    const allToolResultsArrays = await safeAll(executePlanPromises)
+    const allToolResults = allToolResultsArrays.flat()
     
     // Deduplicate tool results by tool name and keep highest confidence
     const toolResultsMap = new Map<string, any>()
@@ -148,19 +197,33 @@ export async function executeAnswer(
       }]
     }
     
-    // Compose response
-    const composed = await composeResponse(query, plan, toolResults)
-    console.log(`[Execute Answer] Composed response: text length=${composed.text?.length || 0}, intent=${plan.intent}, toolResults=${toolResults.length}`)
-    console.log(`[Execute Answer] Composed text preview: "${composed.text?.substring(0, 200)}"`)
+    // Compose response with timeout
+    const composeStart = Date.now()
+    const composed = await pTimeout(
+      composeResponse(query, plan, allToolResults),
+      3000, // 3s timeout for composition
+      'composeResponse'
+    ).catch(() => {
+      console.error(`[Execute Answer] [${traceId}] composeResponse timed out, using fallback`)
+      return {
+        text: "I'm having trouble processing that right now. Please try again.",
+        sources: [],
+        confidence: 0,
+        needsClarification: false
+      }
+    })
+    
+    console.log(`[Execute Answer] [${traceId}] Composed response in ${Date.now() - composeStart}ms: text length=${composed.text?.length || 0}, intent=${plan.intent}, toolResults=${allToolResults.length}`)
+    console.log(`[Execute Answer] [${traceId}] Composed text preview: "${composed.text?.substring(0, 200)}"`)
     
     // Check if we have actual document results but composed text is fallback
-    const hasDocumentResults = toolResults.length > 0 && toolResults[0].data?.results && toolResults[0].data.results.length > 0
+    const hasDocumentResults = allToolResults.length > 0 && allToolResults[0].data?.results && allToolResults[0].data.results.length > 0
     const isFallbackMessage = composed.text?.includes("I couldn't find") || composed.text?.length < 50
     
     if (hasDocumentResults && isFallbackMessage) {
-      console.log(`[Execute Answer] WARNING: Found documents but composer returned fallback. Using document content directly.`)
+      console.log(`[Execute Answer] [${traceId}] WARNING: Found documents but composer returned fallback. Using document content directly.`)
       // Extract document content directly
-      const topResult = toolResults[0].data.results[0]
+      const topResult = allToolResults[0].data.results[0]
       if (topResult?.body) {
         composed.text = topResult.body
         console.log(`[Execute Answer] Using document body directly, length: ${topResult.body.length}`)
@@ -176,7 +239,7 @@ export async function executeAnswer(
     // For event_lookup, ALWAYS use AI if we have document results
     // Only use composed text directly if it's already a good summary (not a fallback or raw document)
     if (plan.intent === 'event_lookup') {
-      const hasDocs = toolResults.length > 0 && toolResults[0].data?.results && toolResults[0].data.results.length > 0
+      const hasDocs = allToolResults.length > 0 && allToolResults[0].data?.results && allToolResults[0].data.results.length > 0
       const isGoodSummary = composed.text && 
                              composed.text.length > 10 && 
                              composed.text.length < 500 && 
@@ -186,7 +249,7 @@ export async function executeAnswer(
       // If we have documents, always try AI (unless already a good summary)
       if (hasDocs && !isGoodSummary) {
         // Too long or raw document, try AI summarization with timeout, then fallback to document
-        const allResults = toolResults[0].data.results
+        const allResults = allToolResults[0].data.results
         const topResult = allResults[0]
         
         // Extract document snippet first (in case AI fails)
@@ -294,9 +357,9 @@ export async function executeAnswer(
         // No results, use composed fallback
         finalText = composed.text || "I couldn't find any upcoming events matching that."
       }
-    } else if (plan.intent !== 'chat' && toolResults.length > 0 && toolResults[0].data?.results) {
+    } else if (plan.intent !== 'chat' && allToolResults.length > 0 && allToolResults[0].data?.results) {
       // AI summarization for doc search results (non-event queries)
-      const allResults = toolResults[0].data.results
+      const allResults = allToolResults[0].data.results
       
       // Try each result in order
       for (const result of allResults) {
@@ -369,9 +432,9 @@ export async function executeAnswer(
       if (!finalText || finalText === composed.text) {
         finalText = allResults[0]?.body || allResults[0]?.title || composed.text
       }
-    } else if (plan.intent === 'chat' && toolResults.length > 0 && toolResults[0].data?.results) {
+    } else if (plan.intent === 'chat' && allToolResults.length > 0 && allToolResults[0].data?.results) {
       // For chat intent with results, try to summarize concisely
-      const allResults = toolResults[0].data.results
+      const allResults = allToolResults[0].data.results
       const topResult = allResults[0]
       
       if (topResult?.body && topResult.body.length > 100) {
@@ -435,34 +498,35 @@ export async function executeAnswer(
     
     // If still empty, use fallbacks
     if (!responseMessage || responseMessage.length < 10) {
-      console.error(`[Execute Answer] Empty or too short response. Composed: "${composed.text?.substring(0, 100)}", Final: "${finalText?.substring(0, 100)}"`)
+      console.warn(`[Execute Answer] [${traceId}] Empty or too short response. Composed: "${composed.text?.substring(0, 100)}", Final: "${finalText?.substring(0, 100)}"`)
       
       // Try to get something from results
-      if (toolResults.length > 0 && toolResults[0].data?.results && toolResults[0].data.results.length > 0) {
-        const firstResult = toolResults[0].data.results[0]
+      if (allToolResults.length > 0 && allToolResults[0].data?.results && allToolResults[0].data.results.length > 0) {
+        const firstResult = allToolResults[0].data.results[0]
         responseMessage = firstResult.body?.substring(0, 500) || firstResult.title || ''
       }
       
       // Final fallback
       if (!responseMessage || responseMessage.length < 10) {
-        responseMessage = 'I couldn\'t find information about that. Try asking about events, policies, or people.'
+        responseMessage = "I didn't find that in our docs yet. Try asking with different words or contact support to add resources."
       }
     }
     
-    console.log(`[Execute Answer] Returning response: length=${responseMessage.length}, preview="${responseMessage.substring(0, 100)}..."`)
+    const overallDuration = Date.now() - overallStart
+    console.log(`[Execute Answer] [${traceId}] Completed in ${overallDuration}ms, response length: ${responseMessage.length}, preview="${responseMessage.substring(0, 100)}..."`)
     
     return {
       messages: [responseMessage],
       // Mode stays the same (if in ANNOUNCEMENT_INPUT, stay there)
       newMode: frame.state.mode
     }
-  } catch (error) {
-    console.error(`[Execute Answer] Error:`, error)
+  } catch (err) {
+    const overallDuration = Date.now() - overallStart
+    console.error(`[Execute Answer] [${traceId}] Error after ${overallDuration}ms:`, err)
+    // ALWAYS return something, even on error
     return {
-      messages: ['I couldn\'t process that request. Try asking about events, policies, or people.']
+      messages: ["I'm having trouble processing that right now. Please try again or contact support if the issue persists."]
     }
-  } finally {
-    console.log(`[Execute Answer] Finished executeAnswer in ${Date.now() - overallStart}ms`)
   }
 }
 

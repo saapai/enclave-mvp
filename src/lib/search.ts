@@ -11,6 +11,40 @@ const searchClient = supabaseAdmin!
 // Feature flag: Enable reranking with time decay + authority
 const USE_RERANKING = process.env.USE_RERANKING === 'true'
 
+const DEFAULT_TIMEOUT_MS = Number(process.env.SEARCH_DEFAULT_TIMEOUT_MS || '4000')
+const VECTOR_TIMEOUT_MS = Number(process.env.SEARCH_VECTOR_TIMEOUT_MS || DEFAULT_TIMEOUT_MS.toString())
+const FTS_TIMEOUT_MS = Number(process.env.SEARCH_FTS_TIMEOUT_MS || DEFAULT_TIMEOUT_MS.toString())
+const CALENDAR_TIMEOUT_MS = Number(process.env.SEARCH_CALENDAR_TIMEOUT_MS || '3500')
+const GDOC_TIMEOUT_MS = Number(process.env.SEARCH_GDOC_TIMEOUT_MS || '3500')
+
+function isAbortError(err: unknown): boolean {
+  return err instanceof Error && err.name === 'AbortError'
+}
+
+async function runWithAbort<T>(
+  label: string,
+  timeoutMs: number,
+  executor: (signal: AbortSignal) => Promise<T>
+): Promise<T | null> {
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => {
+    controller.abort()
+    console.error(`[Hybrid Search] ${label} timed out after ${timeoutMs}ms`)
+  }, timeoutMs)
+
+  try {
+    return await executor(controller.signal)
+  } catch (err) {
+    if (isAbortError(err)) {
+      console.error(`[Hybrid Search] ${label} aborted due to timeout`)
+      return null
+    }
+    throw err
+  } finally {
+    clearTimeout(timeoutId)
+  }
+}
+
 export interface SearchFilters {
   type?: string
   tags?: string[]
@@ -77,23 +111,39 @@ export async function searchResourcesHybrid(
     const DEFAULT_SPACE_ID = '00000000-0000-0000-0000-000000000000'
     const shouldFilterByUser = spaceId === DEFAULT_SPACE_ID
     
-    const { data: resourceVectorResults, error: vectorError } = await searchClient
-      .rpc('search_resources_vector', {
-        query_embedding: queryEmbedding,
-        target_space_id: spaceId,
-        limit_count: limit * 2,
-        offset_count: 0,
-        target_user_id: shouldFilterByUser ? userId : null  // Filter by user only in personal workspace
-      })
-    
+    let resourceVectorResults: any[] | null = null
+    let vectorError: any = null
+    const vectorResponse = await runWithAbort<{ data: any[] | null; error: any }>(
+      'search_resources_vector',
+      VECTOR_TIMEOUT_MS,
+      (signal) =>
+        searchClient
+          .rpc('search_resources_vector', {
+            query_embedding: queryEmbedding,
+            target_space_id: spaceId,
+            limit_count: limit * 2,
+            offset_count: 0,
+            target_user_id: shouldFilterByUser ? userId : null // Filter by user only in personal workspace
+          })
+          .abortSignal(signal)
+          .then((res) => res as { data: any[] | null; error: any })
+    )
+
+    if (vectorResponse) {
+      resourceVectorResults = vectorResponse.data
+      vectorError = vectorResponse.error
+    } else {
+      console.warn(`[Vector Search] RPC timed out for space ${spaceId}`)
+    }
+
     if (vectorError) {
       console.error('[Vector Search] RPC error:', vectorError)
     } else {
       console.log(`[Vector Search] RPC returned ${resourceVectorResults?.length || 0} resource matches`)
       if (resourceVectorResults && resourceVectorResults.length > 0) {
-        console.log(`[Vector Search] First match:`, { 
-          title: resourceVectorResults[0].title, 
-          similarity: resourceVectorResults[0].similarity 
+        console.log(`[Vector Search] First match:`, {
+          title: resourceVectorResults[0].title,
+          similarity: resourceVectorResults[0].similarity
         })
       }
     }
@@ -113,24 +163,40 @@ export async function searchResourcesHybrid(
     // For custom workspaces, allow searching all resources in that workspace
     const shouldFilterGoogleDocsByUser = spaceId === DEFAULT_SPACE_ID
     
-    const { data: googleDocsResults, error: gdError } = await searchClient
-      .rpc('search_google_docs_vector', {
-        query_embedding: queryEmbedding,
-        target_space_id: spaceId,
-        limit_count: limit * 2,
-        offset_count: 0,
-        target_user_id: shouldFilterGoogleDocsByUser ? userId : null
-      })
+    let googleDocsResults: any[] | null = null
+    let gdError: any = null
+    const gdocResponse = await runWithAbort<{ data: any[] | null; error: any }>(
+      'search_google_docs_vector',
+      GDOC_TIMEOUT_MS,
+      (signal) =>
+        searchClient
+          .rpc('search_google_docs_vector', {
+            query_embedding: queryEmbedding,
+            target_space_id: spaceId,
+            limit_count: limit * 2,
+            offset_count: 0,
+            target_user_id: shouldFilterGoogleDocsByUser ? userId : null
+          })
+          .abortSignal(signal)
+          .then((res) => res as { data: any[] | null; error: any })
+    )
+
+    if (gdocResponse) {
+      googleDocsResults = gdocResponse.data
+      gdError = gdocResponse.error
+    } else {
+      console.warn(`[GDocs Search] RPC timed out for space ${spaceId}`)
+    }
 
     if (gdError) {
       console.error('[GDocs Search] RPC error:', gdError)
     } else {
       console.log(`[GDocs Search] RPC returned ${googleDocsResults?.length || 0} chunks`)
       if (googleDocsResults && googleDocsResults.length > 0) {
-        console.log(`[GDocs Search] First chunk:`, { 
-          text_preview: googleDocsResults[0].text?.substring(0, 100), 
+        console.log(`[GDocs Search] First chunk:`, {
+          text_preview: googleDocsResults[0].text?.substring(0, 100),
           added_by: googleDocsResults[0].added_by,
-          similarity: googleDocsResults[0].similarity 
+          similarity: googleDocsResults[0].similarity
         })
       }
     }
@@ -140,14 +206,30 @@ export async function searchResourcesHybrid(
     // For custom workspaces, allow searching all events in that workspace
     const shouldFilterCalendarByUser = spaceId === DEFAULT_SPACE_ID
     
-    const { data: calendarResults, error: calError } = await searchClient
-      .rpc('search_calendar_events_vector', {
-        query_embedding: queryEmbedding,
-        target_space_id: spaceId,
-        limit_count: limit * 2,
-        offset_count: 0,
-        target_user_id: shouldFilterCalendarByUser ? userId : null
-      })
+    let calendarResults: any[] | null = null
+    let calError: any = null
+    const calendarResponse = await runWithAbort<{ data: any[] | null; error: any }>(
+      'search_calendar_events_vector',
+      CALENDAR_TIMEOUT_MS,
+      (signal) =>
+        searchClient
+          .rpc('search_calendar_events_vector', {
+            query_embedding: queryEmbedding,
+            target_space_id: spaceId,
+            limit_count: limit * 2,
+            offset_count: 0,
+            target_user_id: shouldFilterCalendarByUser ? userId : null
+          })
+          .abortSignal(signal)
+          .then((res) => res as { data: any[] | null; error: any })
+    )
+
+    if (calendarResponse) {
+      calendarResults = calendarResponse.data
+      calError = calendarResponse.error
+    } else {
+      console.warn(`[Calendar Search] RPC timed out for space ${spaceId}`)
+    }
 
     if (calError) {
       console.error('Calendar search error:', calError)
@@ -393,21 +475,28 @@ export async function searchResources(
     console.log(`[FTS Search] Query: "${query}", Space: ${spaceId}, User: ${userId}`)
     
     // First, check what resources exist in the database
-    const { data: allResources, error: checkError } = await dbClient
-      .from('resource')
-      .select('id, title, body, created_by, source, type')
-      .eq('space_id', spaceId)
-    
-    console.log(`[FTS Search] Total resources in DB: ${allResources?.length || 0}`)
-    if (allResources && allResources.length > 0) {
-      console.log(`[FTS Search] Resources by source:`, allResources.reduce((acc: any, r: any) => {
-        acc[r.source] = (acc[r.source] || 0) + 1
-        return acc
-      }, {}))
-      const userResources = allResources.filter((r: any) => r.created_by === userId)
-      console.log(`[FTS Search] User's resources: ${userResources.length}`)
-      if (userResources.length > 0) {
-        console.log(`[FTS Search] User resource titles:`, userResources.map((r: any) => r.title))
+    if (process.env.SEARCH_DEBUG === 'true') {
+      const { data: allResources, error: checkError } = await dbClient
+        .from('resource')
+        .select('id, title, body, created_by, source, type')
+        .eq('space_id', spaceId)
+        .limit(200)
+      
+      if (checkError) {
+        console.error('[FTS Search] Resource inventory check failed:', checkError)
+      } else {
+        console.log(`[FTS Search] Total resources in DB: ${allResources?.length || 0}`)
+        if (allResources && allResources.length > 0) {
+          console.log(`[FTS Search] Resources by source:`, allResources.reduce((acc: any, r: any) => {
+            acc[r.source] = (acc[r.source] || 0) + 1
+            return acc
+          }, {}))
+          const userResources = allResources.filter((r: any) => r.created_by === userId)
+          console.log(`[FTS Search] User's resources: ${userResources.length}`)
+          if (userResources.length > 0) {
+            console.log(`[FTS Search] User resource titles:`, userResources.map((r: any) => r.title))
+          }
+        }
       }
     }
     
@@ -418,17 +507,37 @@ export async function searchResources(
     const DEFAULT_SPACE_ID = '00000000-0000-0000-0000-000000000000'
     const shouldFilterByUser = spaceId === DEFAULT_SPACE_ID
     
-    const { data: hits, error: rpcError } = await (dbClient as any).rpc('search_resources_fts', {
-      search_query: query,
-      target_space_id: spaceId,
-      limit_count: limit,
-      offset_count: offset,
-      target_user_id: shouldFilterByUser ? userId : null  // Filter by user only in personal workspace
-    }) as { data: any[] | null, error: any }
-    console.log(`[FTS Search] RPC response:`, { 
-      hitCount: hits?.length, 
+    const ftsResponse = await runWithAbort<{ data: any[] | null; error: any }>(
+      'search_resources_fts',
+      FTS_TIMEOUT_MS,
+      (signal) =>
+        (dbClient as any)
+          .rpc('search_resources_fts', {
+            search_query: query,
+            target_space_id: spaceId,
+            limit_count: limit,
+            offset_count: offset,
+            target_user_id: shouldFilterByUser ? userId : null // Filter by user only in personal workspace
+          })
+          .abortSignal(signal)
+          .then((res: { data: any[] | null; error: any }) => res)
+    )
+
+    let hits: any[] | null = null
+    let rpcError: any = null
+
+    if (ftsResponse) {
+      hits = ftsResponse.data
+      rpcError = ftsResponse.error
+    } else {
+      console.warn(`[FTS Search] RPC timed out for space ${spaceId}`)
+      rpcError = { message: 'Timeout', code: 'TIMEOUT' }
+    }
+
+    console.log(`[FTS Search] RPC response:`, {
+      hitCount: hits?.length,
       error: rpcError,
-      firstHit: hits?.[0] ? { id: hits[0].id, title: hits[0].title, rank: hits[0].rank } : null 
+      firstHit: hits?.[0] ? { id: hits[0].id, title: hits[0].title, rank: hits[0].rank } : null
     })
 
     if (rpcError) {

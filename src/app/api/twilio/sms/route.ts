@@ -794,7 +794,8 @@ export async function POST(request: NextRequest) {
       if (needsAsyncProcessing) {
         // For content queries, return immediate acknowledgment and process asynchronously
         // This prevents Twilio timeout (10-15 second limit)
-        console.log(`[Twilio SMS] Content query detected, processing asynchronously`)
+        const traceId = `sms_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`
+        console.log(`[Twilio SMS] [${traceId}] Content query detected, processing asynchronously`)
         
         // Return immediate acknowledgment
         const ackResponse = new NextResponse(
@@ -803,18 +804,33 @@ export async function POST(request: NextRequest) {
         )
         
         // Process query asynchronously (don't await)
-        console.log(`[Twilio SMS] Starting async handler for content query: "${body.substring(0, 50)}"`)
+        console.log(`[Twilio SMS] [${traceId}] Starting async handler for content query: "${body.substring(0, 50)}"`)
         
-        // Set a timeout to ensure we don't hang forever
+        // WATCHDOG: 7s timeout to prevent silent hangs
+        let watchdogFired = false
+        const watchdog = setTimeout(async () => {
+          watchdogFired = true
+          console.error(`[Twilio SMS] [${traceId}] WATCHDOG: content_query exceeded 7s, sending degraded reply`)
+          try {
+            await sendSms(from, "I'm fetching that. Try again in a few seconds if I don't reply.", { retries: 1, retryDelay: 2000 })
+            console.log(`[Twilio SMS] [${traceId}] Watchdog message sent`)
+          } catch (err) {
+            console.error(`[Twilio SMS] [${traceId}] Failed to send watchdog message:`, err)
+          }
+        }, 7000) // 7 second watchdog
+        
+        // Set a longer timeout for final error message
         let timeoutFired = false
         const asyncTimeout = setTimeout(async () => {
           timeoutFired = true
-          console.error(`[Twilio SMS] Async handler timeout after 30s for query: "${body.substring(0, 50)}"`)
-          try {
-            await sendSms(from, "Sorry, that query took too long. Please try again.", { retries: 1, retryDelay: 2000 })
-            console.log('[Twilio SMS] Timeout message sent')
-          } catch (err) {
-            console.error('[Twilio SMS] Failed to send timeout message:', err)
+          console.error(`[Twilio SMS] [${traceId}] Async handler timeout after 30s for query: "${body.substring(0, 50)}"`)
+          if (!watchdogFired) {
+            try {
+              await sendSms(from, "Sorry, that query took too long. Please try again.", { retries: 1, retryDelay: 2000 })
+              console.log(`[Twilio SMS] [${traceId}] Timeout message sent`)
+            } catch (err) {
+              console.error(`[Twilio SMS] [${traceId}] Failed to send timeout message:`, err)
+            }
           }
         }, 30000) // 30 second timeout
         
@@ -823,14 +839,15 @@ export async function POST(request: NextRequest) {
         const handlerStartTime = Date.now()
         handleSMSMessage(phoneNumber, from, body, intent, history)
           .then(async (result) => {
+            clearTimeout(watchdog)
             clearTimeout(asyncTimeout)
             const handlerDuration = Date.now() - handlerStartTime
-            console.log(`[Twilio SMS] Async handler completed successfully in ${handlerDuration}ms`)
-            console.log(`[Twilio SMS] Async handler returned: "${result?.response?.substring(0, 100) || 'NO RESPONSE'}..."`)
+            console.log(`[Twilio SMS] [${traceId}] Async handler completed successfully in ${handlerDuration}ms`)
+            console.log(`[Twilio SMS] [${traceId}] Async handler returned: "${result?.response?.substring(0, 100) || 'NO RESPONSE'}..."`)
             
-            // If timeout already fired, don't send another message
-            if (timeoutFired) {
-              console.log('[Twilio SMS] Timeout already fired, skipping result send')
+            // If watchdog or timeout already fired, don't send another message
+            if (watchdogFired || timeoutFired) {
+              console.log(`[Twilio SMS] [${traceId}] Watchdog/timeout already fired, skipping result send`)
               return
             }
             
@@ -890,19 +907,22 @@ export async function POST(request: NextRequest) {
             console.log(`[Twilio SMS] Finished sending all async messages`)
           })
           .catch(async (err) => {
+            clearTimeout(watchdog)
             clearTimeout(asyncTimeout)
-            console.error('[Twilio SMS] Async handler error:', err)
-            console.error('[Twilio SMS] Error stack:', err instanceof Error ? err.stack : 'No stack trace')
-            // Send error message to user
-            try {
-              const smsResult = await sendSms(from, "Sorry, I encountered an error processing your query. Please try again.")
-              if (smsResult.ok) {
-                console.log(`[Twilio SMS] Error message sent successfully`)
-              } else {
-                console.error(`[Twilio SMS] Failed to send error message: ${smsResult.error}`)
+            console.error(`[Twilio SMS] [${traceId}] Async handler error:`, err)
+            console.error(`[Twilio SMS] [${traceId}] Error stack:`, err instanceof Error ? err.stack : 'No stack trace')
+            // Send error message to user (only if watchdog hasn't already sent something)
+            if (!watchdogFired) {
+              try {
+                const smsResult = await sendSms(from, "Sorry, I encountered an error processing your query. Please try again.")
+                if (smsResult.ok) {
+                  console.log(`[Twilio SMS] [${traceId}] Error message sent successfully`)
+                } else {
+                  console.error(`[Twilio SMS] [${traceId}] Failed to send error message: ${smsResult.error}`)
+                }
+              } catch (e) {
+                console.error(`[Twilio SMS] [${traceId}] Failed to send error message:`, e)
               }
-            } catch (e) {
-              console.error('[Twilio SMS] Failed to send error message:', e)
             }
           })
         

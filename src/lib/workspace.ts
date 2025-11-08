@@ -203,9 +203,17 @@ export async function getWorkspaceIds(options: WorkspaceOptions = {}): Promise<s
   const workspaceIds = Array.from(resolved)
   console.log('[Workspace] Workspace IDs resolved:', workspaceIds)
   
-  // Safety check: if we only have default workspace, log warning but return it
-  if (workspaceIds.length === 1 && workspaceIds[0] === DEFAULT_SPACE_ID) {
-    console.warn('[Workspace] Only default workspace ID found - searches may return empty results')
+  // CRITICAL: Early return if only default workspace (don't search ghost space)
+  if (workspaceIds.length === 0 || (workspaceIds.length === 1 && workspaceIds[0] === DEFAULT_SPACE_ID)) {
+    console.warn('[Workspace] Only default workspace ID found - returning empty array to trigger early exit')
+    return [] // Return empty to trigger early exit in executeAnswer
+  }
+  
+  // Cap workspace count to prevent fan-out explosion
+  const MAX_WORKSPACES = 5
+  if (workspaceIds.length > MAX_WORKSPACES) {
+    console.warn(`[Workspace] Capping workspace count from ${workspaceIds.length} to ${MAX_WORKSPACES}`)
+    return workspaceIds.slice(0, MAX_WORKSPACES)
   }
   
   return workspaceIds
