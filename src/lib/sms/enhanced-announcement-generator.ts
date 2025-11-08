@@ -72,6 +72,59 @@ export async function generateAnnouncement(
     }
   }
 
+  // If we have minimal content, try to build a simple message directly
+  // Check if content is just a simple topic (like "football") without much detail
+  const contentLower = (parsedCommand.extractedFields.content || '').toLowerCase()
+  const isSimpleTopic = parsedCommand.extractedFields.content && 
+                       parsedCommand.extractedFields.content.length < 50 &&
+                       !contentLower.includes('announcement') &&
+                       !contentLower.includes('message') &&
+                       !contentLower.includes('event')
+  
+  if (isSimpleTopic && !parsedCommand.needsGeneration && !parsedCommand.verbatimText) {
+    // Build simple message from extracted fields
+    let simpleMessage = parsedCommand.extractedFields.content
+    
+    // Add date first if present
+    if (parsedCommand.extractedFields.date) {
+      const dateObj = new Date(parsedCommand.extractedFields.date)
+      const now = new Date()
+      const tomorrow = new Date(now)
+      tomorrow.setDate(tomorrow.getDate() + 1)
+      const isTomorrow = dateObj.toDateString() === tomorrow.toDateString()
+      
+      if (isTomorrow) {
+        simpleMessage += ' is tomorrow'
+      } else {
+        simpleMessage += ` is on ${dateObj.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`
+      }
+    }
+    
+    // Add time if present
+    if (parsedCommand.extractedFields.time) {
+      const [hours, minutes] = parsedCommand.extractedFields.time.split(':')
+      const hour24 = parseInt(hours)
+      const hour12 = hour24 > 12 ? hour24 - 12 : hour24 === 0 ? 12 : hour24
+      const ampm = hour24 >= 12 ? 'pm' : 'am'
+      const timeStr = `${hour12}:${minutes}${ampm}`
+      simpleMessage += ` at ${timeStr}`
+    }
+    
+    // Add location if present
+    if (parsedCommand.extractedFields.location) {
+      simpleMessage += ` at ${parsedCommand.extractedFields.location}`
+    }
+    
+    return {
+      content: simpleMessage,
+      time: parsedCommand.extractedFields.time,
+      date: parsedCommand.extractedFields.date,
+      location: parsedCommand.extractedFields.location,
+      audience: parsedCommand.extractedFields.audience || 'all',
+      tone: parsedCommand.extractedFields.tone || 'casual'
+    }
+  }
+
   // Generate content using LLM with instructions
   if (parsedCommand.needsGeneration) {
     const generated = await generateWithLLM(parsedCommand, previousDraft)
@@ -101,16 +154,20 @@ async function generateWithLLM(
     const instructions = parsedCommand.instructions.join('. ')
     const mustInclude = parsedCommand.constraints.mustInclude.join(', ')
 
-    const prompt = `Generate a casual, friendly announcement message.
+    // Build time/date context
+    const timeInfo = parsedCommand.extractedFields.time ? 
+      `Time: ${parsedCommand.extractedFields.time}` : ''
+    const dateInfo = parsedCommand.extractedFields.date ? 
+      `Date: ${parsedCommand.extractedFields.date}` : ''
+    const locationInfo = parsedCommand.extractedFields.location ? 
+      `Location: ${parsedCommand.extractedFields.location}` : ''
 
-Base content: "${baseContent}"
-${instructions ? `Instructions: ${instructions}` : ''}
-${mustInclude ? `Must include: ${mustInclude}` : ''}
-${parsedCommand.extractedFields.time ? `Time: ${parsedCommand.extractedFields.time}` : ''}
-${parsedCommand.extractedFields.location ? `Location: ${parsedCommand.extractedFields.location}` : ''}
-${parsedCommand.extractedFields.audience ? `Audience: ${parsedCommand.extractedFields.audience}` : ''}
+    const prompt = `Generate a simple, direct announcement message based ONLY on the information provided. Do NOT add extra details, emojis, marketing language, or invent event names.
 
-Generate a natural, conversational announcement message. Keep it casual and friendly.`
+What to announce: "${baseContent}"
+${timeInfo ? timeInfo + '\n' : ''}${dateInfo ? dateInfo + '\n' : ''}${locationInfo ? locationInfo + '\n' : ''}${instructions ? `Additional instructions: ${instructions}\n` : ''}${mustInclude ? `Must include: ${mustInclude}\n` : ''}
+
+Generate a brief, straightforward message (1-2 sentences). Use ONLY the information provided above. Do not invent details like event names, locations, descriptions, or emojis that weren't mentioned. Keep it simple and direct.`
 
     const response = await fetch('https://api.mistral.ai/v1/chat/completions', {
       method: 'POST',

@@ -231,9 +231,21 @@ function fallbackParse(message: string): ParsedCommand {
     audience = 'pledges'
   }
 
-  // Extract content (everything after colon if present, or main message)
-  const colonMatch = message.match(/:\s*(.+)$/i)
-  const content = colonMatch ? colonMatch[1].trim() : message
+  // Extract content - look for "about X" or "X being" patterns
+  let content = message
+  const aboutMatch = message.match(/about\s+(.+?)(?:\s+being|\s+is|\s+at|\s+tmr|tomorrow|today|$)/i)
+  if (aboutMatch && aboutMatch[1]) {
+    content = aboutMatch[1].trim()
+  } else {
+    // Fallback: everything after colon if present, or main message
+    const colonMatch = message.match(/:\s*(.+)$/i)
+    if (colonMatch) {
+      content = colonMatch[1].trim()
+    }
+  }
+  
+  // Clean up content - remove common phrases
+  content = content.replace(/\b(being|is|at|tmr|tomorrow|today|morning|afternoon|evening)\b/gi, '').trim()
 
   return {
     verbatimText,
