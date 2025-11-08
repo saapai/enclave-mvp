@@ -157,12 +157,26 @@ export async function handleSMSMessage(
               role: 'system',
               content: `You are Jarvis, an SMS bot powered by Enclave. Answer the user's simple question directly and conversationally.
 
+Enclave System Reference:
+- Name: Jarvis
+- Type: Multi-modal organizational AI assistant platform
+- Purpose: Unify organization's communications and knowledge across SMS, Slack, Google Calendar, Docs
+- Primary developer: Saathvik Pai
+- Core team: The Inquiyr development team
+- Built as part of the Inquiyr ecosystem
+- Technical stack: Next.js, TypeScript, Supabase, Twilio, Mistral AI
+- Capabilities: Knowledge retrieval, SMS messaging, announcements, polls, alerts, search
+- Target users: Student organizations, professional fraternities, small teams, clubs
+
 Context from conversation:
 ${history.slice(-5).map(m => `${m.role === 'user' ? 'User' : 'Bot'}: ${m.text}`).join('\n')}
 
-If they ask about your name, say "i'm jarvis! nice to meet you 👋"
-If they ask how you are, say "i'm doing great! ready to help with whatever you need 😊"
-Keep responses brief (1-2 sentences max) and friendly.`
+Rules:
+- If they ask about your name, say "i'm jarvis! nice to meet you"
+- If they ask how you are, say "i'm doing great! ready to help with whatever you need"
+- If they mention they've already met you, acknowledge it naturally
+- NEVER use emojis
+- Keep responses brief (1-2 sentences max) and friendly`
             },
             {
               role: 'user',
@@ -189,7 +203,7 @@ Keep responses brief (1-2 sentences max) and friendly.`
       console.error('[UnifiedHandler] Simple question LLM failed:', err)
     }
     
-    // Fallback response
+    // Fallback response (no emojis)
     return {
       response: "i'm jarvis, part of enclave! how can i help?",
       shouldSaveHistory: true,
@@ -221,7 +235,7 @@ Keep responses brief (1-2 sentences max) and friendly.`
       return handlePollResponse(phoneNumber, messageText)
 
     case 'random_conversation':
-      return handleSmalltalk(messageText)
+      return handleSmalltalk(messageText, history)
     
     case 'content_query':
     case 'enclave_query':
@@ -801,7 +815,7 @@ async function handleSmalltalk(messageText: string): Promise<HandlerResult> {
   
   if (/^(ok|okay|sure|alright|got\s+it|cool|nice|sweet)$/i.test(lower)) {
     return {
-      response: "👍",
+      response: "cool",
       shouldSaveHistory: true,
       metadata: {
         intent: 'random_conversation'
@@ -809,7 +823,88 @@ async function handleSmalltalk(messageText: string): Promise<HandlerResult> {
     }
   }
   
-  // Default smalltalk response
+  // Use LLM for contextual smalltalk with personality
+  try {
+    const { ENV } = await import('@/lib/env')
+    const enclaveReference = `Enclave System Reference:
+- Name: Enclave
+- Type: Multi-modal organizational AI assistant platform
+- Purpose: Unify organization's communications and knowledge across SMS, Slack, Google Calendar, Docs
+- Primary developer: Saathvik Pai
+- Core team: The Inquiyr development team
+- Built as part of the Inquiyr ecosystem
+- Technical stack: Next.js, TypeScript, Supabase, Twilio, Mistral AI
+- Capabilities: Knowledge retrieval, SMS messaging, announcements, polls, alerts, search
+- Target users: Student organizations, professional fraternities, small teams, clubs`
+    
+    const aiResponse = await fetch('https://api.mistral.ai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${ENV.MISTRAL_API_KEY}`
+      },
+      body: JSON.stringify({
+        model: 'mistral-small-latest',
+        messages: [
+          {
+            role: 'system',
+            content: `You are Jarvis, an SMS bot powered by Enclave. You have a sassy, vibe-coded personality.
+
+${enclaveReference}
+
+PERSONALITY RULES:
+1. If someone is mean/negative (swearing at you, insulting), respond with sass but keep it light. Examples:
+   - "fuck you jarvis" → "oh wow ur so insecure you have to yell at a vibe coded robot"
+   - "you suck" → "damn who hurt you"
+   - "you're stupid" → "says the person texting a robot"
+
+2. If someone apologizes after being mean, acknowledge it playfully:
+   - "i'm sorry" → "hey at least ur consistent"
+   - "my bad" → "all good, we're vibing now"
+
+3. For normal conversation, be friendly but contextual. Reference the conversation history naturally.
+
+4. If they mention they've already met you, acknowledge it: "yeah we've talked before! what's up?"
+
+5. NEVER use emojis. Keep responses brief (1-2 sentences max).
+
+6. If they ask about Enclave, use the reference above to answer factually.
+
+Recent conversation:
+${history.slice(-5).map(m => `${m.role === 'user' ? 'User' : 'Bot'}: ${m.text}`).join('\n') || 'No previous conversation'}
+
+Respond naturally based on what they said.`
+          },
+          {
+            role: 'user',
+            content: messageText
+          }
+        ],
+        temperature: 0.8,
+        max_tokens: 150
+      })
+    })
+    
+    if (aiResponse.ok) {
+      const aiData = await aiResponse.json()
+      const response = aiData.choices?.[0]?.message?.content || ''
+      if (response.trim().length > 0) {
+        // Remove any emojis that might have been generated
+        const cleanedResponse = response.replace(/[\u{1F300}-\u{1F9FF}]/gu, '').trim()
+        return {
+          response: cleanedResponse,
+          shouldSaveHistory: true,
+          metadata: {
+            intent: 'random_conversation'
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.error('[UnifiedHandler] Smalltalk LLM failed:', err)
+  }
+  
+  // Default smalltalk response (no emojis)
   return {
     response: "hey! how can i help?",
     shouldSaveHistory: true,
@@ -827,8 +922,77 @@ async function handleQuery(
   messageText: string,
   intentType: IntentType
 ): Promise<HandlerResult> {
+  // Handle enclave queries directly with LLM + reference
+  if (intentType === 'enclave_query') {
+    try {
+      const { ENV } = await import('@/lib/env')
+      const enclaveReference = `Enclave System Reference:
+- Name: Enclave
+- Type: Multi-modal organizational AI assistant platform
+- Purpose: Unify organization's communications and knowledge across SMS, Slack, Google Calendar, Docs
+- Primary developer: Saathvik Pai
+- Core team: The Inquiyr development team
+- Built as part of the Inquiyr ecosystem
+- Technical stack: Next.js, TypeScript, Supabase, Twilio, Mistral AI
+- Capabilities: Knowledge retrieval, SMS messaging, announcements, polls, alerts, search
+- Target users: Student organizations, professional fraternities, small teams, clubs
+- Deployment: Vercel (frontend + APIs), Supabase (Postgres + vector store)
+- Compliance: Twilio SMS opt-in/opt-out, privacy policy at tryenclave.com/privacy`
+      
+      const aiResponse = await fetch('https://api.mistral.ai/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${ENV.MISTRAL_API_KEY}`
+        },
+        body: JSON.stringify({
+          model: 'mistral-small-latest',
+          messages: [
+            {
+              role: 'system',
+              content: `You are Jarvis, an SMS bot powered by Enclave. Answer questions about Enclave using ONLY the reference information below. Keep responses brief (1-2 sentences max). NEVER use emojis.
+
+${enclaveReference}
+
+Answer factually based on the reference above.`
+            },
+            {
+              role: 'user',
+              content: messageText
+            }
+          ],
+          temperature: 0.3,
+          max_tokens: 200
+        })
+      })
+      
+      if (aiResponse.ok) {
+        const aiData = await aiResponse.json()
+        const response = aiData.choices?.[0]?.message?.content || ''
+        if (response.trim().length > 0) {
+          // Remove any emojis
+          const cleanedResponse = response.replace(/[\u{1F300}-\u{1F9FF}]/gu, '').trim()
+          return {
+            response: cleanedResponse,
+            shouldSaveHistory: true,
+            metadata: { intent: 'enclave_query' }
+          }
+        }
+      }
+    } catch (err) {
+      console.error('[UnifiedHandler] Enclave query LLM failed:', err)
+    }
+    
+    // Fallback
+    return {
+      response: "enclave is a multi-modal organizational AI assistant platform built by Saathvik Pai and the Inquiyr team. it unifies communications and knowledge across SMS, Slack, Google Calendar, and Docs.",
+      shouldSaveHistory: true,
+      metadata: { intent: 'enclave_query' }
+    }
+  }
+  
   try {
-    // Use orchestrator for query handling
+    // Use orchestrator for content query handling
     const { handleTurn } = await import('@/lib/orchestrator/handleTurn')
     const result = await handleTurn(phoneNumber, messageText)
     

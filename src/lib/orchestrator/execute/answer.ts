@@ -188,12 +188,23 @@ export async function executeAnswer(
             const actionMemory = envelope.evidence?.find(e => e.scope === 'ACTION' && e.source_id?.includes('action_memory'))
             const actionContext = actionMemory?.text ? `\n\nRecent actions:\n${actionMemory.text}` : ''
             
+            const enclaveReference = `Enclave System Reference:
+- Name: Enclave
+- Type: Multi-modal organizational AI assistant platform
+- Purpose: Unify organization's communications and knowledge across SMS, Slack, Google Calendar, Docs
+- Primary developer: Saathvik Pai
+- Core team: The Inquiyr development team
+- Built as part of the Inquiyr ecosystem
+- Technical stack: Next.js, TypeScript, Supabase, Twilio, Mistral AI
+- Capabilities: Knowledge retrieval, SMS messaging, announcements, polls, alerts, search
+- Target users: Student organizations, professional fraternities, small teams, clubs`
+            
             const aiRes = await fetch(aiUrl, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
                 query,
-                context: `Title: ${topResult.title}\nContent: ${topResult.body.substring(0, 2000)}\n\nIMPORTANT: Today is ${currentDayOfWeek}, ${currentDate}. Extract the ACTUAL date from the document content, not "today". If the document says "Nov 13" or "November 13", use that exact date. Do not use relative dates like "today" unless the document explicitly says "today".${actionContext}\n\nIf the user is asking about past actions (e.g., "did you find", "why didn't you send"), use the Recent actions context above to answer their question directly.`,
+                context: `Title: ${topResult.title}\nContent: ${topResult.body.substring(0, 2000)}\n\nIMPORTANT: Today is ${currentDayOfWeek}, ${currentDate}. Extract the ACTUAL date from the document content, not "today". If the document says "Nov 13" or "November 13", use that exact date. Do not use relative dates like "today" unless the document explicitly says "today".${actionContext}\n\n${enclaveReference}\n\nIf the user is asking about past actions (e.g., "did you find", "why didn't you send"), use the Recent actions context above to answer their question directly. NEVER use emojis.`,
                 type: 'summary'
               }),
               signal: controller.signal
@@ -261,12 +272,23 @@ export async function executeAnswer(
           
           try {
             const aiUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'https://www.tryenclave.com'}/api/ai`
+            const enclaveReference = `Enclave System Reference:
+- Name: Enclave
+- Type: Multi-modal organizational AI assistant platform
+- Purpose: Unify organization's communications and knowledge across SMS, Slack, Google Calendar, Docs
+- Primary developer: Saathvik Pai
+- Core team: The Inquiyr development team
+- Built as part of the Inquiyr ecosystem
+- Technical stack: Next.js, TypeScript, Supabase, Twilio, Mistral AI
+- Capabilities: Knowledge retrieval, SMS messaging, announcements, polls, alerts, search
+- Target users: Student organizations, professional fraternities, small teams, clubs`
+            
             const aiRes = await fetch(aiUrl, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
                 query,
-                context,
+                context: `${context}\n\n${enclaveReference}\n\nIMPORTANT: NEVER use emojis. Keep responses brief and factual.`,
                 type: 'summary'
               })
             })
@@ -313,12 +335,23 @@ export async function executeAnswer(
           const actionMemory = envelope.evidence?.find(e => e.scope === 'ACTION' && e.source_id?.includes('action_memory'))
           const actionContext = actionMemory?.text ? `\n\nRecent actions:\n${actionMemory.text}` : ''
           
+          const enclaveReference = `Enclave System Reference:
+- Name: Enclave
+- Type: Multi-modal organizational AI assistant platform
+- Purpose: Unify organization's communications and knowledge across SMS, Slack, Google Calendar, Docs
+- Primary developer: Saathvik Pai
+- Core team: The Inquiyr development team
+- Built as part of the Inquiyr ecosystem
+- Technical stack: Next.js, TypeScript, Supabase, Twilio, Mistral AI
+- Capabilities: Knowledge retrieval, SMS messaging, announcements, polls, alerts, search
+- Target users: Student organizations, professional fraternities, small teams, clubs`
+          
           const aiRes = await fetch(aiUrl, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               query,
-              context: `Title: ${topResult.title}\nContent: ${topResult.body.substring(0, 1500)}${actionContext}\n\nProvide a brief, concise answer (1-2 sentences max). If the user is asking about past actions, use the Recent actions context.`,
+              context: `Title: ${topResult.title}\nContent: ${topResult.body.substring(0, 1500)}${actionContext}\n\n${enclaveReference}\n\nProvide a brief, concise answer (1-2 sentences max). NEVER use emojis. If the user is asking about past actions, use the Recent actions context.`,
               type: 'summary'
             }),
             signal: controller.signal

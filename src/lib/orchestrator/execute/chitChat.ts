@@ -1,18 +1,18 @@
 import { TurnFrame, ContextEnvelope, ExecuteResult } from './index'
 
 const smalltalkResponses: Record<string, string> = {
-  'thanks?': 'you\'re welcome! 😊',
-  'thank you': 'you\'re welcome! 😊',
-  'ty': 'np! 😊',
-  'thx': 'np! 😊',
+  'thanks?': 'you\'re welcome!',
+  'thank you': 'you\'re welcome!',
+  'ty': 'np!',
+  'thx': 'np!',
   'hi': 'hey! what\'s up?',
   'hey': 'hey! what\'s up?',
   'hello': 'hey! what\'s up?',
-  'ok': 'cool 👍',
-  'okay': 'cool 👍',
-  'alright': 'sounds good 👍',
-  'sure': 'cool 👍',
-  'got it': 'awesome 👍',
+  'ok': 'cool',
+  'okay': 'cool',
+  'alright': 'sounds good',
+  'sure': 'cool',
+  'got it': 'awesome',
 }
 
 export async function executeChitChat(
@@ -25,7 +25,7 @@ export async function executeChitChat(
   // Handle abusive messages
   if (frame.signals.toxicity === 'abusive') {
     return {
-      messages: ['✋ Let\'s keep it respectful. Reply \'help\' for what I can do.']
+      messages: ['let\'s keep it respectful. reply \'help\' for what i can do.']
     }
   }
   
@@ -78,7 +78,7 @@ export async function executeChitChat(
   }
   
   // Handle smalltalk
-  const response = smalltalkResponses[lowerMsg] || '👍'
+  const response = smalltalkResponses[lowerMsg] || 'cool'
   
   // Add draft follow-up if draft exists
   let draftFollowUp = ''
