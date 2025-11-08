@@ -55,6 +55,24 @@ async function getWorkspaceIdsInternal(options: WorkspaceOptions = {}): Promise<
   resolved.add(DEFAULT_SPACE_ID)
   console.log('[Workspace] Added default space ID:', DEFAULT_SPACE_ID)
 
+  // Allow hardcoded workspace fallbacks via environment variables
+  const fallbackIdsEnv =
+    process.env.WORKSPACE_FALLBACK_IDS ||
+    process.env.SEP_SPACE_ID ||
+    ''
+  if (fallbackIdsEnv) {
+    const fallbackIds = fallbackIdsEnv
+      .split(',')
+      .map((id) => id.trim())
+      .filter((id) => id.length > 0)
+    if (fallbackIds.length > 0) {
+      console.log('[Workspace] Using fallback workspace IDs from env:', fallbackIds)
+      for (const id of fallbackIds) {
+        resolved.add(id)
+      }
+    }
+  }
+
   const tasks: Promise<void>[] = []
 
   // Lookup by phone -> app_user.phone
@@ -106,7 +124,7 @@ async function getWorkspaceIdsInternal(options: WorkspaceOptions = {}): Promise<
 
   // Optional SEP fallback (enabled by default)
   // SKIP SEP query - it's hanging. Use direct query with hard timeout
-  if (options.includeSepFallback !== false) {
+  if (options.includeSepFallback !== false && !process.env.SKIP_WORKSPACE_DB) {
     tasks.push((async () => {
       const taskStart = Date.now()
       try {
@@ -135,11 +153,12 @@ async function getWorkspaceIdsInternal(options: WorkspaceOptions = {}): Promise<
           }
         })()
         
+        const timeoutMs = Number(process.env.WORKSPACE_QUERY_TIMEOUT_MS || 1000)
         const timeoutPromise = new Promise<{ data: null; error: any }>((resolve) => {
           setTimeout(() => {
-            console.error('[Workspace] Query hard timeout after 1000ms')
+            console.error(`[Workspace] Query hard timeout after ${timeoutMs}ms`)
             resolve({ data: null, error: { message: 'Hard timeout' } })
-          }, 1000)
+          }, timeoutMs)
         })
         
         const result = await Promise.race([queryPromise, timeoutPromise])
@@ -191,10 +210,11 @@ async function getWorkspaceIdsInternal(options: WorkspaceOptions = {}): Promise<
     await Promise.race([
       Promise.all(tasks),
       new Promise<void>((resolve) => {
+        const timeoutMs = Number(process.env.WORKSPACE_TASK_TIMEOUT_MS || 2000)
         setTimeout(() => {
-          console.error('[Workspace] All workspace tasks timed out after 3000ms')
+          console.error(`[Workspace] All workspace tasks timed out after ${timeoutMs}ms`)
           resolve()
-        }, 3000)
+        }, timeoutMs)
       })
     ])
   } catch (err) {
