@@ -350,20 +350,21 @@ export async function buildTurnFrame(
       console.error('[TurnFrame] supabaseAdmin is null, skipping history')
       history = []
     } else {
-      const queryPromise = supabaseAdmin
-        .from('sms_conversation_history')
-        .select('user_message, bot_response, created_at')
-        .eq('phone_number', normalizedPhone)
-        .order('created_at', { ascending: false })
-        .limit(5)
-      
       const result = await withQueryTimeout(
-        queryPromise,
+        (async () => {
+          const res = await supabaseAdmin
+            .from('sms_conversation_history')
+            .select('user_message, bot_response, created_at')
+            .eq('phone_number', normalizedPhone)
+            .order('created_at', { ascending: false })
+            .limit(5)
+          return res as { data: any; error: any }
+        })(),
         3000, // 3 second timeout
         { data: null, error: null } as any,
         'conversation history query'
       )
-      history = result.data
+      history = result?.data || []
     }
     console.log(`[TurnFrame] Loaded conversation history in ${Date.now() - historyStart}ms (rows=${history?.length || 0})`)
   } catch (err) {
@@ -371,7 +372,7 @@ export async function buildTurnFrame(
     history = []
   }
   
-  const lastN = (history || []).reverse().flatMap(msg => [
+  const lastN = (history || []).reverse().flatMap((msg: any) => [
     { speaker: 'user' as const, text: msg.user_message, ts: msg.created_at },
     { speaker: 'bot' as const, text: msg.bot_response, ts: msg.created_at }
   ])
