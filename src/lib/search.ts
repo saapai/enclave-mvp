@@ -466,7 +466,7 @@ export async function searchResourcesHybrid(
   try {
     queryEmbedding = await pTimeout(
       embedText(query),
-      2000, // 2s timeout for embedding
+      8000, // 8s timeout for embedding (inline fallback)
       `embed:${searchId}`
     )
     const embedDuration = Date.now() - embedStart

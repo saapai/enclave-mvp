@@ -3,89 +3,46 @@ import { ENV } from './env'
 
 // Use Mistral embeddings
 const MISTRAL_API_KEY = ENV.MISTRAL_API_KEY
-const PRIMARY_MODEL = process.env.MISTRAL_EMBED_MODEL || 'mistral-embed'
-const FALLBACK_MODELS = ['mistral-large-latest', 'mistral-small-latest']
-
-// Simple in-memory cache to avoid regenerating the same embedding repeatedly
-const embeddingCache = new Map<string, { value: number[] | null; expiresAt: number }>()
-const inFlightEmbeddings = new Map<string, Promise<number[] | null>>()
-const CACHE_TTL_MS = Number(process.env.EMBED_CACHE_TTL_MS || 5 * 60 * 1000) // default 5 minutes
+const MISTRAL_EMBED_MODEL = process.env.MISTRAL_EMBED_MODEL || 'mistral-embed'
 
 export async function embedText(text: string): Promise<number[] | null> {
   if (!MISTRAL_API_KEY) {
     console.error('MISTRAL_API_KEY is not set')
     return null
   }
-
   const cleaned = (text || '').slice(0, 200000)
-  const cacheKey = cleaned.trim().toLowerCase()
-
-  // Serve from cache if fresh
-  const cached = embeddingCache.get(cacheKey)
-  if (cached && cached.expiresAt > Date.now()) {
-    console.log('Embedding cache hit for text:', cleaned.slice(0, 80))
-    return cached.value
-  }
-
-  // Deduplicate concurrent requests for the same text
-  const existingInFlight = inFlightEmbeddings.get(cacheKey)
-  if (existingInFlight) {
-    console.log('Embedding request already in-flight, waiting:', cleaned.slice(0, 80))
-    return existingInFlight
-  }
-
   console.log('Generating embedding for text:', cleaned.slice(0, 100) + '...')
-
-  const models = [PRIMARY_MODEL, ...FALLBACK_MODELS.filter((model) => model !== PRIMARY_MODEL)]
-
-  const runEmbedding = async (): Promise<number[] | null> => {
-    for (const model of models) {
-      console.log('Trying model:', model)
-      try {
-        const res = await fetch('https://api.mistral.ai/v1/embeddings', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${MISTRAL_API_KEY}`,
-          },
-          body: JSON.stringify({
-            model,
-            input: cleaned,
-          })
-        })
-
-        if (res.ok) {
-          const json = await res.json()
-          const embedding = json?.data?.[0]?.embedding as number[]
-          console.log('Generated embedding with dimensions:', embedding?.length, 'using model:', model)
-          return embedding || null
-        } else {
-          const errorText = await res.text()
-          console.warn('Model', model, 'failed:', res.status, errorText)
-        }
-      } catch (err) {
-        console.error('Embedding request errored for model', model, err)
-      }
-    }
-
-    console.error('All embedding models failed')
-    return null
-  }
-
-  const promise = runEmbedding()
-    .then((embedding) => {
-      embeddingCache.set(cacheKey, {
-        value: embedding,
-        expiresAt: Date.now() + CACHE_TTL_MS
+  
+  // Try different Mistral embedding models
+  const models = ['mistral-embed', 'mistral-large-latest', 'mistral-small-latest']
+  
+  for (const model of models) {
+    console.log('Trying model:', model)
+    const res = await fetch('https://api.mistral.ai/v1/embeddings', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${MISTRAL_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: model,
+        input: cleaned,
       })
-      return embedding
     })
-    .finally(() => {
-      inFlightEmbeddings.delete(cacheKey)
-    })
-
-  inFlightEmbeddings.set(cacheKey, promise)
-  return promise
+    
+    if (res.ok) {
+      const json = await res.json()
+      const embedding = json?.data?.[0]?.embedding as number[]
+      console.log('Generated embedding with dimensions:', embedding?.length, 'using model:', model)
+      return embedding || null
+    } else {
+      const errorText = await res.text()
+      console.log('Model', model, 'failed:', res.status, errorText)
+    }
+  }
+  
+  console.error('All embedding models failed')
+  return null
 }
 
 export async function upsertResourceEmbedding(resourceId: string, text: string): Promise<boolean> {

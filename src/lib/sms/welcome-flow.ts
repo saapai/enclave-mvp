@@ -39,7 +39,9 @@ export async function needsWelcome(phoneNumber: string): Promise<boolean> {
     
     if (!supabaseAdmin) {
       console.error('[WelcomeFlow] needsWelcome: supabaseAdmin is null/undefined')
-      return false
+      const fallback = false
+      welcomeCache.set(phoneNumber, { result: fallback, timestamp: Date.now() })
+      return fallback
     }
     
     console.log(`[WelcomeFlow] needsWelcome: Querying database`)
@@ -69,7 +71,9 @@ export async function needsWelcome(phoneNumber: string): Promise<boolean> {
       if (err.name === 'AbortError') {
         console.error('[WelcomeFlow] needsWelcome: Query aborted due to timeout')
         // On timeout, assume user exists (safer default)
-        return false
+        const fallback = false
+        welcomeCache.set(phoneNumber, { result: fallback, timestamp: Date.now() })
+        return fallback
       }
       error = err
     } finally {
@@ -81,7 +85,9 @@ export async function needsWelcome(phoneNumber: string): Promise<boolean> {
 
     if (error) {
       console.error('[WelcomeFlow] needsWelcome: Query error:', error)
-      return false
+      const fallback = false
+      welcomeCache.set(phoneNumber, { result: fallback, timestamp: Date.now() })
+      return fallback
     }
 
     if (!data) {
@@ -101,7 +107,9 @@ export async function needsWelcome(phoneNumber: string): Promise<boolean> {
   } catch (err) {
     console.error('[WelcomeFlow] Error checking welcome status:', err)
     console.error('[WelcomeFlow] Error stack:', err instanceof Error ? err.stack : 'No stack')
-    return false
+    const fallback = false
+    welcomeCache.set(phoneNumber, { result: fallback, timestamp: Date.now() })
+    return fallback
   }
 }
 

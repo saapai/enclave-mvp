@@ -8,7 +8,7 @@ import { TurnFrame, ContextEnvelope } from '../types'
 import { searchResourcesHybrid } from '@/lib/search'
 import { planQuery, composeResponse, executePlan } from '@/lib/planner'
 import { getWorkspaceIds } from '@/lib/workspace'
-import { safeAll, generateTraceId } from '@/lib/utils'
+import { pTimeout, safeAll, generateTraceId } from '@/lib/utils'
 import pLimit from 'p-limit'
 
 // SearchResult type from search results
@@ -33,13 +33,20 @@ export async function executeAnswer(
   const query = frame.text
   
   try {
-    // Get workspace IDs
+    // Get workspace IDs with timeout
     const workspaceStart = Date.now()
     console.log(`[Execute Answer] [${traceId}] About to call getWorkspaceIds`)
-    const spaceIds = await getWorkspaceIds({
-      phoneNumber: frame.user.id,
-      includeSepFallback: true,
-      includePhoneLookup: false
+    const spaceIds = await pTimeout(
+      getWorkspaceIds({
+        phoneNumber: frame.user.id,
+        includeSepFallback: true,
+        includePhoneLookup: false
+      }),
+      2500, // 2.5s cap on workspace resolution
+      'getWorkspaceIds'
+    ).catch(() => {
+      console.error(`[Execute Answer] [${traceId}] getWorkspaceIds timed out or failed`)
+      return []
     })
     
     const workspaceDuration = Date.now() - workspaceStart
@@ -75,18 +82,24 @@ export async function executeAnswer(
     let queryEmbedding: number[] | null = null
     try {
       const { embedText } = await import('@/lib/embeddings')
-      queryEmbedding = await embedText(query)
+      queryEmbedding = await pTimeout(
+        embedText(query),
+        10000, // 10s timeout for embedding (Mistral can be slow)
+        `embed:${traceId}`
+      )
       const embedDuration = Date.now() - embedStart
       console.log(`[Execute Answer] [${traceId}] Embedding generated in ${embedDuration}ms (dims=${queryEmbedding?.length || 0})`)
     } catch (err) {
       const embedDuration = Date.now() - embedStart
-      console.error(`[Execute Answer] [${traceId}] Embedding failed after ${embedDuration}ms:`, err)
+      const isTimeout = err instanceof Error && err.message.includes('timeout')
+      console.error(`[Execute Answer] [${traceId}] Embedding ${isTimeout ? 'timed out' : 'failed'} after ${embedDuration}ms:`, err)
     }
     
-    // Concurrency-limited fan-out across workspaces
+    // Concurrency-limited, timeout-wrapped fan-out (never block on one bad apple)
     const limit = pLimit(2) // Max 2 searches in flight at once
+    const PER_WORKSPACE_TIMEOUT = 4000 // 4s per workspace (now that embedding is pre-generated)
     
-    console.log(`[Execute Answer] [${traceId}] Starting hybrid search across ${workspaceIds.length} workspaces (concurrency=2)`)
+    console.log(`[Execute Answer] [${traceId}] Starting hybrid search across ${workspaceIds.length} workspaces (concurrency=2, timeout=${PER_WORKSPACE_TIMEOUT}ms per workspace)`)
     
     const searchPromises = workspaceIds.map((spaceId, index) =>
       limit(async () => {
@@ -95,7 +108,11 @@ export async function executeAnswer(
         try {
           // Import searchResourcesHybridWithEmbedding for pre-generated embedding
           const { searchResourcesHybridWithEmbedding } = await import('@/lib/search')
-          const results = await searchResourcesHybridWithEmbedding(query, spaceId, queryEmbedding, {}, { limit: 5, offset: 0 }, frame.user.id)
+          const results = await pTimeout(
+            searchResourcesHybridWithEmbedding(query, spaceId, queryEmbedding, {}, { limit: 5, offset: 0 }, frame.user.id),
+            PER_WORKSPACE_TIMEOUT,
+            `hybrid_search:${spaceId}`
+          )
           const searchDuration = Date.now() - searchStart
           console.log(`[Execute Answer] [${traceId}] Workspace ${spaceId} completed in ${searchDuration}ms, returned ${results.length} results`)
           if (results.length > 0) {
@@ -109,7 +126,8 @@ export async function executeAnswer(
           return results
         } catch (err) {
           const searchDuration = Date.now() - searchStart
-          console.error(`[Execute Answer] [${traceId}] Workspace ${spaceId} failed after ${searchDuration}ms:`, err)
+          const isTimeout = err instanceof Error && err.message.includes('timeout')
+          console.error(`[Execute Answer] [${traceId}] Workspace ${spaceId} ${isTimeout ? 'timed out' : 'failed'} after ${searchDuration}ms:`, err)
           return []
         }
       })
@@ -151,9 +169,21 @@ export async function executeAnswer(
       console.warn(`[Execute Answer] [${traceId}] No deduped results available after aggregation`)
     }
     
-    // Use planner-based flow
+    // Use planner-based flow with timeout
     const planStart = Date.now()
-    const plan = await planQuery(query, spaceIds[0])
+    const plan = await pTimeout(
+      planQuery(query, spaceIds[0]),
+      3000, // 3s timeout for planning
+      'planQuery'
+    ).catch(() => {
+      console.error(`[Execute Answer] [${traceId}] planQuery timed out, using fallback`)
+      return {
+        intent: 'doc_search' as const,
+        confidence: 0.5,
+        entities: {},
+        tools: [{ tool: 'search_docs', params: { query }, priority: 1 }]
+      }
+    })
     
     console.log(`[Execute Answer] [${traceId}] planQuery completed in ${Date.now() - planStart}ms (intent=${plan.intent}, confidence=${plan.confidence})`)
     
@@ -170,16 +200,25 @@ export async function executeAnswer(
       }]
     } else {
       console.log(`[Execute Answer] [${traceId}] Running tool execution (hybrid results: ${dedupedResults.length}, top score: ${dedupedResults[0]?.score?.toFixed(3) || 'N/A'})`)
-      // Execute plan across all workspaces
-      const executePlanPromises = spaceIds.map(async (spaceId) => {
-        const executePlanStart = Date.now()
-        const toolResults = await executePlan(plan, spaceId, queryEmbedding)
-        console.log(`[Execute Answer] [${traceId}] executePlan returned ${toolResults.length} tool results for space ${spaceId} in ${Date.now() - executePlanStart}ms`)
-        if (toolResults.length > 0) {
-          console.log(`[Execute Answer] [${traceId}] Tool summary for space ${spaceId}:`, toolResults.map(t => ({ tool: t.tool, success: t.success, confidence: t.confidence, resultCount: t.data?.results?.length })))
-        }
-        return toolResults
-      })
+      // Execute plan across all workspaces using Promise.allSettled + timeouts
+      const executePlanPromises = spaceIds.map((spaceId) =>
+        pTimeout(
+          (async () => {
+            const executePlanStart = Date.now()
+            const toolResults = await executePlan(plan, spaceId, queryEmbedding)
+            console.log(`[Execute Answer] [${traceId}] executePlan returned ${toolResults.length} tool results for space ${spaceId} in ${Date.now() - executePlanStart}ms`)
+            if (toolResults.length > 0) {
+              console.log(`[Execute Answer] [${traceId}] Tool summary for space ${spaceId}:`, toolResults.map(t => ({ tool: t.tool, success: t.success, confidence: t.confidence, resultCount: t.data?.results?.length })))
+            }
+            return toolResults
+          })(),
+          3000, // 3s timeout per workspace plan execution
+          `executePlan:${spaceId}`
+        ).catch(() => {
+          console.error(`[Execute Answer] [${traceId}] executePlan for space ${spaceId} timed out`)
+          return []
+        })
+      )
       
       const allToolResultsArrays = await safeAll(executePlanPromises)
       allToolResults = allToolResultsArrays.flat()
@@ -217,9 +256,21 @@ export async function executeAnswer(
       }]
     }
     
-    // Compose response
+    // Compose response with timeout
     const composeStart = Date.now()
-    const composed = await composeResponse(query, plan, allToolResults)
+    const composed = await pTimeout(
+      composeResponse(query, plan, allToolResults),
+      3000, // 3s timeout for composition
+      'composeResponse'
+    ).catch(() => {
+      console.error(`[Execute Answer] [${traceId}] composeResponse timed out, using fallback`)
+      return {
+        text: "I'm having trouble processing that right now. Please try again.",
+        sources: [],
+        confidence: 0,
+        needsClarification: false
+      }
+    })
     
     console.log(`[Execute Answer] [${traceId}] Composed response in ${Date.now() - composeStart}ms: text length=${composed.text?.length || 0}, intent=${plan.intent}, toolResults=${allToolResults.length}`)
     console.log(`[Execute Answer] [${traceId}] Composed text preview: "${composed.text?.substring(0, 200)}"`)

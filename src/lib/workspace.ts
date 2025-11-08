@@ -55,24 +55,6 @@ async function getWorkspaceIdsInternal(options: WorkspaceOptions = {}): Promise<
   resolved.add(DEFAULT_SPACE_ID)
   console.log('[Workspace] Added default space ID:', DEFAULT_SPACE_ID)
 
-  // Allow hardcoded workspace fallbacks via environment variables
-  const fallbackIdsEnv =
-    process.env.WORKSPACE_FALLBACK_IDS ||
-    process.env.SEP_SPACE_ID ||
-    ''
-  if (fallbackIdsEnv) {
-    const fallbackIds = fallbackIdsEnv
-      .split(',')
-      .map((id) => id.trim())
-      .filter((id) => id.length > 0)
-    if (fallbackIds.length > 0) {
-      console.log('[Workspace] Using fallback workspace IDs from env:', fallbackIds)
-      for (const id of fallbackIds) {
-        resolved.add(id)
-      }
-    }
-  }
-
   const tasks: Promise<void>[] = []
 
   // Lookup by phone -> app_user.phone
@@ -123,58 +105,47 @@ async function getWorkspaceIdsInternal(options: WorkspaceOptions = {}): Promise<
   }
 
   // Optional SEP fallback (enabled by default)
-  // SKIP SEP query - it's hanging. Use direct query with hard timeout
-  if (options.includeSepFallback !== false && !process.env.SKIP_WORKSPACE_DB) {
+  // SKIP SEP query - it's hanging. Use direct query instead
+  if (options.includeSepFallback !== false) {
     tasks.push((async () => {
       const taskStart = Date.now()
       try {
         console.log('[Workspace] Querying all workspaces (skipping SEP filter due to hang)')
         
-        // CRITICAL: Wrap entire query in Promise.race with hard 1s timeout
-        // AbortController alone doesn't work fast enough when Supabase is slow
-        const queryPromise = (async () => {
-          const controller = new AbortController()
-          const timeoutId = setTimeout(() => {
-            controller.abort()
-          }, 1000)
+        // Use direct query with AbortController
+        const controller = new AbortController()
+        const timeoutId = setTimeout(() => {
+          controller.abort()
+          console.error('[Workspace] Workspace query aborted after 1500ms')
+        }, 1500)
 
-          try {
-            const result = await client
-              .from('space')
-              .select('id, name')
-              .limit(20)
-              .abortSignal(controller.signal)
-            
-            clearTimeout(timeoutId)
-            return result
-          } catch (err: any) {
-            clearTimeout(timeoutId)
-            throw err
+        let data: any = null
+        let error: any = null
+        
+        try {
+          const result = await client
+            .from('space')
+            .select('id, name')
+            .limit(20)
+            .abortSignal(controller.signal)
+          
+          data = result.data
+          error = result.error
+        } catch (err: any) {
+          if (err.name === 'AbortError') {
+            console.error('[Workspace] Query aborted due to timeout')
+          } else {
+            error = err
           }
-        })()
-        
-        const timeoutMs = Number(process.env.WORKSPACE_QUERY_TIMEOUT_MS || 1000)
-        const timeoutPromise = new Promise<{ data: null; error: any }>((resolve) => {
-          setTimeout(() => {
-            console.error(`[Workspace] Query hard timeout after ${timeoutMs}ms`)
-            resolve({ data: null, error: { message: 'Hard timeout' } })
-          }, timeoutMs)
-        })
-        
-        const result = await Promise.race([queryPromise, timeoutPromise])
-        const data = result.data
-        const error = result.error
+        } finally {
+          clearTimeout(timeoutId)
+        }
         
         const queryDuration = Date.now() - taskStart
         console.log(`[Workspace] Workspace query completed in ${queryDuration}ms`)
 
         if (error) {
           console.error('[Workspace] Workspace lookup failed:', error)
-          // CRITICAL: If query times out, use hardcoded SEP workspace from env
-          if (process.env.SEP_SPACE_ID) {
-            console.log('[Workspace] Using hardcoded SEP_SPACE_ID from env as fallback')
-            resolved.add(process.env.SEP_SPACE_ID)
-          }
           return
         }
 
@@ -210,11 +181,10 @@ async function getWorkspaceIdsInternal(options: WorkspaceOptions = {}): Promise<
     await Promise.race([
       Promise.all(tasks),
       new Promise<void>((resolve) => {
-        const timeoutMs = Number(process.env.WORKSPACE_TASK_TIMEOUT_MS || 2000)
         setTimeout(() => {
-          console.error(`[Workspace] All workspace tasks timed out after ${timeoutMs}ms`)
+          console.error('[Workspace] All workspace tasks timed out after 3000ms')
           resolve()
-        }, timeoutMs)
+        }, 3000)
       })
     ])
   } catch (err) {
