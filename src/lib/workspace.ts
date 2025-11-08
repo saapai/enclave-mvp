@@ -134,6 +134,13 @@ async function getWorkspaceIdsInternal(options: WorkspaceOptions = {}): Promise<
 export async function getWorkspaceIds(options: WorkspaceOptions = {}): Promise<string[]> {
   const cacheKey = options.phoneNumber || 'default'
   
+  // Check cache first (before any async operations)
+  const cached = workspaceCache.get(cacheKey)
+  if (cached && Date.now() - cached.timestamp < WORKSPACE_CACHE_TTL) {
+    console.log(`[Workspace] Using cached workspaces for ${cacheKey} (${cached.workspaces.length} workspaces)`)
+    return cached.workspaces
+  }
+  
   try {
     // Hard 500ms timeout for the entire operation
     const result = await Promise.race([
@@ -150,8 +157,10 @@ export async function getWorkspaceIds(options: WorkspaceOptions = {}): Promise<s
     
     // Try last known first
     const lastKnown = lastKnownWorkspaces.get(cacheKey)
-    if (lastKnown && lastKnown.length > 0) {
+    if (lastKnown && lastKnown.length > 0 && lastKnown[0] !== DEFAULT_SPACE_ID) {
       console.log(`[Workspace] Returning last known workspaces (${lastKnown.length})`)
+      // Cache it for next time
+      workspaceCache.set(cacheKey, { workspaces: lastKnown, timestamp: Date.now() })
       return lastKnown
     }
     
