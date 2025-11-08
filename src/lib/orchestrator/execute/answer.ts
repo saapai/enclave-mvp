@@ -47,9 +47,22 @@ export async function executeAnswer(
       undefined
     )
     console.log(`[Execute Answer] searchResourcesHybrid for space ${spaceId} returned ${results.length} results in ${Date.now() - searchStart}ms`)
+    if (results.length > 0) {
+      console.log(`[Execute Answer] Top result for space ${spaceId}:`, {
+        title: results[0]?.title,
+        type: results[0]?.type,
+        score: results[0]?.score,
+        source: (results[0] as any)?.source
+      })
+    }
+    if (results.length === 0) {
+      console.warn(`[Execute Answer] No results found for space ${spaceId}`)
+    }
     allResults.push(...results)
   }
-  
+
+  console.log(`[Execute Answer] Total aggregated results: ${allResults.length}`)
+
   // Deduplicate
   const uniqueResultsMap = new Map()
   for (const result of allResults) {
@@ -60,6 +73,17 @@ export async function executeAnswer(
   const dedupedResults = Array.from(uniqueResultsMap.values())
     .sort((a, b) => (b.score || b.rank || 0) - (a.score || a.rank || 0))
     .slice(0, 3)
+
+  if (dedupedResults.length > 0) {
+    console.log('[Execute Answer] Deduped top results:', dedupedResults.map(r => ({
+      id: r.id,
+      title: r.title,
+      score: r.score,
+      type: r.type
+    })))
+  } else {
+    console.warn('[Execute Answer] No deduped results available after aggregation')
+  }
   
   // Use planner-based flow
   try {
@@ -73,6 +97,9 @@ export async function executeAnswer(
       const executePlanStart = Date.now()
       const toolResults = await executePlan(plan, spaceId)
       console.log(`[Execute Answer] executePlan returned ${toolResults.length} tool results for space ${spaceId} in ${Date.now() - executePlanStart}ms`)
+      if (toolResults.length > 0) {
+        console.log(`[Execute Answer] Tool summary for space ${spaceId}:`, toolResults.map(t => ({ tool: t.tool, success: t.success, confidence: t.confidence, resultCount: t.data?.results?.length })))
+      }
       allToolResults.push(...toolResults)
     }
     
