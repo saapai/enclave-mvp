@@ -384,6 +384,8 @@ export async function buildTurnFrame(
     ? { type: 'prompt', text: lastBotMessage, ts: history?.[history.length - 1]?.created_at || now.toISOString() }
     : undefined
   
+  const isQuestion = /^(what|when|where|who|how|why|is|are|was|were|do|does|did|will|can|could|should)\s/i.test(text) || text.includes('?')
+
   // Determine mode and pending state with timeout
   const modeStart = Date.now()
   const { mode, pending } = await withQueryTimeout(
@@ -393,26 +395,31 @@ export async function buildTurnFrame(
     'determineMode'
   )
   console.log(`[TurnFrame] determineMode completed in ${Date.now() - modeStart}ms (mode=${mode})`)
-  
-  // Check for active drafts to determine command context (with timeouts)
-  const activeDraftStart = Date.now()
-  const activeDraft = await withQueryTimeout(
-    getActiveDraft(normalizedPhone),
-    3000, // 3 second timeout
-    null,
-    'getActiveDraft'
-  )
-  console.log(`[TurnFrame] getActiveDraft completed in ${Date.now() - activeDraftStart}ms ${activeDraft ? '(found)' : '(none)'}`)
-  const activePollStart = Date.now()
-  const activePollDraft = await withQueryTimeout(
-    getActivePollDraft(normalizedPhone),
-    3000, // 3 second timeout
-    null,
-    'getActivePollDraft'
-  )
-  console.log(`[TurnFrame] getActivePollDraft completed in ${Date.now() - activePollStart}ms ${activePollDraft ? '(found)' : '(none)'}`)
+
+  let activeDraft = null
+  let activePollDraft = null
+  if (!isQuestion) {
+    const activeDraftStart = Date.now()
+    activeDraft = await withQueryTimeout(
+      getActiveDraft(normalizedPhone),
+      3000, // 3 second timeout
+      null,
+      'getActiveDraft'
+    )
+    console.log(`[TurnFrame] getActiveDraft completed in ${Date.now() - activeDraftStart}ms ${activeDraft ? '(found)' : '(none)'}`)
+    const activePollStart = Date.now()
+    activePollDraft = await withQueryTimeout(
+      getActivePollDraft(normalizedPhone),
+      3000, // 3 second timeout
+      null,
+      'getActivePollDraft'
+    )
+    console.log(`[TurnFrame] getActivePollDraft completed in ${Date.now() - activePollStart}ms ${activePollDraft ? '(found)' : '(none)'}`)
+  } else {
+    console.log('[TurnFrame] Skipping draft lookups for question-style message')
+  }
   const hasActiveDraft = !!(activeDraft || activePollDraft)
-  
+
   // Extract signals
   const quoted = extractQuotedSegments(text)
   const hasQuestionMark = text.includes('?')
