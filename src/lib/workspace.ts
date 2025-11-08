@@ -112,34 +112,29 @@ async function getWorkspaceIdsInternal(options: WorkspaceOptions = {}): Promise<
       try {
         console.log('[Workspace] Querying all workspaces (skipping SEP filter due to hang)')
         
-        // Use direct query with AbortController
-        const controller = new AbortController()
-        const timeoutId = setTimeout(() => {
-          controller.abort()
-          console.error('[Workspace] Workspace query aborted after 1500ms')
-        }, 1500)
-
-        let data: any = null
-        let error: any = null
+        // Use Promise.race with timeout (more reliable than AbortController)
+        const queryPromise = client
+          .from('space')
+          .select('id, name')
+          .limit(20)
         
+        const timeoutPromise = new Promise<{ data: null; error: { message: string } }>((resolve) => {
+          setTimeout(() => {
+            console.error('[Workspace] Workspace query timed out after 1000ms')
+            resolve({ data: null, error: { message: 'Timeout' } })
+          }, 1000) // Aggressive 1s timeout
+        })
+
+        let result: { data: any; error: any } = { data: null, error: null }
         try {
-          const result = await client
-            .from('space')
-            .select('id, name')
-            .limit(20)
-            .abortSignal(controller.signal)
-          
-          data = result.data
-          error = result.error
+          result = await Promise.race([queryPromise, timeoutPromise]) as any
         } catch (err: any) {
-          if (err.name === 'AbortError') {
-            console.error('[Workspace] Query aborted due to timeout')
-          } else {
-            error = err
-          }
-        } finally {
-          clearTimeout(timeoutId)
+          console.error('[Workspace] Query threw error:', err)
+          result = { data: null, error: err }
         }
+        
+        const data = result.data
+        const error = result.error
         
         const queryDuration = Date.now() - taskStart
         console.log(`[Workspace] Workspace query completed in ${queryDuration}ms`)
@@ -175,16 +170,16 @@ async function getWorkspaceIdsInternal(options: WorkspaceOptions = {}): Promise<
     })())
   }
 
-  // Wait for tasks with overall timeout
+  // Wait for tasks with overall timeout (reduced to 1.2s to match individual query timeout)
   const allTasksStart = Date.now()
   try {
     await Promise.race([
       Promise.all(tasks),
       new Promise<void>((resolve) => {
         setTimeout(() => {
-          console.error('[Workspace] All workspace tasks timed out after 3000ms')
+          console.error('[Workspace] All workspace tasks timed out after 1200ms')
           resolve()
-        }, 3000)
+        }, 1200) // Slightly longer than individual query timeout
       })
     ])
   } catch (err) {
@@ -193,6 +188,13 @@ async function getWorkspaceIdsInternal(options: WorkspaceOptions = {}): Promise<
   const allTasksDuration = Date.now() - allTasksStart
   console.log(`[Workspace] All tasks completed in ${allTasksDuration}ms`)
   console.log('[Workspace] Workspace resolution after tasks:', Array.from(resolved))
+  
+  // CRITICAL: If query timed out and we only have default workspace, cache empty array to prevent retries
+  if (resolved.size === 1 && resolved.has(DEFAULT_SPACE_ID) && allTasksDuration >= 1100) {
+    console.warn('[Workspace] Query timed out, caching empty array to prevent retries')
+    workspaceCache.set(cacheKey, { workspaces: [], timestamp: Date.now() })
+    return []
+  }
 
   if (resolved.size > 1 && resolved.has(DEFAULT_SPACE_ID)) {
     console.log('[Workspace] Removing default workspace (other workspaces found)')
@@ -203,30 +205,27 @@ async function getWorkspaceIdsInternal(options: WorkspaceOptions = {}): Promise<
   if (resolved.size === 1 && resolved.has(DEFAULT_SPACE_ID)) {
     try {
       console.log('[Workspace] Running fallback workspace query (limit 10)')
-          
-          const controller = new AbortController()
-          const timeoutId = setTimeout(() => {
-            controller.abort()
-            console.error('[Workspace] Fallback workspace lookup aborted after 1500ms')
-          }, 1500)
+      
+      // Use Promise.race with timeout (more reliable than AbortController)
+      const fallbackQueryPromise = client
+        .from('space')
+        .select('id, name')
+        .limit(10)
+      
+      const fallbackTimeoutPromise = new Promise<{ data: null; error: { message: string } }>((resolve) => {
+        setTimeout(() => {
+          console.error('[Workspace] Fallback workspace lookup timed out after 1000ms')
+          resolve({ data: null, error: { message: 'Timeout' } })
+        }, 1000) // Aggressive 1s timeout
+      })
 
-          let result: { data: any; error: any } = { data: null, error: null }
-          
-          try {
-            result = await client
-              .from('space')
-              .select('id, name')
-              .limit(10)
-              .abortSignal(controller.signal)
-          } catch (err: any) {
-            if (err.name === 'AbortError') {
-              result = { data: null, error: { message: 'Aborted' } }
-            } else {
-              result = { data: null, error: err }
-            }
-          } finally {
-            clearTimeout(timeoutId)
-          }
+      let result: { data: any; error: any } = { data: null, error: null }
+      try {
+        result = await Promise.race([fallbackQueryPromise, fallbackTimeoutPromise]) as any
+      } catch (err: any) {
+        console.error('[Workspace] Fallback query threw error:', err)
+        result = { data: null, error: err }
+      }
 
       if (result.error) {
         console.error('[Workspace] Fallback workspace lookup failed:', result.error)
@@ -274,6 +273,7 @@ async function getWorkspaceIdsInternal(options: WorkspaceOptions = {}): Promise<
 export async function getWorkspaceIds(options: WorkspaceOptions = {}): Promise<string[]> {
   const timeoutMs = 2000 // 2s hard timeout
   const startTime = Date.now()
+  const cacheKey = `${options.phoneNumber || 'default'}_${options.includeSepFallback !== false ? 'sep' : 'nosep'}_${options.includePhoneLookup ? 'phone' : 'nophone'}`
   
   try {
     const result = await Promise.race([
@@ -291,8 +291,16 @@ export async function getWorkspaceIds(options: WorkspaceOptions = {}): Promise<s
   } catch (err) {
     const duration = Date.now() - startTime
     console.error(`[Workspace] getWorkspaceIds failed after ${duration}ms:`, err)
-    // Return default workspace on timeout/error
-    return [DEFAULT_SPACE_ID]
+    
+    // Cache empty array on timeout to prevent retries
+    if (duration >= timeoutMs - 100) {
+      console.warn('[Workspace] Public wrapper timed out, caching empty array to prevent retries')
+      workspaceCache.set(cacheKey, { workspaces: [], timestamp: Date.now() })
+      return []
+    }
+    
+    // Return empty array on error (don't search ghost default workspace)
+    return []
   }
 }
 
