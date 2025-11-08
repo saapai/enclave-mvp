@@ -94,21 +94,27 @@ export async function getWorkspaceIds(options: WorkspaceOptions = {}): Promise<s
   // Optional SEP fallback (enabled by default)
   if (options.includeSepFallback !== false) {
     tasks.push((async () => {
+      const taskStart = Date.now()
       try {
         console.log('[Workspace] Querying SEP workspaces')
-        const queryPromise = client
-          .from('space')
-          .select('id, name')
-          .ilike('name', '%SEP%')
+        
+        // Wrap entire query in timeout
+        const queryWithTimeout = Promise.race([
+          client
+            .from('space')
+            .select('id, name')
+            .ilike('name', '%SEP%'),
+          new Promise<{ data: null; error: { message: string } }>((resolve) => {
+            setTimeout(() => {
+              console.error('[Workspace] SEP workspace lookup timed out after 2000ms')
+              resolve({ data: null, error: { message: 'Timeout' } })
+            }, 2000)
+          })
+        ])
 
-        const timeoutPromise = new Promise<{ data: null; error: { message: string } }>((resolve) => {
-          setTimeout(() => {
-            console.error('[Workspace] SEP workspace lookup timed out after 2000ms')
-            resolve({ data: null, error: { message: 'Timeout' } })
-          }, 2000)
-        })
-
-        const result = await Promise.race([queryPromise, timeoutPromise])
+        const result = await queryWithTimeout
+        const queryDuration = Date.now() - taskStart
+        console.log(`[Workspace] SEP query completed in ${queryDuration}ms`)
 
         if (result.error) {
           console.error('[Workspace] SEP workspace lookup failed:', result.error)
@@ -123,12 +129,29 @@ export async function getWorkspaceIds(options: WorkspaceOptions = {}): Promise<s
           }
         }
       } catch (err) {
-        console.error('[Workspace] Error retrieving SEP workspaces:', err)
+        const errorDuration = Date.now() - taskStart
+        console.error(`[Workspace] Error retrieving SEP workspaces after ${errorDuration}ms:`, err)
       }
     })())
   }
 
-  await Promise.all(tasks)
+  // Wait for tasks with overall timeout
+  const allTasksStart = Date.now()
+  try {
+    await Promise.race([
+      Promise.all(tasks),
+      new Promise<void>((resolve) => {
+        setTimeout(() => {
+          console.error('[Workspace] All workspace tasks timed out after 3000ms')
+          resolve()
+        }, 3000)
+      })
+    ])
+  } catch (err) {
+    console.error('[Workspace] Error waiting for workspace tasks:', err)
+  }
+  const allTasksDuration = Date.now() - allTasksStart
+  console.log(`[Workspace] All tasks completed in ${allTasksDuration}ms`)
   console.log('[Workspace] Workspace resolution after tasks:', Array.from(resolved))
 
   // Final fallback: grab a few spaces if we only have the default
@@ -167,6 +190,12 @@ export async function getWorkspaceIds(options: WorkspaceOptions = {}): Promise<s
 
   const workspaceIds = Array.from(resolved)
   console.log('[Workspace] Workspace IDs resolved:', workspaceIds)
+  
+  // Safety check: if we only have default workspace, log warning but return it
+  if (workspaceIds.length === 1 && workspaceIds[0] === DEFAULT_SPACE_ID) {
+    console.warn('[Workspace] Only default workspace ID found - searches may return empty results')
+  }
+  
   return workspaceIds
 }
 
