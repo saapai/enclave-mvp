@@ -22,6 +22,7 @@ function normalizePhone(phone: string): string {
  * Retrieve conversation snapshot
  */
 export async function retrieveConvoSnapshot(phoneNumber: string, maxMessages: number = 10): Promise<EvidenceUnit[]> {
+  console.log(`[ConvoSnapshot] retrieveConvoSnapshot start for ${phoneNumber}`)
   const normalizedPhone = normalizePhone(phoneNumber)
   const client = supabaseAdmin || supabase
 
@@ -37,6 +38,8 @@ export async function retrieveConvoSnapshot(phoneNumber: string, maxMessages: nu
       console.error('[ConvoSnapshot] Conversation history query timed out after 3000ms')
     }, 3000)
 
+    console.log(`[ConvoSnapshot] Querying conversation history`)
+    const queryStart = Date.now()
     const { data: messages, error } = await client
       .from('sms_conversation_history')
       .select('user_message, bot_response, created_at')
@@ -46,6 +49,7 @@ export async function retrieveConvoSnapshot(phoneNumber: string, maxMessages: nu
       .abortSignal(controller.signal)
 
     clearTimeout(timeoutId)
+    console.log(`[ConvoSnapshot] Query completed in ${Date.now() - queryStart}ms, found ${messages?.length || 0} messages`)
 
     if (error) {
       console.error('[ConvoSnapshot] Failed to load conversation history:', error)
@@ -103,6 +107,7 @@ export async function retrieveConvoSnapshot(phoneNumber: string, maxMessages: nu
     }
   }
   
+  console.log(`[ConvoSnapshot] Returning ${1} evidence unit`)
   return [evidence]
   } catch (err) {
     if (err instanceof Error && err.name === 'AbortError') {

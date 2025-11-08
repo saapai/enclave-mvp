@@ -19,6 +19,7 @@ function normalizeDigits(phone: string): string {
  * Resolve workspace IDs for a given context (phone, SEP fallback, etc.)
  */
 export async function getWorkspaceIds(options: WorkspaceOptions = {}): Promise<string[]> {
+  console.log('[Workspace] getWorkspaceIds called with options:', options)
   const client = supabaseAdmin || supabase
 
   if (!client) {
@@ -28,6 +29,7 @@ export async function getWorkspaceIds(options: WorkspaceOptions = {}): Promise<s
 
   const resolved = new Set<string>()
   resolved.add(DEFAULT_SPACE_ID)
+  console.log('[Workspace] Added default space ID:', DEFAULT_SPACE_ID)
 
   const tasks: Promise<void>[] = []
 

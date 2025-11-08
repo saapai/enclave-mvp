@@ -23,10 +23,12 @@ export async function executeAnswer(
 ): Promise<ExecuteResult> {
   const overallStart = Date.now()
   console.log('[Execute Answer] Starting executeAnswer')
+  console.log('[Execute Answer] Frame user ID:', frame.user.id)
   const query = frame.text
   
   // Get workspace IDs
   const workspaceStart = Date.now()
+  console.log('[Execute Answer] About to call getWorkspaceIds')
   const spaceIds = await getWorkspaceIds({
     phoneNumber: frame.user.id,
     includeSepFallback: true
