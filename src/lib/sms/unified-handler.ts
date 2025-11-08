@@ -1026,6 +1026,8 @@ Answer factually based on the reference above.`
   }
   
   // Save query to action memory BEFORE processing (so follow-ups can detect it's processing)
+  console.log(`[UnifiedHandler] Saving query to action memory: "${messageText}"`)
+  const saveStartTime = Date.now()
   await saveAction(phoneNumber, {
     type: 'query',
     details: {
@@ -1034,19 +1036,28 @@ Answer factually based on the reference above.`
       queryAnswer: undefined // Will be updated after processing
     }
   }).catch(err => console.error('[UnifiedHandler] Failed to save initial query action:', err))
+  const saveDuration = Date.now() - saveStartTime
+  console.log(`[UnifiedHandler] Saved query to action memory in ${saveDuration}ms`)
   
   try {
     // Use orchestrator for content query handling
+    console.log(`[UnifiedHandler] Importing orchestrator...`)
+    const importStartTime = Date.now()
     const { handleTurn } = await import('@/lib/orchestrator/handleTurn')
-    console.log(`[UnifiedHandler] Calling orchestrator for query: "${messageText}"`)
+    const importDuration = Date.now() - importStartTime
+    console.log(`[UnifiedHandler] Orchestrator imported in ${importDuration}ms, calling handleTurn for query: "${messageText}"`)
     
     // Add timeout wrapper to prevent hanging
+    const orchestratorStartTime = Date.now()
     const orchestratorPromise = handleTurn(phoneNumber, messageText)
     const timeoutPromise = new Promise((_, reject) => {
       setTimeout(() => reject(new Error('Orchestrator timeout after 45 seconds')), 45000)
     })
     
+    console.log(`[UnifiedHandler] Racing orchestrator promise with timeout...`)
     const result = await Promise.race([orchestratorPromise, timeoutPromise]) as any
+    const orchestratorDuration = Date.now() - orchestratorStartTime
+    console.log(`[UnifiedHandler] Orchestrator completed in ${orchestratorDuration}ms`)
     
     console.log(`[UnifiedHandler] Orchestrator result: ${result.messages?.length || 0} messages`)
     
