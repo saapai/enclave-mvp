@@ -70,7 +70,8 @@ async function withTimeout<T>(
 export async function handleSMSMessage(
   phoneNumber: string,
   fullPhoneNumber: string, // E.164 format
-  messageText: string
+  messageText: string,
+  preClassifiedIntent?: ClassifiedIntent // Optional: skip classification if already done
 ): Promise<HandlerResult> {
   console.log(`[UnifiedHandler] Processing message from ${phoneNumber}: "${messageText}"`)
 
@@ -128,27 +129,34 @@ export async function handleSMSMessage(
   }
 
   // Classify intent FIRST using LLM (it will detect follow-ups)
-  // NOTE: For content queries, this is redundant since route.ts already classified,
-  // but we still need it for follow-up detection and other intents
-  console.log(`[UnifiedHandler] Classifying intent for: "${messageText}"`)
+  // If pre-classified intent provided (from route.ts), use it to avoid redundant LLM call
+  let intent: ClassifiedIntent
   const intentStartTime = Date.now()
   
-  // Use shorter timeout for async handler (since we already know it's likely content_query)
-  const intentPromise = classifyIntent(messageText, history)
-  const intentTimeoutPromise = new Promise<ClassifiedIntent>((resolve) => {
-    setTimeout(() => {
-      console.error(`[UnifiedHandler] Intent classification timeout after 8 seconds, using fallback`)
-      resolve({
-        type: 'content_query',
-        confidence: 0.1,
-        reasoning: 'Timeout fallback - assuming content_query',
-        instructions: [],
-        needsGeneration: true
-      })
-    }, 8000) // 8 second timeout (matching AbortController timeout)
-  })
+  if (preClassifiedIntent) {
+    console.log(`[UnifiedHandler] Using pre-classified intent: ${preClassifiedIntent.type} (confidence: ${preClassifiedIntent.confidence})`)
+    intent = preClassifiedIntent
+  } else {
+    console.log(`[UnifiedHandler] Classifying intent for: "${messageText}"`)
+    
+    // Use shorter timeout for async handler (since we already know it's likely content_query)
+    const intentPromise = classifyIntent(messageText, history)
+    const intentTimeoutPromise = new Promise<ClassifiedIntent>((resolve) => {
+      setTimeout(() => {
+        console.error(`[UnifiedHandler] Intent classification timeout after 8 seconds, using fallback`)
+        resolve({
+          type: 'content_query',
+          confidence: 0.1,
+          reasoning: 'Timeout fallback - assuming content_query',
+          instructions: [],
+          needsGeneration: true
+        })
+      }, 8000) // 8 second timeout (matching AbortController timeout)
+    })
+    
+    intent = await Promise.race([intentPromise, intentTimeoutPromise])
+  }
   
-  const intent = await Promise.race([intentPromise, intentTimeoutPromise])
   const intentDuration = Date.now() - intentStartTime
   console.log(`[UnifiedHandler] Intent classified in ${intentDuration}ms: ${intent.type} (confidence: ${intent.confidence}, isFollowUp: ${intent.isFollowUp})`)
   
