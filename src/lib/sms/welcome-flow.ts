@@ -21,9 +21,10 @@ export interface WelcomeState {
 /**
  * Check if user needs welcome flow
  */
-// Cache welcome check results for 30s to avoid redundant DB calls
+// Cache welcome check results for 5 minutes to avoid redundant DB calls
+// This is safe because welcome status rarely changes once set
 const welcomeCache = new Map<string, { result: boolean; timestamp: number }>()
-const WELCOME_CACHE_TTL = 30000 // 30 seconds
+const WELCOME_CACHE_TTL = 300000 // 5 minutes (was 30s, but welcome status is stable)
 
 export async function needsWelcome(phoneNumber: string): Promise<boolean> {
   try {

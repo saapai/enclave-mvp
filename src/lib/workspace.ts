@@ -6,6 +6,10 @@ import { supabase, supabaseAdmin } from '@/lib/supabase'
 
 const DEFAULT_SPACE_ID = '00000000-0000-0000-0000-000000000000'
 
+// Cache workspace lookups for 2 minutes to avoid slow Supabase queries
+const workspaceCache = new Map<string, { workspaces: string[]; timestamp: number }>()
+const WORKSPACE_CACHE_TTL = 120000 // 2 minutes
+
 interface WorkspaceOptions {
   phoneNumber?: string
   includeSepFallback?: boolean
@@ -31,6 +35,15 @@ function normalizeDigits(phone: string): string {
  */
 async function getWorkspaceIdsInternal(options: WorkspaceOptions = {}): Promise<string[]> {
   console.log('[Workspace] getWorkspaceIds called with options:', options)
+  
+  // Check cache first (use phone number as cache key if available)
+  const cacheKey = options.phoneNumber || 'default'
+  const cached = workspaceCache.get(cacheKey)
+  if (cached && Date.now() - cached.timestamp < WORKSPACE_CACHE_TTL) {
+    console.log(`[Workspace] Using cached workspaces for ${cacheKey} (${cached.workspaces.length} workspaces)`)
+    return cached.workspaces
+  }
+  
   const client = supabaseAdmin || supabase
 
   if (!client) {
@@ -242,12 +255,17 @@ async function getWorkspaceIdsInternal(options: WorkspaceOptions = {}): Promise<
   
   // Cap workspace count to prevent fan-out explosion
   const MAX_WORKSPACES = 5
+  let finalWorkspaces = workspaceIds
   if (workspaceIds.length > MAX_WORKSPACES) {
     console.warn(`[Workspace] Capping workspace count from ${workspaceIds.length} to ${MAX_WORKSPACES}`)
-    return workspaceIds.slice(0, MAX_WORKSPACES)
+    finalWorkspaces = workspaceIds.slice(0, MAX_WORKSPACES)
   }
   
-  return workspaceIds
+  // Cache the result
+  workspaceCache.set(cacheKey, { workspaces: finalWorkspaces, timestamp: Date.now() })
+  console.log(`[Workspace] Cached ${finalWorkspaces.length} workspaces for ${cacheKey}`)
+  
+  return finalWorkspaces
 }
 
 /**
