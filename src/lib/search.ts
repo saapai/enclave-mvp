@@ -41,6 +41,10 @@ export async function searchResourcesHybrid(
   try {
     // Generate embedding for vector search
     const queryEmbedding = await embedText(query)
+    const hasEmbedding = Array.isArray(queryEmbedding) && queryEmbedding.length > 0
+    if (!hasEmbedding) {
+      console.warn('[Hybrid Search] No embedding generated, skipping vector-based sources')
+    }
     
     // Search regular resources with FTS (keyword search)
     const regularResults = await searchResources(query, spaceId, filters, { limit: limit * 2, offset: 0 }, userId)
@@ -53,34 +57,38 @@ export async function searchResourcesHybrid(
     const DEFAULT_SPACE_ID = '00000000-0000-0000-0000-000000000000'
     const shouldFilterByUser = spaceId === DEFAULT_SPACE_ID
     
-    const { data: resourceVectorResults, error: vectorError } = await searchClient
-      .rpc('search_resources_vector', {
-        query_embedding: queryEmbedding,
-        target_space_id: spaceId,
-        limit_count: limit * 2,
-        offset_count: 0,
-        target_user_id: shouldFilterByUser ? userId : null  // Filter by user only in personal workspace
-      })
-    
-    if (vectorError) {
-      console.error('[Vector Search] RPC error:', vectorError)
-    } else {
-      console.log(`[Vector Search] RPC returned ${resourceVectorResults?.length || 0} resource matches`)
-      if (resourceVectorResults && resourceVectorResults.length > 0) {
-        console.log(`[Vector Search] First match:`, { 
-          title: resourceVectorResults[0].title, 
-          similarity: resourceVectorResults[0].similarity 
+    let vectorSearchResults: SearchResult[] = []
+
+    if (hasEmbedding) {
+      const { data: resourceVectorResults, error: vectorError } = await searchClient
+        .rpc('search_resources_vector', {
+          query_embedding: queryEmbedding,
+          target_space_id: spaceId,
+          limit_count: limit * 2,
+          offset_count: 0,
+          target_user_id: shouldFilterByUser ? userId : null  // Filter by user only in personal workspace
         })
-      }
-    }
     
-    // Convert vector search results to SearchResult format
-    const vectorSearchResults: SearchResult[] = (resourceVectorResults || []).map((resource: any) => ({
-      ...resource,
-      tags: [],  // TODO: Fetch tags separately if needed
-      rank: resource.similarity || 0,
-      score: resource.similarity || 0
-    } as SearchResult))
+      if (vectorError) {
+        console.error('[Vector Search] RPC error:', vectorError)
+      } else {
+        console.log(`[Vector Search] RPC returned ${resourceVectorResults?.length || 0} resource matches`)
+        if (resourceVectorResults && resourceVectorResults.length > 0) {
+          console.log(`[Vector Search] First match:`, { 
+            title: resourceVectorResults[0].title, 
+            similarity: resourceVectorResults[0].similarity 
+          })
+        }
+      }
+
+      // Convert vector search results to SearchResult format
+      vectorSearchResults = (resourceVectorResults || []).map((resource: any) => ({
+        ...resource,
+        tags: [],  // TODO: Fetch tags separately if needed
+        rank: resource.similarity || 0,
+        score: resource.similarity || 0
+      } as SearchResult))
+    }
     
     // Search Google Docs chunks using admin client (pass userId for filtering)
     console.log(`[GDocs Search] Searching for Google Doc chunks - Space: ${spaceId}, User: ${userId}`)
@@ -88,26 +96,30 @@ export async function searchResourcesHybrid(
     // For default workspace (personal), filter by user to ensure privacy
     // For custom workspaces, allow searching all resources in that workspace
     const shouldFilterGoogleDocsByUser = spaceId === DEFAULT_SPACE_ID
-    
-    const { data: googleDocsResults, error: gdError } = await searchClient
-      .rpc('search_google_docs_vector', {
-        query_embedding: queryEmbedding,
-        target_space_id: spaceId,
-        limit_count: limit * 2,
-        offset_count: 0,
-        target_user_id: shouldFilterGoogleDocsByUser ? userId : null
-      })
 
-    if (gdError) {
-      console.error('[GDocs Search] RPC error:', gdError)
-    } else {
-      console.log(`[GDocs Search] RPC returned ${googleDocsResults?.length || 0} chunks`)
-      if (googleDocsResults && googleDocsResults.length > 0) {
-        console.log(`[GDocs Search] First chunk:`, { 
-          text_preview: googleDocsResults[0].text?.substring(0, 100), 
-          added_by: googleDocsResults[0].added_by,
-          similarity: googleDocsResults[0].similarity 
+    let googleDocsResults: any[] = []
+    if (hasEmbedding) {
+      const { data, error: gdError } = await searchClient
+        .rpc('search_google_docs_vector', {
+          query_embedding: queryEmbedding,
+          target_space_id: spaceId,
+          limit_count: limit * 2,
+          offset_count: 0,
+          target_user_id: shouldFilterGoogleDocsByUser ? userId : null
         })
+
+      if (gdError) {
+        console.error('[GDocs Search] RPC error:', gdError)
+      } else {
+        googleDocsResults = data || []
+        console.log(`[GDocs Search] RPC returned ${googleDocsResults.length} chunks`)
+        if (googleDocsResults.length > 0) {
+          console.log(`[GDocs Search] First chunk:`, { 
+            text_preview: googleDocsResults[0].text?.substring(0, 100), 
+            added_by: googleDocsResults[0].added_by,
+            similarity: googleDocsResults[0].similarity 
+          })
+        }
       }
     }
 
@@ -115,26 +127,33 @@ export async function searchResourcesHybrid(
     // For default workspace (personal), filter by user to ensure privacy
     // For custom workspaces, allow searching all events in that workspace
     const shouldFilterCalendarByUser = spaceId === DEFAULT_SPACE_ID
-    
-    const { data: calendarResults, error: calError } = await searchClient
-      .rpc('search_calendar_events_vector', {
-        query_embedding: queryEmbedding,
-        target_space_id: spaceId,
-        limit_count: limit * 2,
-        offset_count: 0,
-        target_user_id: shouldFilterCalendarByUser ? userId : null
-      })
 
-    if (calError) {
-      console.error('Calendar search error:', calError)
+    let calendarResults: any[] = []
+    if (hasEmbedding) {
+      const { data, error: calError } = await searchClient
+        .rpc('search_calendar_events_vector', {
+          query_embedding: queryEmbedding,
+          target_space_id: spaceId,
+          limit_count: limit * 2,
+          offset_count: 0,
+          target_user_id: shouldFilterCalendarByUser ? userId : null
+        })
+
+      if (calError) {
+        console.error('Calendar search error:', calError)
+      } else {
+        calendarResults = data || []
+      }
     }
 
     // Search Slack messages
-    const slackResults = await searchSlackMessages(
-      queryEmbedding,
-      spaceId,
-      limit * 2
-    )
+    const slackResults = hasEmbedding
+      ? await searchSlackMessages(
+          queryEmbedding as number[],
+          spaceId,
+          limit * 2
+        )
+      : []
 
     // No need to filter by userId here - already done in RPC
     // But keep this for backwards compatibility if RPC doesn't have target_user_id

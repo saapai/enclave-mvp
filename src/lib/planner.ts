@@ -82,6 +82,10 @@ export async function planQuery(
  * Uses Mistral API to intelligently route queries
  */
 async function llmPlanQuery(query: string, spaceId: string): Promise<QueryPlan | null> {
+  const timeoutMs = Number(process.env.MISTRAL_PLANNER_TIMEOUT_MS || '6000')
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
+
   try {
     const response = await fetch('https://api.mistral.ai/v1/chat/completions', {
       method: 'POST',
@@ -130,38 +134,45 @@ Return ONLY valid JSON with this exact structure:
         ],
         temperature: 0.1,
         max_tokens: 300
-      })
+      }),
+      signal: controller.signal
     })
 
-    if (!response.ok) {
-      console.error(`[Planner LLM] API error: ${response.status}`)
+      if (!response.ok) {
+        console.error(`[Planner LLM] API error: ${response.status}`)
+        return null
+      }
+
+      const data = await response.json()
+      const content = data.choices[0]?.message?.content
+
+      if (!content) {
+        console.error('[Planner LLM] No content in response')
+        return null
+      }
+
+      // Parse JSON from response
+      const jsonMatch = content.match(/\{[\s\S]*\}/)
+      if (!jsonMatch) {
+        console.error('[Planner LLM] No JSON found in response')
+        return null
+      }
+
+      const plan: QueryPlan = JSON.parse(jsonMatch[0])
+      console.log(`[Planner LLM] Classified as: ${plan.intent}, confidence: ${plan.confidence}`)
+      
+      return plan
+
+    } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') {
+        console.error(`[Planner LLM] Timed out after ${timeoutMs}ms`)
+      } else {
+        console.error('[Planner LLM] Error:', error)
+      }
       return null
+    } finally {
+      clearTimeout(timeoutId)
     }
-
-    const data = await response.json()
-    const content = data.choices[0]?.message?.content
-
-    if (!content) {
-      console.error('[Planner LLM] No content in response')
-      return null
-    }
-
-    // Parse JSON from response
-    const jsonMatch = content.match(/\{[\s\S]*\}/)
-    if (!jsonMatch) {
-      console.error('[Planner LLM] No JSON found in response')
-      return null
-    }
-
-    const plan: QueryPlan = JSON.parse(jsonMatch[0])
-    console.log(`[Planner LLM] Classified as: ${plan.intent}, confidence: ${plan.confidence}`)
-    
-    return plan
-
-  } catch (error) {
-    console.error('[Planner LLM] Error:', error)
-    return null
-  }
 }
 
 /**
