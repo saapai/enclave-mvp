@@ -56,8 +56,8 @@ export async function executeAnswer(
       ? [SEP_SPACE_ID, ...realSpaces.filter(id => id !== SEP_SPACE_ID)]
       : realSpaces
     
-    // Hard cap at 3 workspaces for SMS (reduced from 5)
-    const workspaceIds = prioritizedSpaces.slice(0, 3)
+    // Hard cap at 4 workspaces for SMS (all 4 UCLA SEP workspaces)
+    const workspaceIds = prioritizedSpaces.slice(0, 4)
     
     console.log(`[Execute Answer] [${traceId}] Filtered workspaces: ${spaceIds.length} -> ${workspaceIds.length}`)
     
