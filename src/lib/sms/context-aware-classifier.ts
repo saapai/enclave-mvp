@@ -8,7 +8,9 @@
 import { ENV } from '@/lib/env'
 
 export type IntentType = 
-  | 'content_query'      // Questions about documents, events, resources
+  | 'content_query'      // Questions about documents, events, resources (needs async search)
+  | 'simple_question'    // Simple questions answered immediately (name, greeting)
+  | 'follow_up_query'    // Follow-up to previous queries
   | 'enclave_query'      // Questions about Enclave itself
   | 'random_conversation' // Casual chat, greetings, smalltalk
   | 'announcement_command' // Command to create/send announcement
@@ -36,6 +38,8 @@ export interface ClassifiedIntent {
   // For edits
   editType?: 'replace' | 'append' | 'modify'
   fieldsToUpdate?: string[]
+  // For follow-ups
+  isFollowUp?: boolean
 }
 
 /**
@@ -91,15 +95,17 @@ export async function classifyIntent(
   currentMessage: string,
   history: ConversationMessage[] = []
 ): Promise<ClassifiedIntent> {
-  // Build weighted context string
-  const contextMessages = history.slice(-10) // Last 10 messages
-  const contextString = contextMessages
-    .map((msg, idx) => {
-      const weight = (idx + 1) / contextMessages.length // More recent = higher weight
-      const role = msg.role === 'user' ? 'User' : 'Bot'
-      return `[Weight: ${weight.toFixed(2)}] ${role}: ${msg.text}`
-    })
-    .join('\n')
+  // Build weighted context string with full conversation history
+  const contextMessages = history.slice(-15) // Last 15 messages for better context
+  const contextString = contextMessages.length > 0
+    ? contextMessages
+        .map((msg, idx) => {
+          const weight = (idx + 1) / contextMessages.length // More recent = higher weight
+          const role = msg.role === 'user' ? 'User' : 'Bot'
+          return `[Weight: ${weight.toFixed(2)}] ${role}: ${msg.text}`
+        })
+        .join('\n')
+    : 'No previous conversation'
 
   const fullContext = contextString 
     ? `Recent conversation:\n${contextString}\n\nCurrent message: "${currentMessage}"`
@@ -117,24 +123,39 @@ export async function classifyIntent(
         messages: [
           {
             role: 'system',
-            content: `You are an intent classifier for Jarvis, an SMS bot powered by Enclave.
+            content: `You are an intelligent intent classifier for Jarvis, an SMS bot powered by Enclave. Your job is to understand EXACTLY what the user is saying based on FULL conversational context.
 
-Classify the user's message into ONE of these intents:
-- content_query: Questions about documents, events, resources, policies (e.g., "when is active meeting", "what's happening this week")
+Analyze the conversation history carefully. Consider:
+1. What the user just said
+2. What was said before (recent messages)
+3. What the bot said in response
+4. Whether there are unanswered questions
+5. Whether the user is referring to something from earlier in the conversation
+
+Classify the user's CURRENT message into ONE of these intents:
+
+INTENTS:
+- content_query: Questions about documents, events, resources, policies that require searching the knowledge base (e.g., "when is big little", "what's happening this week", "when is active meeting"). These take time to process.
+- simple_question: Simple questions that can be answered immediately without searching (e.g., "what's your name", "how are you", "who are you"). These should be answered synchronously.
+- follow_up_query: User is asking about a previous query or action (e.g., "what's the answer", "did you find that", "answer my previous queries", "hello answer pls"). Check if there are recent queries in the conversation.
 - enclave_query: Questions about Enclave itself (e.g., "what is enclave", "what can you do")
-- random_conversation: Casual chat, greetings, smalltalk (e.g., "hey", "thanks", "what's up")
-- announcement_command: User wants to create/send an announcement (e.g., "send out a message", "make an announcement", "broadcast")
+- random_conversation: Casual chat, greetings, smalltalk (e.g., "hey", "thanks", "what's up", "howre you doing")
+- announcement_command: User wants to create/send an announcement (e.g., "send out a message", "make an announcement", "broadcast", "say that it's football tmr 6am")
 - poll_command: User wants to create/send a poll (e.g., "make a poll", "create a poll", "send a poll")
-- poll_response: User is responding to an active poll (e.g., "yes", "no", "option 1")
-- announcement_edit: User is editing an announcement draft (e.g., "make it say X", "change the time to Y") - ONLY if there's an active draft AND they're clearly editing it
+- poll_response: User is responding to an active poll (e.g., "yes", "no", "option 1", "A")
+- announcement_edit: User is editing an announcement draft - ONLY if there's an active draft AND they're clearly modifying it (e.g., "make it say X", "change the time to Y", "update it")
 - poll_edit: User is editing a poll draft
-- name_declaration: User is stating their name (e.g., "I'm John", "my name is Sarah")
+- name_declaration: User is stating their name (e.g., "I'm John", "my name is Sarah", "call me Mike")
 - control_command: Control commands (e.g., "send it", "cancel", "yes", "no")
 
-IMPORTANT: 
-- Questions starting with "why" or "did you" are usually content_query or random_conversation, NOT announcement_edit
-- Only classify as announcement_edit if user is clearly modifying draft content (e.g., "make it say", "change to", "update")
-- Questions about past actions (e.g., "why didn't you send", "did you find") are content_query or random_conversation
+CRITICAL RULES:
+1. If the user asks "what's your name", "who are you", "how are you" → simple_question (NOT content_query)
+2. If the user asks "what's the answer", "did you find", "answer my queries" → follow_up_query (check conversation for previous queries)
+3. If the user says "answer my previous queries" or "answer pls" → follow_up_query (they want answers to earlier questions)
+4. Questions about past actions (e.g., "why didn't you send", "did you find") → follow_up_query or content_query, NOT announcement_edit
+5. Only classify as announcement_edit if there's clearly an active draft AND the user is modifying it
+6. "Answer my previous queries" is NEVER announcement_edit - it's asking for answers to past questions
+7. Consider the FULL conversation context - if the bot said "Looking that up..." recently, the user might be following up
 
 For announcement/poll commands, also extract:
 - verbatimText: Exact text the user wants to use (if they say "use my exact wording" or quote text)
@@ -145,10 +166,11 @@ Return ONLY valid JSON:
 {
   "type": "intent_type",
   "confidence": 0.0-1.0,
-  "reasoning": "brief explanation",
+  "reasoning": "brief explanation of why you chose this intent based on conversation context",
   "verbatimText": "exact text if provided",
   "instructions": ["instruction1", "instruction2"],
-  "needsGeneration": true/false
+  "needsGeneration": true/false,
+  "isFollowUp": true/false (if this is a follow-up to a previous query)
 }`
           },
           {
@@ -172,13 +194,27 @@ Return ONLY valid JSON:
     const jsonMatch = content.match(/\{[\s\S]*\}/)
     if (jsonMatch) {
       const parsed = JSON.parse(jsonMatch[0])
+      const intentType = parsed.type || 'random_conversation'
+      
+      // Validate intent type
+      const validIntents: IntentType[] = [
+        'content_query', 'simple_question', 'follow_up_query', 'enclave_query',
+        'random_conversation', 'announcement_command', 'poll_command', 'poll_response',
+        'announcement_edit', 'poll_edit', 'name_declaration', 'control_command'
+      ]
+      
+      const finalType = validIntents.includes(intentType as IntentType) 
+        ? intentType as IntentType 
+        : 'random_conversation'
+      
       return {
-        type: parsed.type || 'random_conversation',
+        type: finalType,
         confidence: parsed.confidence || 0.5,
         reasoning: parsed.reasoning,
         verbatimText: parsed.verbatimText,
         instructions: parsed.instructions || [],
-        needsGeneration: parsed.needsGeneration !== false // Default to true
+        needsGeneration: parsed.needsGeneration !== false, // Default to true
+        isFollowUp: parsed.isFollowUp || false
       }
     }
   } catch (err) {

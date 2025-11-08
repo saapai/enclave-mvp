@@ -70,47 +70,132 @@ export async function handleSMSMessage(
     }
   }
 
-  // Check for follow-up questions about past actions BEFORE classifying intent
-  // This prevents misclassification and ensures we use action memory
-  const isFollowUpQuestion = /^(and\s+)?(what'?s|what\s+is|what\s+was)\s+(the\s+)?(answer|result|info|information)/i.test(messageText) ||
-                            /^(did\s+you|have\s+you)\s+(find|found|get|got|track|record)/i.test(messageText) ||
-                            /^(what|where)\s+(did|was)\s+(you|it)/i.test(messageText)
+  // Classify intent FIRST using LLM (it will detect follow-ups)
+  const intent = await classifyIntent(messageText, history)
+  console.log(`[UnifiedHandler] Intent: ${intent.type} (confidence: ${intent.confidence}, isFollowUp: ${intent.isFollowUp})`)
   
-  if (isFollowUpQuestion) {
+  // Handle follow-up queries based on LLM classification
+  if (intent.type === 'follow_up_query' || intent.isFollowUp) {
     console.log(`[UnifiedHandler] Detected follow-up question, checking action memory`)
     const { getRecentActions } = await import('./action-memory')
-    const recentActions = await getRecentActions(phoneNumber, 5)
+    const recentActions = await getRecentActions(phoneNumber, 10)
     
-    // Find the most recent query action
-    const lastQuery = recentActions.find(a => a.type === 'query')
+    // Find ALL recent query actions that haven't been answered yet
+    const recentQueries = recentActions.filter(a => a.type === 'query').slice(0, 3) // Last 3 queries
     
-    if (lastQuery && lastQuery.details.queryResults > 0 && lastQuery.details.queryAnswer) {
-      console.log(`[UnifiedHandler] Found previous query result, returning it`)
-      return {
-        response: lastQuery.details.queryAnswer,
-        shouldSaveHistory: true,
-        metadata: { intent: 'content_query' }
-      }
-    } else if (lastQuery && lastQuery.details.queryResults === 0) {
-      return {
-        response: "i couldn't find information about that.",
-        shouldSaveHistory: true,
-        metadata: { intent: 'content_query' }
-      }
-    } else if (lastQuery) {
-      // Query is still processing
-      return {
-        response: "still looking that up, give me a sec!",
-        shouldSaveHistory: true,
-        metadata: { intent: 'content_query' }
+    if (recentQueries.length > 0) {
+      // Check if any queries have answers
+      const answeredQueries = recentQueries.filter(q => q.details.queryResults > 0 && q.details.queryAnswer)
+      
+      if (answeredQueries.length > 0) {
+        // Return the most recent answered query
+        const lastAnswered = answeredQueries[0]
+        console.log(`[UnifiedHandler] Found previous query result: "${lastAnswered.details.query}"`)
+        return {
+          response: lastAnswered.details.queryAnswer,
+          shouldSaveHistory: true,
+          metadata: { intent: 'content_query' }
+        }
+      } else {
+        // Check if queries are still processing (recent but no results yet)
+        const pendingQueries = recentQueries.filter(q => !q.details.queryResults && !q.details.queryAnswer)
+        if (pendingQueries.length > 0) {
+          return {
+            response: "still processing your queries, give me a sec!",
+            shouldSaveHistory: true,
+            metadata: { intent: 'content_query' }
+          }
+        } else {
+          // Queries were attempted but found nothing
+          const failedQueries = recentQueries.filter(q => q.details.queryResults === 0)
+          if (failedQueries.length > 0) {
+            return {
+              response: `i couldn't find information about "${failedQueries[0].details.query}".`,
+              shouldSaveHistory: true,
+              metadata: { intent: 'content_query' }
+            }
+          }
+        }
       }
     }
-    // If no recent query found, continue with normal flow
+    
+    // If no recent queries found, check conversation history for unanswered questions
+    const lastUserMessages = history.filter(m => m.role === 'user').slice(-3)
+    if (lastUserMessages.length > 0) {
+      const unansweredQuestions = lastUserMessages.filter(msg => 
+        /^(what|when|where|who|how|why)/i.test(msg.text.trim())
+      )
+      if (unansweredQuestions.length > 0) {
+        return {
+          response: `i'm still working on "${unansweredQuestions[0].text}". give me a moment!`,
+          shouldSaveHistory: true,
+          metadata: { intent: 'content_query' }
+        }
+      }
+    }
+    
+    // If nothing found, continue with normal flow
+    console.log(`[UnifiedHandler] No recent queries found in action memory, continuing with normal flow`)
   }
 
-  // Classify intent with context
-  const intent = await classifyIntent(messageText, history)
-  console.log(`[UnifiedHandler] Intent: ${intent.type} (confidence: ${intent.confidence})`)
+  // Handle simple questions based on LLM classification
+  // Use LLM to generate appropriate response based on the question
+  if (intent.type === 'simple_question') {
+    try {
+      // Use LLM to answer simple questions contextually
+      const { ENV } = await import('@/lib/env')
+      const aiResponse = await fetch('https://api.mistral.ai/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${ENV.MISTRAL_API_KEY}`
+        },
+        body: JSON.stringify({
+          model: 'mistral-small-latest',
+          messages: [
+            {
+              role: 'system',
+              content: `You are Jarvis, an SMS bot powered by Enclave. Answer the user's simple question directly and conversationally.
+
+Context from conversation:
+${history.slice(-5).map(m => `${m.role === 'user' ? 'User' : 'Bot'}: ${m.text}`).join('\n')}
+
+If they ask about your name, say "i'm jarvis! nice to meet you 👋"
+If they ask how you are, say "i'm doing great! ready to help with whatever you need 😊"
+Keep responses brief (1-2 sentences max) and friendly.`
+            },
+            {
+              role: 'user',
+              content: messageText
+            }
+          ],
+          temperature: 0.7,
+          max_tokens: 100
+        })
+      })
+      
+      if (aiResponse.ok) {
+        const aiData = await aiResponse.json()
+        const response = aiData.choices?.[0]?.message?.content || ''
+        if (response.trim().length > 0) {
+          return {
+            response: response.trim(),
+            shouldSaveHistory: true,
+            metadata: { intent: 'simple_question' }
+          }
+        }
+      }
+    } catch (err) {
+      console.error('[UnifiedHandler] Simple question LLM failed:', err)
+    }
+    
+    // Fallback response
+    return {
+      response: "i'm jarvis, part of enclave! how can i help?",
+      shouldSaveHistory: true,
+      metadata: { intent: 'simple_question' }
+    }
+  }
 
   // Handle based on intent
   switch (intent.type) {
@@ -140,6 +225,7 @@ export async function handleSMSMessage(
     
     case 'content_query':
     case 'enclave_query':
+    case 'simple_question': // Simple questions that need search (fallback)
       return handleQuery(phoneNumber, messageText, intent.type)
 
     default:

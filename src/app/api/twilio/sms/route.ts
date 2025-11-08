@@ -782,12 +782,16 @@ export async function POST(request: NextRequest) {
     try {
       console.log(`[Twilio SMS] Calling unified handler for: ${body.substring(0, 50)}`)
       
-      // Quick check: is this likely a content query that will take time?
-      // Content queries typically start with question words and don't match command patterns
-      const isLikelyContentQuery = /^(when|where|what|who|how|why|tell\s+me|find|search)/i.test(body.trim()) &&
-                                   !/(send|make|create|post|broadcast|blast|poll|announcement)/i.test(body)
+      // Check intent first to determine if async processing is needed
+      // We need to classify without processing to see if it's a content query
+      const { classifyIntent, loadWeightedHistory } = await import('@/lib/sms/context-aware-classifier')
+      const history = await loadWeightedHistory(phoneNumber, 15)
+      const intent = await classifyIntent(body, history)
       
-      if (isLikelyContentQuery) {
+      // Only content_query needs async processing (simple_question and follow_up_query are fast)
+      const needsAsyncProcessing = intent.type === 'content_query'
+      
+      if (needsAsyncProcessing) {
         // For content queries, return immediate acknowledgment and process asynchronously
         // This prevents Twilio timeout (10-15 second limit)
         console.log(`[Twilio SMS] Content query detected, processing asynchronously`)
@@ -799,7 +803,8 @@ export async function POST(request: NextRequest) {
         )
         
         // Process query asynchronously (don't await)
-        console.log(`[Twilio SMS] Starting async handler for query: "${body.substring(0, 50)}"`)
+        console.log(`[Twilio SMS] Starting async handler for content query: "${body.substring(0, 50)}"`)
+        // Re-process the message asynchronously (tempResult was just for classification)
         handleSMSMessage(phoneNumber, from, body)
           .then(async (result) => {
             console.log(`[Twilio SMS] Async handler completed successfully`)
