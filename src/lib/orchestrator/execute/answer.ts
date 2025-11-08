@@ -187,28 +187,42 @@ export async function executeAnswer(
     
     console.log(`[Execute Answer] [${traceId}] planQuery completed in ${Date.now() - planStart}ms (intent=${plan.intent}, confidence=${plan.confidence})`)
     
-    // Execute plan across all workspaces using Promise.allSettled + timeouts
-    const executePlanPromises = spaceIds.map((spaceId) =>
-      pTimeout(
-        (async () => {
-          const executePlanStart = Date.now()
-          const toolResults = await executePlan(plan, spaceId, queryEmbedding)
-          console.log(`[Execute Answer] [${traceId}] executePlan returned ${toolResults.length} tool results for space ${spaceId} in ${Date.now() - executePlanStart}ms`)
-          if (toolResults.length > 0) {
-            console.log(`[Execute Answer] [${traceId}] Tool summary for space ${spaceId}:`, toolResults.map(t => ({ tool: t.tool, success: t.success, confidence: t.confidence, resultCount: t.data?.results?.length })))
-          }
-          return toolResults
-        })(),
-        3000, // 3s timeout per workspace plan execution
-        `executePlan:${spaceId}`
-      ).catch(() => {
-        console.error(`[Execute Answer] [${traceId}] executePlan for space ${spaceId} timed out`)
-        return []
-      })
-    )
-    
-    const allToolResultsArrays = await safeAll(executePlanPromises)
-    const allToolResults = allToolResultsArrays.flat()
+    // SHORT-CIRCUIT: Skip tool execution if we already have good results from hybrid search
+    let allToolResults: any[] = []
+    if (dedupedResults.length >= 2 && dedupedResults[0].score && dedupedResults[0].score > 0.6) {
+      console.log(`[Execute Answer] [${traceId}] Skipping tool execution - already have ${dedupedResults.length} good results from hybrid search (top score: ${dedupedResults[0].score.toFixed(3)})`)
+      // Convert hybrid search results to tool result format
+      allToolResults = [{
+        tool: 'search_docs',
+        success: true,
+        data: { results: dedupedResults },
+        confidence: dedupedResults[0].score
+      }]
+    } else {
+      console.log(`[Execute Answer] [${traceId}] Running tool execution (hybrid results: ${dedupedResults.length}, top score: ${dedupedResults[0]?.score?.toFixed(3) || 'N/A'})`)
+      // Execute plan across all workspaces using Promise.allSettled + timeouts
+      const executePlanPromises = spaceIds.map((spaceId) =>
+        pTimeout(
+          (async () => {
+            const executePlanStart = Date.now()
+            const toolResults = await executePlan(plan, spaceId, queryEmbedding)
+            console.log(`[Execute Answer] [${traceId}] executePlan returned ${toolResults.length} tool results for space ${spaceId} in ${Date.now() - executePlanStart}ms`)
+            if (toolResults.length > 0) {
+              console.log(`[Execute Answer] [${traceId}] Tool summary for space ${spaceId}:`, toolResults.map(t => ({ tool: t.tool, success: t.success, confidence: t.confidence, resultCount: t.data?.results?.length })))
+            }
+            return toolResults
+          })(),
+          3000, // 3s timeout per workspace plan execution
+          `executePlan:${spaceId}`
+        ).catch(() => {
+          console.error(`[Execute Answer] [${traceId}] executePlan for space ${spaceId} timed out`)
+          return []
+        })
+      )
+      
+      const allToolResultsArrays = await safeAll(executePlanPromises)
+      allToolResults = allToolResultsArrays.flat()
+    }
     
     // Deduplicate tool results by tool name and keep highest confidence
     const toolResultsMap = new Map<string, any>()
