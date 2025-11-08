@@ -781,6 +781,77 @@ export async function POST(request: NextRequest) {
     // ========================================================================
     try {
       console.log(`[Twilio SMS] Calling unified handler for: ${body.substring(0, 50)}`)
+      
+      // Quick check: is this likely a content query that will take time?
+      // Content queries typically start with question words and don't match command patterns
+      const isLikelyContentQuery = /^(when|where|what|who|how|why|tell\s+me|find|search)/i.test(body.trim()) &&
+                                   !/(send|make|create|post|broadcast|blast|poll|announcement)/i.test(body)
+      
+      if (isLikelyContentQuery) {
+        // For content queries, return immediate acknowledgment and process asynchronously
+        // This prevents Twilio timeout (10-15 second limit)
+        console.log(`[Twilio SMS] Content query detected, processing asynchronously`)
+        
+        // Return immediate acknowledgment
+        const ackResponse = new NextResponse(
+          `<?xml version="1.0" encoding="UTF-8"?><Response><Message>Looking that up...</Message></Response>`,
+          { headers: { 'Content-Type': 'application/xml' } }
+        )
+        
+        // Process query asynchronously (don't await)
+        handleSMSMessage(phoneNumber, from, body)
+          .then(async (result) => {
+            console.log(`[Twilio SMS] Async handler returned: "${result.response.substring(0, 100)}..."`)
+            
+            // Ensure we have a response
+            if (!result.response || result.response.trim().length === 0) {
+              console.error('[Twilio SMS] Async handler returned empty response!')
+              return
+            }
+            
+            // Save conversation history if needed
+            if (result.shouldSaveHistory) {
+              try {
+                await supabase.from('sms_conversation_history').insert({
+                  phone_number: phoneNumber,
+                  user_message: body,
+                  bot_response: result.response
+                })
+              } catch (err) {
+                console.error('[Twilio SMS] Failed to save conversation history:', err)
+              }
+            }
+            
+            // Split long messages
+            const messages = splitLongMessage(result.response, 1600)
+            
+            console.log(`[Twilio SMS] Sending ${messages.length} async message(s) to user`)
+            
+            // Send via Twilio API
+            for (const message of messages) {
+              try {
+                const smsResult = await sendSms(from, message)
+                if (smsResult.ok) {
+                  console.log(`[Twilio SMS] Async message sent successfully, SID: ${smsResult.sid}`)
+                } else {
+                  console.error(`[Twilio SMS] Failed to send async message: ${smsResult.error}`)
+                }
+              } catch (err) {
+                console.error(`[Twilio SMS] Error sending async message:`, err)
+              }
+            }
+          })
+          .catch((err) => {
+            console.error('[Twilio SMS] Async handler error:', err)
+            // Send error message to user
+            sendSms(from, "Sorry, I encountered an error processing your query. Please try again.")
+              .catch(e => console.error('[Twilio SMS] Failed to send error message:', e))
+          })
+        
+        return ackResponse
+      }
+      
+      // For non-content queries (commands, smalltalk, etc.), process synchronously
       const result = await handleSMSMessage(phoneNumber, from, body)
       
       console.log(`[Twilio SMS] Unified handler returned: "${result.response.substring(0, 100)}..."`)
