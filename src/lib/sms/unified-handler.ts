@@ -215,77 +215,85 @@ export async function handleSMSMessage(
       // Get the MOST RECENT query (first in array since getRecentActions returns newest first)
       const mostRecentQuery = recentQueries[0]
       
-      // Check if the most recent query has an answer
-      if (mostRecentQuery.details.queryAnswer && (mostRecentQuery.details.queryResults || 0) > 0) {
-        console.log(`[UnifiedHandler] Found most recent query result: "${mostRecentQuery.details.query}"`)
-        return {
-          response: mostRecentQuery.details.queryAnswer || "i couldn't find information about that.",
-          shouldSaveHistory: true,
-          metadata: { intent: 'content_query' }
-        }
-      }
+      // CRITICAL: Check if the current message is essentially the same as the pending query
+      // If so, treat it as a NEW query attempt (not a status check)
+      const currentTextLower = messageText.toLowerCase().trim()
+      const pendingQueryLower = (mostRecentQuery.details.query || '').toLowerCase().trim()
       
-      // Check if the most recent query is still processing (no answer yet, but recent)
-      const isRecent = new Date(mostRecentQuery.timestamp).getTime() > Date.now() - 120000 // Within last 2 minutes
-      if (isRecent && !mostRecentQuery.details.queryAnswer && !mostRecentQuery.details.queryResults) {
-        console.log(`[UnifiedHandler] Most recent query "${mostRecentQuery.details.query}" is still processing`)
-        return {
-          response: `still processing "${mostRecentQuery.details.query}", give me a sec!`,
-          shouldSaveHistory: true,
-          metadata: { intent: 'content_query' }
-        }
-      }
+      // Simple similarity check: if 80%+ of words match, it's a repeat
+      const currentWords = currentTextLower.split(/\s+/).filter(w => w.length > 2)
+      const pendingWords = pendingQueryLower.split(/\s+/).filter(w => w.length > 2)
+      const matchingWords = currentWords.filter(w => pendingWords.includes(w))
+      const similarity = matchingWords.length / Math.max(currentWords.length, 1)
       
-      // Check if any queries have answers (fallback to any answered query)
-      const answeredQueries = recentQueries.filter(q => (q.details.queryResults || 0) > 0 && q.details.queryAnswer)
-      if (answeredQueries.length > 0) {
-        const lastAnswered = answeredQueries[0]
-        console.log(`[UnifiedHandler] Found previous query result: "${lastAnswered.details.query}"`)
-        return {
-          response: lastAnswered.details.queryAnswer || "i couldn't find information about that.",
-          shouldSaveHistory: true,
-          metadata: { intent: 'content_query' }
-        }
-      }
+      const isRepeatQuery = similarity > 0.8 || currentTextLower === pendingQueryLower
       
-      // Check if queries are still processing (recent but no results yet)
-      const pendingQueries = recentQueries.filter(q => !q.details.queryResults && !q.details.queryAnswer)
-      if (pendingQueries.length > 0) {
-        return {
-          response: `still processing "${pendingQueries[0].details.query}", give me a sec!`,
-          shouldSaveHistory: true,
-          metadata: { intent: 'content_query' }
-        }
+      // Check if this is a status check (asking for update, not repeating the question)
+      const isStatusCheck = /^(did you|any update|what'?s your|where'?s|got|find|answer|result|response)/i.test(currentTextLower)
+      
+      if (isRepeatQuery && !isStatusCheck) {
+        console.log(`[UnifiedHandler] User is repeating the same query, treating as new content_query`)
+        // Fall through to normal query handling (don't return here)
       } else {
-        // Queries were attempted but found nothing
-        const failedQueries = recentQueries.filter(q => (q.details.queryResults || 0) === 0)
-        if (failedQueries.length > 0) {
+        // This is a genuine status check or different follow-up
+        
+        // Check if the most recent query has an answer
+        if (mostRecentQuery.details.queryAnswer && (mostRecentQuery.details.queryResults || 0) > 0) {
+          console.log(`[UnifiedHandler] Found most recent query result: "${mostRecentQuery.details.query}"`)
           return {
-            response: `i couldn't find information about "${failedQueries[0].details.query}".`,
+            response: mostRecentQuery.details.queryAnswer || "i couldn't find information about that.",
             shouldSaveHistory: true,
             metadata: { intent: 'content_query' }
+          }
+        }
+        
+        // Check if the most recent query is still processing (no answer yet, but recent)
+        const isRecent = new Date(mostRecentQuery.timestamp).getTime() > Date.now() - 120000 // Within last 2 minutes
+        if (isRecent && !mostRecentQuery.details.queryAnswer && !mostRecentQuery.details.queryResults) {
+          console.log(`[UnifiedHandler] Most recent query "${mostRecentQuery.details.query}" is still processing`)
+          return {
+            response: `still processing "${mostRecentQuery.details.query}", give me a sec!`,
+            shouldSaveHistory: true,
+            metadata: { intent: 'content_query' }
+          }
+        }
+        
+        // Check if any queries have answers (fallback to any answered query)
+        const answeredQueries = recentQueries.filter(q => (q.details.queryResults || 0) > 0 && q.details.queryAnswer)
+        if (answeredQueries.length > 0) {
+          const lastAnswered = answeredQueries[0]
+          console.log(`[UnifiedHandler] Found previous query result: "${lastAnswered.details.query}"`)
+          return {
+            response: lastAnswered.details.queryAnswer || "i couldn't find information about that.",
+            shouldSaveHistory: true,
+            metadata: { intent: 'content_query' }
+          }
+        }
+        
+        // Check if queries are still processing (recent but no results yet)
+        const pendingQueries = recentQueries.filter(q => !q.details.queryResults && !q.details.queryAnswer)
+        if (pendingQueries.length > 0) {
+          return {
+            response: `still processing "${pendingQueries[0].details.query}", give me a sec!`,
+            shouldSaveHistory: true,
+            metadata: { intent: 'content_query' }
+          }
+        } else {
+          // Queries were attempted but found nothing
+          const failedQueries = recentQueries.filter(q => (q.details.queryResults || 0) === 0)
+          if (failedQueries.length > 0) {
+            return {
+              response: `i couldn't find information about "${failedQueries[0].details.query}".`,
+              shouldSaveHistory: true,
+              metadata: { intent: 'content_query' }
+            }
           }
         }
       }
     }
     
-    // If no recent queries found, check conversation history for unanswered questions
-    const lastUserMessages = history.filter(m => m.role === 'user').slice(-3)
-    if (lastUserMessages.length > 0) {
-      const unansweredQuestions = lastUserMessages.filter(msg => 
-        /^(what|when|where|who|how|why)/i.test(msg.text.trim())
-      )
-      if (unansweredQuestions.length > 0) {
-        return {
-          response: `i'm still working on "${unansweredQuestions[0].text}". give me a moment!`,
-          shouldSaveHistory: true,
-          metadata: { intent: 'content_query' }
-        }
-      }
-    }
-    
-    // If nothing found, continue with normal flow
-    console.log(`[UnifiedHandler] No recent queries found in action memory, continuing with normal flow`)
+    // If nothing found or it's a repeat query, continue with normal flow
+    console.log(`[UnifiedHandler] No blocking conditions found, continuing with normal query flow`)
   }
 
   // Handle simple questions based on LLM classification
