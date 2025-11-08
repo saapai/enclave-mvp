@@ -29,6 +29,7 @@ export async function executeAnswer(
   const workspaceStart = Date.now()
   const spaceIds = await getWorkspaceIds()
   console.log(`[Execute Answer] Retrieved ${spaceIds.length} workspace ids in ${Date.now() - workspaceStart}ms`)
+  console.log('[Execute Answer] Workspace IDs:', spaceIds)
   if (spaceIds.length === 0) {
     return {
       messages: ['I couldn\'t find any workspaces. Please contact support.']
