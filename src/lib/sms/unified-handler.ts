@@ -376,6 +376,26 @@ Rules:
     }
   }
 
+  // Handle content queries FIRST (before switch) to catch overridden intents
+  if (intent.type === 'content_query' || intent.type === 'enclave_query') {
+    console.log(`[UnifiedHandler] Routing to handleQuery for intent: ${intent.type}`)
+    
+    // Save query to action memory (fire-and-forget with timeout)
+    console.log(`[UnifiedHandler] Saving query to action memory: "${messageText}"`)
+    queueActionMemorySave(
+      phoneNumber,
+      {
+        type: 'query',
+        details: {
+          query: messageText
+        }
+      },
+      'saveAction (initial)'
+    )
+    
+    return await handleQuery(phoneNumber, messageText, intent.type, history)
+  }
+  
   // Handle based on intent
   switch (intent.type) {
     case 'name_declaration':
@@ -401,11 +421,6 @@ Rules:
 
     case 'random_conversation':
       return handleSmalltalk(messageText, history)
-    
-    case 'content_query':
-    case 'enclave_query':
-      console.log(`[UnifiedHandler] Routing to handleQuery for intent: ${intent.type}`)
-      return handleQuery(phoneNumber, messageText, intent.type, history)
 
     default:
       return {
