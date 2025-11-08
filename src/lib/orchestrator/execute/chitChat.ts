@@ -20,6 +20,7 @@ export async function executeChitChat(
   envelope: ContextEnvelope
 ): Promise<ExecuteResult> {
   const lowerMsg = frame.text.toLowerCase().trim()
+  const query = frame.text
   
   // Handle abusive messages
   if (frame.signals.toxicity === 'abusive') {
@@ -34,6 +35,45 @@ export async function executeChitChat(
     return {
       messages: ['draft discarded'],
       newMode: 'IDLE'
+    }
+  }
+  
+  // Check if user is asking about past actions
+  const isActionQuery = /^(did\s+you|why\s+didn'?t|have\s+you|what\s+did\s+you)/i.test(query)
+  if (isActionQuery && envelope.evidence) {
+    const actionMemory = envelope.evidence.find(e => e.scope === 'ACTION' && e.source_id?.includes('action_memory'))
+    if (actionMemory?.text) {
+      // Use AI to answer based on action memory
+      try {
+        const aiUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'https://www.tryenclave.com'}/api/ai`
+        const controller = new AbortController()
+        const timeoutId = setTimeout(() => controller.abort(), 5000)
+        
+        const aiRes = await fetch(aiUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            query,
+            context: actionMemory.text,
+            type: 'summary'
+          }),
+          signal: controller.signal
+        })
+        
+        clearTimeout(timeoutId)
+        
+        if (aiRes.ok) {
+          const aiData = await aiRes.json()
+          const response = aiData.response || ''
+          if (response.length > 10) {
+            return {
+              messages: [response]
+            }
+          }
+        }
+      } catch (err) {
+        console.error(`[ChitChat] AI call for action query failed:`, err)
+      }
     }
   }
   

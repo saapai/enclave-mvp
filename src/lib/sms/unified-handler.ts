@@ -70,17 +70,8 @@ export async function handleSMSMessage(
     }
   }
 
-  // Check if user is asking about a past action
-  const actionQuery = await checkActionQuery(phoneNumber, messageText)
-  if (actionQuery.isActionQuery && actionQuery.response) {
-    return {
-      response: actionQuery.response,
-      shouldSaveHistory: true,
-      metadata: {}
-    }
-  }
-
   // Classify intent with context
+  // Note: Action memory queries are now handled by the orchestrator via LLM, not regex patterns
   const intent = await classifyIntent(messageText, history)
   console.log(`[UnifiedHandler] Intent: ${intent.type} (confidence: ${intent.confidence})`)
 

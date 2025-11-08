@@ -184,12 +184,16 @@ export async function executeAnswer(
             const currentDate = now.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
             const currentDayOfWeek = now.toLocaleDateString('en-US', { weekday: 'long' })
             
+            // Get action memory context from envelope if available
+            const actionMemory = envelope.evidence?.find(e => e.scope === 'ACTION' && e.source_id?.includes('action_memory'))
+            const actionContext = actionMemory?.text ? `\n\nRecent actions:\n${actionMemory.text}` : ''
+            
             const aiRes = await fetch(aiUrl, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
                 query,
-                context: `Title: ${topResult.title}\nContent: ${topResult.body.substring(0, 2000)}\n\nIMPORTANT: Today is ${currentDayOfWeek}, ${currentDate}. Extract the ACTUAL date from the document content, not "today". If the document says "Nov 13" or "November 13", use that exact date. Do not use relative dates like "today" unless the document explicitly says "today".`,
+                context: `Title: ${topResult.title}\nContent: ${topResult.body.substring(0, 2000)}\n\nIMPORTANT: Today is ${currentDayOfWeek}, ${currentDate}. Extract the ACTUAL date from the document content, not "today". If the document says "Nov 13" or "November 13", use that exact date. Do not use relative dates like "today" unless the document explicitly says "today".${actionContext}\n\nIf the user is asking about past actions (e.g., "did you find", "why didn't you send"), use the Recent actions context above to answer their question directly.`,
                 type: 'summary'
               }),
               signal: controller.signal

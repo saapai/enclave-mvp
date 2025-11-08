@@ -8,6 +8,7 @@
 import { supabase } from '@/lib/supabase'
 import { getActiveDraft, getPreviousAnnouncements } from '@/lib/announcements'
 import { getActivePollDraft } from '@/lib/polls'
+import { getRecentActions } from '@/lib/sms/action-memory'
 import { EvidenceUnit, Draft, Action, PollState } from './types'
 
 /**
@@ -184,8 +185,66 @@ export async function retrieveActionState(phoneNumber: string): Promise<{
     })
   }
   
+  // Get action memory (queries, responses, etc.)
+  const actionMemory = await getRecentActions(normalizedPhone, 10)
+  for (const memory of actionMemory) {
+    // Convert action memory to Action format
+    if (memory.type === 'query') {
+      recent_actions.push({
+        id: `query_${memory.timestamp}`,
+        kind: 'query_executed',
+        ts: memory.timestamp,
+        payload: {
+          query: memory.details.query,
+          results_count: memory.details.queryResults || 0,
+          answer: memory.details.queryAnswer
+        }
+      })
+    } else if (memory.type === 'poll_response_recorded') {
+      recent_actions.push({
+        id: `poll_response_${memory.timestamp}`,
+        kind: 'poll_response',
+        ts: memory.timestamp,
+        payload: {
+          question: memory.details.pollQuestion,
+          response: memory.details.pollResponse
+        }
+      })
+    }
+  }
+  
   // Sort actions by timestamp
   recent_actions.sort((a, b) => new Date(b.ts).getTime() - new Date(a.ts).getTime())
+  
+  // Add action memory to evidence for LLM context
+  if (actionMemory.length > 0) {
+    const actionMemoryText = actionMemory
+      .slice(0, 5) // Last 5 actions
+      .map(m => {
+        switch (m.type) {
+          case 'query':
+            return `Query: "${m.details.query}" - Found ${m.details.queryResults || 0} result(s)`
+          case 'announcement_sent':
+            return `Sent announcement: "${m.details.announcementContent?.substring(0, 50)}"`
+          case 'poll_sent':
+            return `Sent poll: "${m.details.pollQuestion?.substring(0, 50)}"`
+          case 'poll_response_recorded':
+            return `Recorded poll response: "${m.details.pollResponse}"`
+          default:
+            return `${m.type}: ${JSON.stringify(m.details)}`
+        }
+      })
+      .join('\n')
+    
+    evidence.push({
+      scope: 'ACTION',
+      source_id: `action_memory_${normalizedPhone}`,
+      text: `Recent actions:\n${actionMemoryText}`,
+      ts: actionMemory[0]?.timestamp || new Date().toISOString(),
+      acl_ok: true,
+      scores: { semantic: 0.9, keyword: 0.8, freshness: 1.0, role_match: 1.0 }
+    })
+  }
   
   // Build pending draft
   let pending_draft: Draft | undefined = undefined

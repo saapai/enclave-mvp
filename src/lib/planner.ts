@@ -101,8 +101,10 @@ INTENTS:
 - policy_lookup: Questions about policies, rules, or how things work (e.g., "what is big little", "how does attendance work")
 - person_lookup: Who is someone (e.g., "who is sarah", "tell me about john")
 - doc_search: General info queries that need document search (e.g., "what's happening this week", "tell me about events")
-- chat: Pure greetings or casual conversation (e.g., "hey", "what's up", "thanks")
+- chat: Pure greetings, casual conversation, OR questions about past actions (e.g., "hey", "what's up", "thanks", "did you find that info", "why didn't you send it")
 - content_summary: Complex queries requiring multi-source synthesis
+
+IMPORTANT: Questions about past actions (e.g., "did you find", "why didn't you send", "what did you do") should be classified as "chat" intent. The system will provide action memory context to answer these questions.
 
 Return ONLY valid JSON with this exact structure:
 {
