@@ -220,16 +220,22 @@ export async function handleSMSMessage(
       const currentTextLower = messageText.toLowerCase().trim()
       const pendingQueryLower = (mostRecentQuery.details.query || '').toLowerCase().trim()
       
+      console.log(`[UnifiedHandler] Comparing queries - Current: "${currentTextLower}", Pending: "${pendingQueryLower}"`)
+      
       // Simple similarity check: if 80%+ of words match, it's a repeat
       const currentWords = currentTextLower.split(/\s+/).filter(w => w.length > 2)
       const pendingWords = pendingQueryLower.split(/\s+/).filter(w => w.length > 2)
       const matchingWords = currentWords.filter(w => pendingWords.includes(w))
       const similarity = matchingWords.length / Math.max(currentWords.length, 1)
       
+      console.log(`[UnifiedHandler] Similarity check - Current words: [${currentWords.join(', ')}], Pending words: [${pendingWords.join(', ')}], Matching: [${matchingWords.join(', ')}], Similarity: ${similarity.toFixed(2)}`)
+      
       const isRepeatQuery = similarity > 0.8 || currentTextLower === pendingQueryLower
       
       // Check if this is a status check (asking for update, not repeating the question)
       const isStatusCheck = /^(did you|any update|what'?s your|where'?s|got|find|answer|result|response)/i.test(currentTextLower)
+      
+      console.log(`[UnifiedHandler] Query analysis - isRepeatQuery: ${isRepeatQuery}, isStatusCheck: ${isStatusCheck}`)
       
       if (isRepeatQuery && !isStatusCheck) {
         console.log(`[UnifiedHandler] User is repeating the same query, treating as new content_query`)
