@@ -101,10 +101,8 @@ INTENTS:
 - policy_lookup: Questions about policies, rules, or how things work (e.g., "what is big little", "how does attendance work")
 - person_lookup: Who is someone (e.g., "who is sarah", "tell me about john")
 - doc_search: General info queries that need document search (e.g., "what's happening this week", "tell me about events")
-- chat: Pure greetings, casual conversation, OR questions about past actions (e.g., "hey", "what's up", "thanks", "did you find that info", "why didn't you send it")
+- chat: Pure greetings or casual conversation (e.g., "hey", "what's up", "thanks")
 - content_summary: Complex queries requiring multi-source synthesis
-
-IMPORTANT: Questions about past actions (e.g., "did you find", "why didn't you send", "what did you do") should be classified as "chat" intent. The system will provide action memory context to answer these questions.
 
 Return ONLY valid JSON with this exact structure:
 {
@@ -257,8 +255,7 @@ function fallbackPlan(query: string): QueryPlan {
  */
 async function executeTool(
   tool: ToolCall,
-  spaceId: string,
-  queryEmbedding?: number[] | null
+  spaceId: string
 ): Promise<ToolResult> {
   console.log(`[Tool Executor] Executing: ${tool.tool}`)
 
@@ -268,13 +265,13 @@ async function executeTool(
         return await executeSearchKnowledge(tool.params, spaceId)
 
       case 'search_docs':
-        return await executeSearchDocs(tool.params, spaceId, queryEmbedding)
+        return await executeSearchDocs(tool.params, spaceId)
 
       case 'search_announcements':
         return await executeSearchAnnouncements(tool.params, spaceId)
 
       case 'calendar_find':
-        return await executeCalendarFind(tool.params, spaceId, queryEmbedding)
+        return await executeCalendarFind(tool.params, spaceId)
 
       default:
         console.log(`[Tool Executor] Unknown tool: ${tool.tool}`)
@@ -353,18 +350,13 @@ async function executeSearchKnowledge(
  */
 async function executeSearchDocs(
   params: Record<string, any>,
-  spaceId: string,
-  queryEmbedding?: number[] | null
+  spaceId: string
 ): Promise<ToolResult> {
   const { query } = params
 
-  console.log(`[search_docs] Searching documents: "${query}", pregenEmbed=${!!queryEmbedding}`)
+  console.log(`[search_docs] Searching documents: "${query}"`)
 
-  // Use pre-generated embedding if available, otherwise generate inline
-  const { searchResourcesHybridWithEmbedding, searchResourcesHybrid } = await import('./search')
-  const results = queryEmbedding
-    ? await searchResourcesHybridWithEmbedding(query, spaceId, queryEmbedding, {}, { limit: 5 })
-    : await searchResourcesHybrid(query, spaceId, {}, { limit: 5 })
+  const results = await searchResourcesHybrid(query, spaceId, {}, { limit: 5 })
 
   console.log(`[search_docs] Found ${results.length} results`)
 
@@ -489,12 +481,11 @@ async function executeSearchAnnouncements(
  */
 async function executeCalendarFind(
   params: Record<string, any>,
-  spaceId: string,
-  queryEmbedding?: number[] | null
+  spaceId: string
 ): Promise<ToolResult> {
   // TODO: Implement calendar-specific search
   // For now, delegate to doc search
-  return executeSearchDocs(params, spaceId, queryEmbedding)
+  return executeSearchDocs(params, spaceId)
 }
 
 /**
@@ -502,8 +493,7 @@ async function executeCalendarFind(
  */
 export async function executePlan(
   plan: QueryPlan,
-  spaceId: string,
-  queryEmbedding?: number[] | null
+  spaceId: string
 ): Promise<ToolResult[]> {
   console.log(`[Tool Executor] Executing plan with ${plan.tools.length} tools`)
 
@@ -513,7 +503,7 @@ export async function executePlan(
   const sortedTools = [...plan.tools].sort((a, b) => a.priority - b.priority)
 
   for (const tool of sortedTools) {
-    const result = await executeTool(tool, spaceId, queryEmbedding)
+    const result = await executeTool(tool, spaceId)
     results.push(result)
 
     // Stop if we got a high-confidence result

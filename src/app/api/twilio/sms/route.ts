@@ -806,51 +806,15 @@ export async function POST(request: NextRequest) {
         // Process query asynchronously (don't await)
         console.log(`[Twilio SMS] [${traceId}] Starting async handler for content query: "${body.substring(0, 50)}"`)
         
-      // WATCHDOG: 12s timeout to prevent silent hangs (Vercel Pro allows 60s)
-      // System typically completes in 5-15s, so 12s gives a reasonable buffer
-      let watchdogFired = false
-      const watchdog = setTimeout(async () => {
-        watchdogFired = true
-        console.error(`[Twilio SMS] [${traceId}] WATCHDOG: content_query exceeded 12s, sending degraded reply`)
-        try {
-          await sendSms(from, "Still searching... this is taking longer than expected. I'll keep trying.", { retries: 1, retryDelay: 2000 })
-          console.log(`[Twilio SMS] [${traceId}] Watchdog message sent`)
-        } catch (err) {
-          console.error(`[Twilio SMS] [${traceId}] Failed to send watchdog message:`, err)
-        }
-      }, 12000) // 12 second watchdog
-        
-      // Set a hard timeout before Vercel kills us (Pro = 60s)
-      let timeoutFired = false
-      const asyncTimeout = setTimeout(async () => {
-        timeoutFired = true
-        console.error(`[Twilio SMS] [${traceId}] Async handler timeout after 55s for query: "${body.substring(0, 50)}"`)
-        if (!watchdogFired) {
-          try {
-            await sendSms(from, "Sorry, that query took too long. Please try a simpler question.", { retries: 1, retryDelay: 2000 })
-            console.log(`[Twilio SMS] [${traceId}] Timeout message sent`)
-          } catch (err) {
-            console.error(`[Twilio SMS] [${traceId}] Failed to send timeout message:`, err)
-          }
-        }
-      }, 55000) // 55 second timeout (5s buffer before Vercel's 60s limit)
-        
         // Re-process the message asynchronously
         // Pass the already-classified intent to avoid redundant LLM call
         const handlerStartTime = Date.now()
         handleSMSMessage(phoneNumber, from, body, intent, history)
           .then(async (result) => {
-            clearTimeout(watchdog)
-            clearTimeout(asyncTimeout)
             const handlerDuration = Date.now() - handlerStartTime
             console.log(`[Twilio SMS] [${traceId}] Async handler completed successfully in ${handlerDuration}ms`)
             console.log(`[Twilio SMS] [${traceId}] Async handler returned: "${result?.response?.substring(0, 100) || 'NO RESPONSE'}..."`)
             
-            // If watchdog or timeout already fired, don't send another message
-            if (watchdogFired || timeoutFired) {
-              console.log(`[Twilio SMS] [${traceId}] Watchdog/timeout already fired, skipping result send`)
-              return
-            }
             
             // Ensure we have a response
             if (!result || !result.response || result.response.trim().length === 0) {
@@ -908,22 +872,18 @@ export async function POST(request: NextRequest) {
             console.log(`[Twilio SMS] Finished sending all async messages`)
           })
           .catch(async (err) => {
-            clearTimeout(watchdog)
-            clearTimeout(asyncTimeout)
             console.error(`[Twilio SMS] [${traceId}] Async handler error:`, err)
             console.error(`[Twilio SMS] [${traceId}] Error stack:`, err instanceof Error ? err.stack : 'No stack trace')
-            // Send error message to user (only if watchdog hasn't already sent something)
-            if (!watchdogFired) {
-              try {
-                const smsResult = await sendSms(from, "Sorry, I encountered an error processing your query. Please try again.")
-                if (smsResult.ok) {
-                  console.log(`[Twilio SMS] [${traceId}] Error message sent successfully`)
-                } else {
-                  console.error(`[Twilio SMS] [${traceId}] Failed to send error message: ${smsResult.error}`)
-                }
-              } catch (e) {
-                console.error(`[Twilio SMS] [${traceId}] Failed to send error message:`, e)
+            // Send error message to user
+            try {
+              const smsResult = await sendSms(from, "Sorry, I encountered an error processing your query. Please try again.")
+              if (smsResult.ok) {
+                console.log(`[Twilio SMS] [${traceId}] Error message sent successfully`)
+              } else {
+                console.error(`[Twilio SMS] [${traceId}] Failed to send error message: ${smsResult.error}`)
               }
+            } catch (e) {
+              console.error(`[Twilio SMS] [${traceId}] Failed to send error message:`, e)
             }
           })
         
