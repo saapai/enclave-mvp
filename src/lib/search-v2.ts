@@ -17,11 +17,11 @@ import type { SearchResult } from './search'
 // CONFIGURATION
 // ============================================================================
 
-const SMS_SEARCH_BUDGET_MS = Number(process.env.SMS_SEARCH_BUDGET_MS || '12000') // 12s total (increased to accommodate embedding)
+const SMS_SEARCH_BUDGET_MS = Number(process.env.SMS_SEARCH_BUDGET_MS || '8000') // 8s total (reduced now that OpenAI is fast)
 const SMS_FTS_TIMEOUT_MS = Number(process.env.SMS_FTS_TIMEOUT_MS || '800') // 800ms per FTS
-const SMS_EMBED_TIMEOUT_MS = Number(process.env.SMS_EMBED_TIMEOUT_MS || '8000') // 8s for embedding (Mistral API is slow)
+const SMS_EMBED_TIMEOUT_MS = Number(process.env.SMS_EMBED_TIMEOUT_MS || '2000') // 2s for embedding (OpenAI is fast ~200-500ms)
 const SMS_VECTOR_TIMEOUT_MS = Number(process.env.SMS_VECTOR_TIMEOUT_MS || '1200') // 1.2s per vector
-const SMS_EMBED_MIN_REMAINING_MS = Number(process.env.SMS_EMBED_MIN_REMAINING_MS || '8500') // Need 8.5s left to embed (slightly more than timeout)
+const SMS_EMBED_MIN_REMAINING_MS = Number(process.env.SMS_EMBED_MIN_REMAINING_MS || '2500') // Need 2.5s left to embed (slightly more than timeout)
 
 // Circuit breaker: if embedding fails 3 times in 5 min, disable for next queries
 const embeddingFailures: number[] = []
@@ -368,17 +368,42 @@ export async function hybridSearchV2(
     return []
   }
   
-  // Step 1: Generate embedding (once, upfront)
-  const embedding = await getCachedEmbedding(query, budget)
-  console.log(`[Search V2] [${searchId}] Embedding: ${embedding ? 'available' : 'unavailable'} (budget: ${budget.getRemainingMs()}ms)`)
+  // Step 1: Start embedding generation in background (non-blocking)
+  let embedding: number[] | null = null
+  let embeddingPromise: Promise<number[] | null> | null = null
   
-  // Step 2: Search workspaces sequentially
+  // Try to get cached embedding first (instant)
+  const cachedEmbedding = await getCachedEmbedding(query, budget)
+  if (cachedEmbedding) {
+    embedding = cachedEmbedding
+    console.log(`[Search V2] [${searchId}] Embedding: cached (budget: ${budget.getRemainingMs()}ms)`)
+  } else if (budget.hasBudget(SMS_EMBED_MIN_REMAINING_MS)) {
+    // Start embedding generation in background (don't await)
+    console.log(`[Search V2] [${searchId}] Starting embedding generation in background`)
+    embeddingPromise = getCachedEmbedding(query, budget)
+  } else {
+    console.log(`[Search V2] [${searchId}] Skipping embedding (insufficient budget: ${budget.getRemainingMs()}ms)`)
+  }
+  
+  // Step 2: Search workspaces sequentially (FTS first, then vector if embedding ready)
   const workspaceResults: WorkspaceSearchResult[] = []
   
   for (const workspaceId of workspaceIds) {
     if (budget.getRemainingMs() < 500) {
       console.log(`[Search V2] [${searchId}] Budget exhausted, stopping at ${workspaceResults.length}/${workspaceIds.length} workspaces`)
       break
+    }
+    
+    // Check if embedding is ready (non-blocking check)
+    if (!embedding && embeddingPromise) {
+      const embeddingResult = await Promise.race([
+        embeddingPromise,
+        Promise.resolve(null) // Immediately resolve with null if not ready
+      ])
+      if (embeddingResult) {
+        embedding = embeddingResult
+        console.log(`[Search V2] [${searchId}] Embedding became available during search`)
+      }
     }
     
     const wsResult = await searchWorkspace(query, workspaceId, embedding, budget)

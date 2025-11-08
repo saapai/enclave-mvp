@@ -1,48 +1,55 @@
 import { supabase } from './supabase'
 import { ENV } from './env'
 
-// Use Mistral embeddings
-const MISTRAL_API_KEY = ENV.MISTRAL_API_KEY
-const MISTRAL_EMBED_MODEL = process.env.MISTRAL_EMBED_MODEL || 'mistral-embed'
+// Use OpenAI embeddings (much faster and more reliable than Mistral)
+const OPENAI_API_KEY = ENV.OPENAI_API_KEY
+const EMBEDDING_MODEL = process.env.EMBEDDING_MODEL || 'text-embedding-3-small'
+const EMBEDDING_DIMENSIONS = Number(process.env.EMBEDDING_DIMENSIONS || '1536')
 
 export async function embedText(text: string): Promise<number[] | null> {
-  if (!MISTRAL_API_KEY) {
-    console.error('MISTRAL_API_KEY is not set')
+  if (!OPENAI_API_KEY) {
+    console.error('OPENAI_API_KEY is not set')
     return null
   }
-  const cleaned = (text || '').slice(0, 200000)
-  console.log('Generating embedding for text:', cleaned.slice(0, 100) + '...')
   
-  // Try different Mistral embedding models
-  const models = ['mistral-embed', 'mistral-large-latest', 'mistral-small-latest']
+  const cleaned = (text || '').slice(0, 8000) // OpenAI has 8191 token limit
+  console.log(`Generating embedding for text: ${cleaned.slice(0, 100)}...`)
   
-  for (const model of models) {
-    console.log('Trying model:', model)
-    const res = await fetch('https://api.mistral.ai/v1/embeddings', {
+  try {
+    const res = await fetch('https://api.openai.com/v1/embeddings', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${MISTRAL_API_KEY}`,
+        'Authorization': `Bearer ${OPENAI_API_KEY}`,
       },
       body: JSON.stringify({
-        model: model,
+        model: EMBEDDING_MODEL,
         input: cleaned,
+        dimensions: EMBEDDING_DIMENSIONS
       })
     })
     
-    if (res.ok) {
-      const json = await res.json()
-      const embedding = json?.data?.[0]?.embedding as number[]
-      console.log('Generated embedding with dimensions:', embedding?.length, 'using model:', model)
-      return embedding || null
-    } else {
+    if (!res.ok) {
       const errorText = await res.text()
-      console.log('Model', model, 'failed:', res.status, errorText)
+      console.error(`OpenAI embedding error (${res.status}):`, errorText)
+      return null
     }
+    
+    const json = await res.json()
+    const embedding = json?.data?.[0]?.embedding as number[]
+    
+    if (!embedding || embedding.length === 0) {
+      console.error('OpenAI returned empty embedding')
+      return null
+    }
+    
+    console.log(`Generated embedding with ${embedding.length} dimensions using ${EMBEDDING_MODEL}`)
+    return embedding
+    
+  } catch (error) {
+    console.error('OpenAI embedding exception:', error)
+    return null
   }
-  
-  console.error('All embedding models failed')
-  return null
 }
 
 export async function upsertResourceEmbedding(resourceId: string, text: string): Promise<boolean> {
