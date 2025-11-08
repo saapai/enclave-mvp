@@ -40,15 +40,34 @@ export async function searchResourcesHybrid(
 
   try {
     console.log(`[Hybrid Search] Starting hybrid search for query: "${query}", spaceId: ${spaceId}`)
-    // Generate embedding for vector search
-    console.log(`[Hybrid Search] Generating embedding...`)
-    const queryEmbedding = await embedText(query)
-    console.log(`[Hybrid Search] Embedding generated, dimensions: ${queryEmbedding?.length || 0}`)
     
-    // Search regular resources with FTS (keyword search)
+    // Search regular resources with FTS (keyword search) FIRST - don't wait for embedding
     console.log(`[Hybrid Search] Starting FTS search...`)
     const regularResults = await searchResources(query, spaceId, filters, { limit: limit * 2, offset: 0 }, userId)
     console.log(`[Hybrid Search] FTS search returned ${regularResults.length} results`)
+    
+    // Generate embedding for vector search with timeout
+    console.log(`[Hybrid Search] Generating embedding with timeout...`)
+    let queryEmbedding: number[] | null = null
+    try {
+      const embeddingPromise = embedText(query)
+      const timeoutPromise = new Promise<null>((resolve) => {
+        setTimeout(() => {
+          console.error('[Hybrid Search] Embedding generation timed out after 3000ms, skipping vector search')
+          resolve(null)
+        }, 3000)
+      })
+      queryEmbedding = await Promise.race([embeddingPromise, timeoutPromise])
+    } catch (err) {
+      console.error('[Hybrid Search] Embedding generation failed:', err)
+    }
+    
+    if (!queryEmbedding) {
+      console.log('[Hybrid Search] No embedding available, returning FTS results only')
+      return regularResults.slice(offset, offset + limit)
+    }
+    
+    console.log(`[Hybrid Search] Embedding generated, dimensions: ${queryEmbedding.length}`)
     
     // Search regular resources with vector search (semantic search for PDFs, uploads, etc.)
     console.log(`[Vector Search] Searching for regular resource embeddings - Space: ${spaceId}, User: ${userId}`)
