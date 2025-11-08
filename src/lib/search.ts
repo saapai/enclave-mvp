@@ -563,56 +563,20 @@ export async function searchResources(
       rpcError = err
     }
     
-    // OLD CODE (HANGING):
-    // const ftsResponse = await runWithAbort<{ data: any[] | null; error: any }>(
-    //   'search_resources_fts',
-    //   FTS_TIMEOUT_MS,
-    //   (signal) =>
-    //     (dbClient as any)
-    //       .rpc('search_resources_fts', {
-    //         search_query: query,
-    //         target_space_id: spaceId,
-    //         limit_count: limit,
-    //         offset_count: offset,
-    //         target_user_id: shouldFilterByUser ? userId : null
-    //       })
-    //       .abortSignal(signal)
-    //       .then((res: { data: any[] | null; error: any }) => res)
-    // )
-
-    if (ftsResponse) {
-      hits = ftsResponse.data
-      rpcError = ftsResponse.error
-    } else {
-      console.warn(`[FTS Search] RPC timed out for space ${spaceId}`)
-      rpcError = { message: 'Timeout', code: 'TIMEOUT' }
-    }
-
-    console.log(`[FTS Search] RPC response:`, {
+    // Direct ilike results already populated in hits variable above
+    
+    console.log(`[FTS Search] Query response:`, {
       hitCount: hits?.length,
       error: rpcError,
       firstHit: hits?.[0] ? { id: hits[0].id, title: hits[0].title, rank: hits[0].rank } : null
     })
 
-    if (rpcError) {
-      console.error('[FTS Search] RPC error:', rpcError)
-      // Fallback: simple ilike query
-      const { data: resources, error } = await supabaseQuery
-        .or(`title.ilike.%${query}%,body.ilike.%${query}%`)
-        .order('updated_at', { ascending: false })
-        .limit(limit)
-        .range(offset, offset + limit - 1)
-      if (error) {
-        console.error('[FTS Search] Client fallback error:', error)
-        return []
+    if (rpcError || !hits || hits.length === 0) {
+      if (rpcError) {
+        console.error('[FTS Search] Query error:', rpcError)
       }
-      console.log(`[FTS Search] Fallback found ${resources?.length || 0} resources`)
-      return (resources || []).map((resource: Record<string, unknown>) => ({
-        ...resource,
-        tags: (resource.tags as Array<{ tag: Record<string, unknown> }>)?.map((rt) => rt.tag).filter(Boolean) || [],
-        rank: 1,
-        score: 1
-      })) as SearchResult[]
+      console.log('[FTS Search] No results found, returning empty')
+      return []
     }
 
     console.log(`[FTS Search] Raw hits: ${hits?.length || 0}`)
