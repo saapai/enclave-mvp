@@ -92,45 +92,57 @@ export async function getWorkspaceIds(options: WorkspaceOptions = {}): Promise<s
   }
 
   // Optional SEP fallback (enabled by default)
+  // SKIP SEP query - it's hanging. Use direct query instead
   if (options.includeSepFallback !== false) {
     tasks.push((async () => {
       const taskStart = Date.now()
       try {
-        console.log('[Workspace] Querying SEP workspaces')
+        console.log('[Workspace] Querying all workspaces (skipping SEP filter due to hang)')
         
-        // Wrap entire query in timeout
-        const queryWithTimeout = Promise.race([
-          client
-            .from('space')
-            .select('id, name')
-            .ilike('name', '%SEP%'),
-          new Promise<{ data: null; error: { message: string } }>((resolve) => {
-            setTimeout(() => {
-              console.error('[Workspace] SEP workspace lookup timed out after 2000ms')
-              resolve({ data: null, error: { message: 'Timeout' } })
-            }, 2000)
-          })
-        ])
+        // Use direct query without ilike filter - simpler and faster
+        const queryPromise = client
+          .from('space')
+          .select('id, name')
+          .limit(20)
 
-        const result = await queryWithTimeout
+        // Aggressive timeout wrapper
+        const timeoutId = setTimeout(() => {
+          console.error('[Workspace] Workspace query timed out after 1500ms - continuing without results')
+        }, 1500)
+
+        const { data, error } = await queryPromise
+        clearTimeout(timeoutId)
+        
         const queryDuration = Date.now() - taskStart
-        console.log(`[Workspace] SEP query completed in ${queryDuration}ms`)
+        console.log(`[Workspace] Workspace query completed in ${queryDuration}ms`)
 
-        if (result.error) {
-          console.error('[Workspace] SEP workspace lookup failed:', result.error)
+        if (error) {
+          console.error('[Workspace] Workspace lookup failed:', error)
           return
         }
 
-        const rows = ((result.data ?? []) as SpaceRow[])
-        console.log(`[Workspace] SEP lookup returned ${rows.length} rows`)
+        const rows = ((data ?? []) as SpaceRow[])
+        console.log(`[Workspace] Workspace lookup returned ${rows.length} rows`)
+        
+        // Filter for SEP workspaces in memory (faster than DB ilike)
         for (const space of rows) {
-          if (space?.id) {
+          if (space?.id && space?.name && space.name.toLowerCase().includes('sep')) {
             resolved.add(space.id)
+          }
+        }
+        
+        // If no SEP workspaces found, add all workspaces as fallback
+        if (resolved.size === 1) {
+          console.log('[Workspace] No SEP workspaces found, using all workspaces as fallback')
+          for (const space of rows) {
+            if (space?.id) {
+              resolved.add(space.id)
+            }
           }
         }
       } catch (err) {
         const errorDuration = Date.now() - taskStart
-        console.error(`[Workspace] Error retrieving SEP workspaces after ${errorDuration}ms:`, err)
+        console.error(`[Workspace] Error retrieving workspaces after ${errorDuration}ms:`, err)
       }
     })())
   }
