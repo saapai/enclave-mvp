@@ -13,7 +13,7 @@ import { classifyIntent, loadWeightedHistory, IntentType, ConversationMessage, C
 import { parseCommand, ParsedCommand } from './smart-command-parser'
 import { needsWelcome, getWelcomeMessage, handleNameInWelcome, initializeNewUser } from './welcome-flow'
 import { generateAnnouncement, formatAnnouncement, AnnouncementDraft } from './enhanced-announcement-generator'
-import { checkActionQuery, saveAction } from './action-memory'
+import { checkActionQuery, saveAction, type ActionMemory } from './action-memory'
 import { supabaseAdmin } from '@/lib/supabase'
 // Name declaration is handled inline
 
@@ -62,6 +62,37 @@ async function withTimeout<T>(
     if (timeoutId) clearTimeout(timeoutId)
     return fallback
   }
+}
+
+const ACTION_MEMORY_TIMEOUT_MS = 3000
+
+function queueActionMemorySave(
+  phoneNumber: string,
+  action: Omit<ActionMemory, 'timestamp'>,
+  label: string
+) {
+  const start = Date.now()
+  let timeoutFired = false
+
+  const timeoutId = setTimeout(() => {
+    timeoutFired = true
+    console.error(`[UnifiedHandler] ${label} still pending after ${ACTION_MEMORY_TIMEOUT_MS}ms`)
+  }, ACTION_MEMORY_TIMEOUT_MS)
+
+  saveAction(phoneNumber, action)
+    .then(() => {
+      clearTimeout(timeoutId)
+      const duration = Date.now() - start
+      if (timeoutFired) {
+        console.log(`[UnifiedHandler] ${label} completed after timeout in ${duration}ms`)
+      } else {
+        console.log(`[UnifiedHandler] ${label} completed in ${duration}ms`)
+      }
+    })
+    .catch((err) => {
+      clearTimeout(timeoutId)
+      console.error(`[UnifiedHandler] ${label} failed:`, err)
+    })
 }
 
 /**
@@ -506,14 +537,18 @@ async function handleAnnouncementCommand(
         workspaceId
       }, workspaceId)
       
-      // Save action memory
-      await saveAction(phoneNumber, {
-        type: 'draft_created',
-        details: {
-          draftType: 'announcement',
-          announcementContent: draft.content
-        }
-      })
+      // Save action memory asynchronously
+      queueActionMemorySave(
+        phoneNumber,
+        {
+          type: 'draft_created',
+          details: {
+            draftType: 'announcement',
+            announcementContent: draft.content
+          }
+        },
+        'saveAction (draft_created)'
+      )
     } else {
       console.warn('[UnifiedHandler] No workspace found, skipping draft save')
     }
@@ -745,13 +780,17 @@ async function handleControlCommand(
         const { sentCount, airtableLink } = await sendPoll(activePollDraft.id, twilioClient)
         const linkText = airtableLink ? `\n\nview results: ${airtableLink}` : ''
         
-        // Save action memory
-        await saveAction(phoneNumber, {
-          type: 'poll_sent',
-          details: {
-            pollQuestion: activePollDraft.question
-          }
-        })
+        // Save action memory asynchronously
+        queueActionMemorySave(
+          phoneNumber,
+          {
+            type: 'poll_sent',
+            details: {
+              pollQuestion: activePollDraft.question
+            }
+          },
+          'saveAction (poll_sent)'
+        )
         
         return {
           response: `sent poll to ${sentCount} people 📊${linkText}`,
@@ -764,13 +803,17 @@ async function handleControlCommand(
         const twilioClient = twilio(ENV.TWILIO_ACCOUNT_SID, ENV.TWILIO_AUTH_TOKEN)
         const sentCount = await sendAnnouncement(activeDraft.id, twilioClient)
         
-        // Save action memory
-        await saveAction(phoneNumber, {
-          type: 'announcement_sent',
-          details: {
-            announcementContent: activeDraft.content
-          }
-        })
+        // Save action memory asynchronously
+        queueActionMemorySave(
+          phoneNumber,
+          {
+            type: 'announcement_sent',
+            details: {
+              announcementContent: activeDraft.content
+            }
+          },
+          'saveAction (announcement_sent)'
+        )
         
         return {
           response: `sent to ${sentCount} people 📢`,
@@ -862,14 +905,18 @@ async function handlePollResponse(
     )
     
     if (success) {
-      // Save action memory
-      await saveAction(phoneNumber, {
-        type: 'poll_response_recorded',
-        details: {
-          pollQuestion: activePoll.question,
-          pollResponse: option
-        }
-      })
+      // Save action memory asynchronously
+      queueActionMemorySave(
+        phoneNumber,
+        {
+          type: 'poll_response_recorded',
+          details: {
+            pollQuestion: activePoll.question,
+            pollResponse: option
+          }
+        },
+        'saveAction (poll_response_recorded)'
+      )
       
       return {
         response: "got it! thanks for responding.",
@@ -1101,21 +1148,19 @@ Answer factually based on the reference above.`
   }
   
   // Save query to action memory BEFORE processing (so follow-ups can detect it's processing)
-  console.log(`[UnifiedHandler] Saving query to action memory (async): "${messageText}"`)
-  saveAction(phoneNumber, {
-    type: 'query',
-    details: {
-      query: messageText,
-      queryResults: undefined, // Will be updated after processing
-      queryAnswer: undefined // Will be updated after processing
-    }
-  })
-    .then(() => {
-      console.log('[UnifiedHandler] Saved query to action memory (async)')
-    })
-    .catch(err => {
-      console.error('[UnifiedHandler] Failed to save initial query action:', err)
-    })
+  console.log(`[UnifiedHandler] Saving query to action memory: "${messageText}"`)
+  queueActionMemorySave(
+    phoneNumber,
+    {
+      type: 'query',
+      details: {
+        query: messageText,
+        queryResults: undefined, // Will be updated after processing
+        queryAnswer: undefined // Will be updated after processing
+      }
+    },
+    'saveAction (initial)'
+  )
   
   try {
     // Use orchestrator for content query handling
@@ -1143,18 +1188,17 @@ Answer factually based on the reference above.`
     if (!result.messages || result.messages.length === 0) {
       console.error('[UnifiedHandler] Orchestrator returned no messages!')
       // Update action memory with failure
-      await withTimeout(
-        saveAction(phoneNumber, {
+      queueActionMemorySave(
+        phoneNumber,
+        {
           type: 'query',
           details: {
             query: messageText,
             queryResults: 0,
             queryAnswer: undefined
           }
-        }),
-        3000,
-        'saveAction (no messages)',
-        undefined
+        },
+        'saveAction (no messages)'
       )
       
       return {
@@ -1172,18 +1216,17 @@ Answer factually based on the reference above.`
     if (!responseText || responseText.trim().length === 0) {
       console.error('[UnifiedHandler] Empty response text from orchestrator!')
       // Update action memory with failure
-      await withTimeout(
-        saveAction(phoneNumber, {
+      queueActionMemorySave(
+        phoneNumber,
+        {
           type: 'query',
           details: {
             query: messageText,
             queryResults: 0,
             queryAnswer: undefined
           }
-        }),
-        3000,
-        'saveAction (empty response)',
-        undefined
+        },
+        'saveAction (empty response)'
       )
       
       return {
@@ -1212,19 +1255,18 @@ Answer factually based on the reference above.`
       queryAnswer = firstSentence ? firstSentence[0] : responseText.substring(0, 300)
     }
     
-    // Update action memory with results (await to ensure it's saved)
-    await withTimeout(
-      saveAction(phoneNumber, {
+    // Update action memory with results (fire-and-forget to avoid blocking response)
+    queueActionMemorySave(
+      phoneNumber,
+      {
         type: 'query',
         details: {
           query: messageText,
           queryResults: resultCount,
           queryAnswer: queryAnswer
         }
-      }),
-      3000,
-      'saveAction (result)',
-      undefined
+      },
+      'saveAction (result)'
     )
     
     return {
@@ -1247,18 +1289,17 @@ Answer factually based on the reference above.`
       : "I couldn't process that query. Please try again."
     
     // Update action memory with error
-    await withTimeout(
-      saveAction(phoneNumber, {
+    queueActionMemorySave(
+      phoneNumber,
+      {
         type: 'query',
         details: {
           query: messageText,
           queryResults: 0,
           queryAnswer: undefined
         }
-      }),
-      3000,
-      'saveAction (error)',
-      undefined
+      },
+      'saveAction (error)'
     )
     
     return {
