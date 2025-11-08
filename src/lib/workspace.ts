@@ -6,9 +6,12 @@ import { supabase, supabaseAdmin } from '@/lib/supabase'
 
 const DEFAULT_SPACE_ID = '00000000-0000-0000-0000-000000000000'
 
-// Cache workspace lookups for 2 minutes to avoid slow Supabase queries
+// Cache workspace lookups for 5 minutes to avoid slow Supabase queries
 const workspaceCache = new Map<string, { workspaces: string[]; timestamp: number }>()
-const WORKSPACE_CACHE_TTL = 120000 // 2 minutes
+const WORKSPACE_CACHE_TTL = 300000 // 5 minutes (increased from 2)
+
+// Last successful workspace lookup (fallback if cache expires and query fails)
+const lastKnownWorkspaces = new Map<string, string[]>()
 
 interface WorkspaceOptions {
   phoneNumber?: string
@@ -32,8 +35,10 @@ function normalizeDigits(phone: string): string {
 
 /**
  * Resolve workspace IDs for a given context (phone, SEP fallback, etc.)
+ * CRITICAL: This must complete quickly (<500ms) or return cached/fallback values
  */
 async function getWorkspaceIdsInternal(options: WorkspaceOptions = {}): Promise<string[]> {
+  const startTime = Date.now()
   console.log('[Workspace] getWorkspaceIds called with options:', options)
   
   // Check cache first (use phone number as cache key if available)
@@ -48,259 +53,130 @@ async function getWorkspaceIdsInternal(options: WorkspaceOptions = {}): Promise<
 
   if (!client) {
     console.error('[Workspace] No Supabase client available')
-    return [DEFAULT_SPACE_ID]
+    // Return last known workspaces or default
+    const lastKnown = lastKnownWorkspaces.get(cacheKey)
+    return lastKnown || [DEFAULT_SPACE_ID]
   }
 
   const resolved = new Set<string>()
-  resolved.add(DEFAULT_SPACE_ID)
-  console.log('[Workspace] Added default space ID:', DEFAULT_SPACE_ID)
 
-  const tasks: Promise<void>[] = []
-
-  // Lookup by phone -> app_user.phone
-  if (options.phoneNumber && options.includePhoneLookup !== false) {
-    const digits = normalizeDigits(options.phoneNumber)
-    if (digits.length === 10) {
-      tasks.push((async () => {
-        try {
-          console.log('[Workspace] Querying app_user for phone digits:', digits)
-          const controller = new AbortController()
-          const timeoutId = setTimeout(() => {
-            controller.abort()
-            console.error('[Workspace] app_user lookup timed out after 3000ms')
-          }, 3000)
-
-          const { data, error } = await client
-            .from('app_user')
-            .select('space_id, phone')
-            .ilike('phone', `%${digits}`)
-            .limit(25)
-            .abortSignal(controller.signal)
-
-          clearTimeout(timeoutId)
-
-          if (error) {
-            console.error('[Workspace] app_user lookup failed:', error)
-            return
-          }
-
-          const rows = (data ?? []) as AppUserRow[]
-          console.log(`[Workspace] app_user lookup returned ${rows.length} rows`)
-          for (const row of rows) {
-            if (!row?.space_id) continue
-            const rowDigits = normalizeDigits(String(row.phone || ''))
-            if (rowDigits === digits) {
-              resolved.add(row.space_id)
-            }
-          }
-        } catch (err) {
-          console.error('[Workspace] Error resolving phone-based workspaces:', err)
-        }
-      })())
-    } else {
-      console.log('[Workspace] Phone digits invalid, skipping phone lookup')
-    }
-  } else if (options.phoneNumber) {
-    console.log('[Workspace] Skipping phone lookup (disabled via options)')
-  }
-
-  // Optional SEP fallback (enabled by default)
-  // SKIP SEP query - it's hanging. Use direct query instead
-  if (options.includeSepFallback !== false) {
-    tasks.push((async () => {
-      const taskStart = Date.now()
-      try {
-        console.log('[Workspace] Querying all workspaces (skipping SEP filter due to hang)')
-        
-        // Use Promise.race with timeout (more reliable than AbortController)
-        const queryPromise = client
-          .from('space')
-          .select('id, name')
-          .limit(20)
-        
-        const timeoutPromise = new Promise<{ data: null; error: { message: string } }>((resolve) => {
-          setTimeout(() => {
-            console.error('[Workspace] Workspace query timed out after 1000ms')
-            resolve({ data: null, error: { message: 'Timeout' } })
-          }, 1000) // Aggressive 1s timeout
-        })
-
-        let result: { data: any; error: any } = { data: null, error: null }
-        try {
-          result = await Promise.race([queryPromise, timeoutPromise]) as any
-        } catch (err: any) {
-          console.error('[Workspace] Query threw error:', err)
-          result = { data: null, error: err }
-        }
-        
-        const data = result.data
-        const error = result.error
-        
-        const queryDuration = Date.now() - taskStart
-        console.log(`[Workspace] Workspace query completed in ${queryDuration}ms`)
-
-        if (error) {
-          console.error('[Workspace] Workspace lookup failed:', error)
-          return
-        }
-
-        const rows = ((data ?? []) as SpaceRow[])
-        console.log(`[Workspace] Workspace lookup returned ${rows.length} rows`)
-        
-        // Filter for SEP workspaces in memory (faster than DB ilike)
-        for (const space of rows) {
-          if (space?.id && space?.name && space.name.toLowerCase().includes('sep')) {
-            resolved.add(space.id)
-          }
-        }
-        
-        // If no SEP workspaces found, add all workspaces as fallback
-        if (resolved.size === 1) {
-          console.log('[Workspace] No SEP workspaces found, using all workspaces as fallback')
-          for (const space of rows) {
-            if (space?.id) {
-              resolved.add(space.id)
-            }
-          }
-        }
-      } catch (err) {
-        const errorDuration = Date.now() - taskStart
-        console.error(`[Workspace] Error retrieving workspaces after ${errorDuration}ms:`, err)
-      }
-    })())
-  }
-
-  // Wait for tasks with overall timeout (reduced to 1.2s to match individual query timeout)
-  const allTasksStart = Date.now()
+  // CRITICAL FIX: Query with aggressive timeout and immediate fallback
   try {
-    await Promise.race([
-      Promise.all(tasks),
-      new Promise<void>((resolve) => {
-        setTimeout(() => {
-          console.error('[Workspace] All workspace tasks timed out after 1200ms')
-          resolve()
-        }, 1200) // Slightly longer than individual query timeout
-      })
-    ])
-  } catch (err) {
-    console.error('[Workspace] Error waiting for workspace tasks:', err)
-  }
-  const allTasksDuration = Date.now() - allTasksStart
-  console.log(`[Workspace] All tasks completed in ${allTasksDuration}ms`)
-  console.log('[Workspace] Workspace resolution after tasks:', Array.from(resolved))
-  
-  // CRITICAL: If query timed out and we only have default workspace, cache empty array to prevent retries
-  if (resolved.size === 1 && resolved.has(DEFAULT_SPACE_ID) && allTasksDuration >= 1100) {
-    console.warn('[Workspace] Query timed out, caching empty array to prevent retries')
-    workspaceCache.set(cacheKey, { workspaces: [], timestamp: Date.now() })
-    return []
-  }
-
-  if (resolved.size > 1 && resolved.has(DEFAULT_SPACE_ID)) {
-    console.log('[Workspace] Removing default workspace (other workspaces found)')
-    resolved.delete(DEFAULT_SPACE_ID)
-  }
-
-  // Final fallback: grab a few spaces if we only have the default
-  if (resolved.size === 1 && resolved.has(DEFAULT_SPACE_ID)) {
-    try {
-      console.log('[Workspace] Running fallback workspace query (limit 10)')
-      
-      // Use Promise.race with timeout (more reliable than AbortController)
-      const fallbackQueryPromise = client
-        .from('space')
-        .select('id, name')
-        .limit(10)
-      
-      const fallbackTimeoutPromise = new Promise<{ data: null; error: { message: string } }>((resolve) => {
-        setTimeout(() => {
-          console.error('[Workspace] Fallback workspace lookup timed out after 1000ms')
-          resolve({ data: null, error: { message: 'Timeout' } })
-        }, 1000) // Aggressive 1s timeout
-      })
-
-      let result: { data: any; error: any } = { data: null, error: null }
-      try {
-        result = await Promise.race([fallbackQueryPromise, fallbackTimeoutPromise]) as any
-      } catch (err: any) {
-        console.error('[Workspace] Fallback query threw error:', err)
-        result = { data: null, error: err }
-      }
-
-      if (result.error) {
-        console.error('[Workspace] Fallback workspace lookup failed:', result.error)
-      } else {
-        const rows = ((result.data ?? []) as SpaceRow[])
-        console.log(`[Workspace] Fallback lookup returned ${rows.length} rows`)
-        for (const space of rows) {
-          if (space?.id) {
-            resolved.add(space.id)
-          }
-        }
-      }
-    } catch (err) {
-      console.error('[Workspace] Error retrieving fallback workspaces:', err)
+    console.log('[Workspace] Querying spaces with 400ms timeout')
+    
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), 400) // Very aggressive timeout
+    
+    const queryPromise = client
+      .from('space')
+      .select('id, name')
+      .limit(10) // Reduced from 20
+      .abortSignal(controller.signal)
+    
+    const { data, error } = await queryPromise
+    clearTimeout(timeoutId)
+    
+    if (error) {
+      console.error('[Workspace] Space query error:', error.message)
+      throw error
     }
+    
+    const rows = (data ?? []) as SpaceRow[]
+    console.log(`[Workspace] Space query returned ${rows.length} rows in ${Date.now() - startTime}ms`)
+    
+    // Filter for SEP workspaces in memory
+    for (const row of rows) {
+      if (!row?.id) continue
+      const name = (row.name || '').toUpperCase()
+      if (name.includes('SEP')) {
+        resolved.add(row.id)
+        console.log(`[Workspace] Added SEP workspace: ${row.name} (${row.id})`)
+      }
+    }
+    
+  } catch (err: any) {
+    console.error(`[Workspace] Space query failed after ${Date.now() - startTime}ms:`, err.message)
+    
+    // Return last known workspaces immediately
+    const lastKnown = lastKnownWorkspaces.get(cacheKey)
+    if (lastKnown && lastKnown.length > 0) {
+      console.log(`[Workspace] Using last known workspaces (${lastKnown.length} workspaces)`)
+      // Cache it again
+      workspaceCache.set(cacheKey, { workspaces: lastKnown, timestamp: Date.now() })
+      return lastKnown
+    }
+    
+    // If no last known, return default only
+    console.log('[Workspace] No last known workspaces, returning default only')
+    return [DEFAULT_SPACE_ID]
   }
 
-  const workspaceIds = Array.from(resolved)
-  console.log('[Workspace] Workspace IDs resolved:', workspaceIds)
+  const workspaces = Array.from(resolved)
   
-  // CRITICAL: Early return if only default workspace (don't search ghost space)
-  if (workspaceIds.length === 0 || (workspaceIds.length === 1 && workspaceIds[0] === DEFAULT_SPACE_ID)) {
-    console.warn('[Workspace] Only default workspace ID found - returning empty array to trigger early exit')
-    return [] // Return empty to trigger early exit in executeAnswer
+  // If we found workspaces, cache them and save as last known
+  if (workspaces.length > 0) {
+    console.log(`[Workspace] Resolved ${workspaces.length} workspaces in ${Date.now() - startTime}ms`)
+    workspaceCache.set(cacheKey, { workspaces, timestamp: Date.now() })
+    lastKnownWorkspaces.set(cacheKey, workspaces)
+    return workspaces
   }
   
-  // Cap workspace count to prevent fan-out explosion
-  const MAX_WORKSPACES = 5
-  let finalWorkspaces = workspaceIds
-  if (workspaceIds.length > MAX_WORKSPACES) {
-    console.warn(`[Workspace] Capping workspace count from ${workspaceIds.length} to ${MAX_WORKSPACES}`)
-    finalWorkspaces = workspaceIds.slice(0, MAX_WORKSPACES)
-  }
-  
-  // Cache the result
-  workspaceCache.set(cacheKey, { workspaces: finalWorkspaces, timestamp: Date.now() })
-  console.log(`[Workspace] Cached ${finalWorkspaces.length} workspaces for ${cacheKey}`)
-  
-  return finalWorkspaces
+  // No workspaces found, return default
+  console.log('[Workspace] No SEP workspaces found, returning default')
+  const fallback = [DEFAULT_SPACE_ID]
+  workspaceCache.set(cacheKey, { workspaces: fallback, timestamp: Date.now() })
+  return fallback
 }
 
 /**
- * Public wrapper with hard timeout to prevent indefinite hangs
+ * Public API with hard timeout wrapper
  */
 export async function getWorkspaceIds(options: WorkspaceOptions = {}): Promise<string[]> {
-  const timeoutMs = 2000 // 2s hard timeout
-  const startTime = Date.now()
-  const cacheKey = `${options.phoneNumber || 'default'}_${options.includeSepFallback !== false ? 'sep' : 'nosep'}_${options.includePhoneLookup ? 'phone' : 'nophone'}`
+  const cacheKey = options.phoneNumber || 'default'
   
   try {
+    // Hard 500ms timeout for the entire operation
     const result = await Promise.race([
       getWorkspaceIdsInternal(options),
-      new Promise<string[]>((_, reject) => {
-        setTimeout(() => {
-          reject(new Error(`getWorkspaceIds timed out after ${timeoutMs}ms`))
-        }, timeoutMs)
-      })
+      new Promise<string[]>((_, reject) => 
+        setTimeout(() => reject(new Error('getWorkspaceIds timeout')), 500)
+      )
     ])
     
-    const duration = Date.now() - startTime
-    console.log(`[Workspace] getWorkspaceIds completed in ${duration}ms, returning ${result.length} workspaces`)
+    console.log(`[Workspace] getWorkspaceIds completed, returning ${result.length} workspaces`)
     return result
-  } catch (err) {
-    const duration = Date.now() - startTime
-    console.error(`[Workspace] getWorkspaceIds failed after ${duration}ms:`, err)
+  } catch (err: any) {
+    console.error('[Workspace] getWorkspaceIds timed out, using fallback')
     
-    // Cache empty array on timeout to prevent retries
-    if (duration >= timeoutMs - 100) {
-      console.warn('[Workspace] Public wrapper timed out, caching empty array to prevent retries')
-      workspaceCache.set(cacheKey, { workspaces: [], timestamp: Date.now() })
-      return []
+    // Try last known first
+    const lastKnown = lastKnownWorkspaces.get(cacheKey)
+    if (lastKnown && lastKnown.length > 0) {
+      console.log(`[Workspace] Returning last known workspaces (${lastKnown.length})`)
+      return lastKnown
     }
     
-    // Return empty array on error (don't search ghost default workspace)
-    return []
+    // Otherwise return default
+    console.log('[Workspace] Returning default workspace')
+    return [DEFAULT_SPACE_ID]
   }
 }
 
+/**
+ * Pre-warm the workspace cache (call this on app startup or periodically)
+ */
+export async function prewarmWorkspaceCache(): Promise<void> {
+  console.log('[Workspace] Pre-warming workspace cache...')
+  try {
+    await getWorkspaceIds({ includeSepFallback: true, includePhoneLookup: false })
+  } catch (err) {
+    console.error('[Workspace] Failed to pre-warm cache:', err)
+  }
+}
+
+/**
+ * Clear the workspace cache (for testing or manual refresh)
+ */
+export function clearWorkspaceCache(): void {
+  workspaceCache.clear()
+  console.log('[Workspace] Cache cleared')
+}

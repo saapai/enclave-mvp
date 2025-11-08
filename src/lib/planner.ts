@@ -6,7 +6,7 @@
 
 import { ENV } from './env'
 import { findEventByName, findPolicyByTitle, getLinkbacks } from './knowledge-graph'
-import { searchResourcesHybrid } from './search'
+import { searchResourcesHybridWithEmbedding } from './search'
 import { supabase } from './supabase'
 
 // ============================================================================
@@ -255,7 +255,8 @@ function fallbackPlan(query: string): QueryPlan {
  */
 async function executeTool(
   tool: ToolCall,
-  spaceId: string
+  spaceId: string,
+  queryEmbedding: number[] | null = null
 ): Promise<ToolResult> {
   console.log(`[Tool Executor] Executing: ${tool.tool}`)
 
@@ -265,13 +266,13 @@ async function executeTool(
         return await executeSearchKnowledge(tool.params, spaceId)
 
       case 'search_docs':
-        return await executeSearchDocs(tool.params, spaceId)
+        return await executeSearchDocs(tool.params, spaceId, queryEmbedding)
 
       case 'search_announcements':
         return await executeSearchAnnouncements(tool.params, spaceId)
 
       case 'calendar_find':
-        return await executeCalendarFind(tool.params, spaceId)
+        return await executeCalendarFind(tool.params, spaceId, queryEmbedding)
 
       default:
         console.log(`[Tool Executor] Unknown tool: ${tool.tool}`)
@@ -310,7 +311,7 @@ async function executeSearchKnowledge(
     
     if (events.length > 0) {
       const event = events[0]
-      const sources = await getLinkbacks('event', event.event_id as string)
+      const sources = await getLinkbacks('event', (event as any).event_id as string)
       
       return {
         tool: 'search_knowledge',
@@ -350,13 +351,21 @@ async function executeSearchKnowledge(
  */
 async function executeSearchDocs(
   params: Record<string, any>,
-  spaceId: string
+  spaceId: string,
+  queryEmbedding: number[] | null = null
 ): Promise<ToolResult> {
   const { query } = params
 
   console.log(`[search_docs] Searching documents: "${query}"`)
 
-  const results = await searchResourcesHybrid(query, spaceId, {}, { limit: 5 })
+  const results = await searchResourcesHybridWithEmbedding(
+    query,
+    spaceId,
+    queryEmbedding,
+    {},
+    { limit: 5 },
+    undefined
+  )
 
   console.log(`[search_docs] Found ${results.length} results`)
 
@@ -412,7 +421,7 @@ async function executeSearchAnnouncements(
   
   // Improved keyword matching - extract key terms from query
   const lowerQuery = (query || '').toLowerCase()
-  const queryWords = lowerQuery.split(/\s+/).filter(w => w.length > 2) // Ignore short words like "at", "the"
+  const queryWords = lowerQuery.split(/\s+/).filter((word: string) => word.length > 2) // Ignore short words like "at", "the"
   
   // Score announcements by matching keywords
   const scoredAnnouncements = allAnnouncements.map(ann => {
@@ -481,11 +490,12 @@ async function executeSearchAnnouncements(
  */
 async function executeCalendarFind(
   params: Record<string, any>,
-  spaceId: string
+  spaceId: string,
+  queryEmbedding: number[] | null = null
 ): Promise<ToolResult> {
   // TODO: Implement calendar-specific search
   // For now, delegate to doc search
-  return executeSearchDocs(params, spaceId)
+  return executeSearchDocs(params, spaceId, queryEmbedding)
 }
 
 /**
@@ -493,17 +503,26 @@ async function executeCalendarFind(
  */
 export async function executePlan(
   plan: QueryPlan,
-  spaceId: string
+  spaceId: string,
+  queryEmbedding: number[] | null = null
 ): Promise<ToolResult[]> {
   console.log(`[Tool Executor] Executing plan with ${plan.tools.length} tools`)
 
   const results: ToolResult[] = []
+  const executedSignatures = new Set<string>()
 
   // Execute tools in priority order
   const sortedTools = [...plan.tools].sort((a, b) => a.priority - b.priority)
 
   for (const tool of sortedTools) {
-    const result = await executeTool(tool, spaceId)
+    const signature = `${tool.tool}:${JSON.stringify(tool.params || {})}`
+    if (executedSignatures.has(signature)) {
+      console.log(`[Tool Executor] Skipping duplicate tool ${signature}`)
+      continue
+    }
+    executedSignatures.add(signature)
+
+    const result = await executeTool(tool, spaceId, queryEmbedding)
     results.push(result)
 
     // Stop if we got a high-confidence result
@@ -673,7 +692,7 @@ function composePolicyResponse(result: ToolResult): ComposedResponse {
     }
 
     if (policy.bullets && policy.bullets.length > 0) {
-      text += '\n\nKey points:\n' + policy.bullets.map(b => `• ${b}`).join('\n')
+      text += '\n\nKey points:\n' + policy.bullets.map((bullet: string) => `• ${bullet}`).join('\n')
     }
 
     if (sources.length > 0) {
