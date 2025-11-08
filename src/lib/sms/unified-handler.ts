@@ -247,60 +247,17 @@ export async function handleSMSMessage(
         console.log(`[UnifiedHandler] Intent overridden to content_query`)
         // Fall through to normal query handling (don't return here)
       } else {
-        // This is a genuine status check or different follow-up
+        // CRITICAL FIX: Don't blindly return previous answer for different questions!
+        // The LLM classified this as a follow-up, but it's a DIFFERENT question.
+        // Treat it as a new content_query and let the LLM's conversation context handle it.
         
-        // Check if the most recent query has an answer
-        if (mostRecentQuery.details.queryAnswer && (mostRecentQuery.details.queryResults || 0) > 0) {
-          console.log(`[UnifiedHandler] Found most recent query result: "${mostRecentQuery.details.query}"`)
-          return {
-            response: mostRecentQuery.details.queryAnswer || "i couldn't find information about that.",
-            shouldSaveHistory: true,
-            metadata: { intent: 'content_query' }
-          }
+        console.log(`[UnifiedHandler] Follow-up detected but it's a different question, treating as new content_query`)
+        intent = {
+          ...intent,
+          type: 'content_query'
         }
-        
-        // Check if the most recent query is still processing (no answer yet, but recent)
-        const isRecent = new Date(mostRecentQuery.timestamp).getTime() > Date.now() - 120000 // Within last 2 minutes
-        if (isRecent && !mostRecentQuery.details.queryAnswer && !mostRecentQuery.details.queryResults) {
-          console.log(`[UnifiedHandler] Most recent query "${mostRecentQuery.details.query}" is still processing`)
-          return {
-            response: `still processing "${mostRecentQuery.details.query}", give me a sec!`,
-            shouldSaveHistory: true,
-            metadata: { intent: 'content_query' }
-          }
-        }
-        
-        // Check if any queries have answers (fallback to any answered query)
-        const answeredQueries = recentQueries.filter(q => (q.details.queryResults || 0) > 0 && q.details.queryAnswer)
-        if (answeredQueries.length > 0) {
-          const lastAnswered = answeredQueries[0]
-          console.log(`[UnifiedHandler] Found previous query result: "${lastAnswered.details.query}"`)
-          return {
-            response: lastAnswered.details.queryAnswer || "i couldn't find information about that.",
-            shouldSaveHistory: true,
-            metadata: { intent: 'content_query' }
-          }
-        }
-        
-        // Check if queries are still processing (recent but no results yet)
-        const pendingQueries = recentQueries.filter(q => !q.details.queryResults && !q.details.queryAnswer)
-        if (pendingQueries.length > 0) {
-          return {
-            response: `still processing "${pendingQueries[0].details.query}", give me a sec!`,
-            shouldSaveHistory: true,
-            metadata: { intent: 'content_query' }
-          }
-        } else {
-          // Queries were attempted but found nothing
-          const failedQueries = recentQueries.filter(q => (q.details.queryResults || 0) === 0)
-          if (failedQueries.length > 0) {
-            return {
-              response: `i couldn't find information about "${failedQueries[0].details.query}".`,
-              shouldSaveHistory: true,
-              metadata: { intent: 'content_query' }
-            }
-          }
-        }
+        console.log(`[UnifiedHandler] Intent overridden to content_query`)
+        // Fall through to normal query handling
       }
     }
     
