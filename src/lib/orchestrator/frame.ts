@@ -186,7 +186,16 @@ async function determineMode(
   const stepStart = Date.now()
   console.log(`[TurnFrame] determineMode start for ${phoneNumber}`)
   const normalizedPhone = normalizePhone(phoneNumber)
-  
+ 
+  const lowerText = text.toLowerCase()
+  const isExplicitQuestion = /^(what|when|where|who|how|why|is|are|was|were|do|does|did|will|can|could|should)\s/i.test(text) || text.includes('?')
+
+  // If message is clearly a question, skip draft lookups and stay idle for query handling
+  if (isExplicitQuestion) {
+    console.log(`[TurnFrame] determineMode: detected question, returning IDLE without draft checks in ${Date.now() - stepStart}ms`)
+    return { mode: 'IDLE' }
+  }
+
   // Check for active drafts with timeouts
   const draftStart = Date.now()
   const activeDraft = await withQueryTimeout(
@@ -207,16 +216,11 @@ async function determineMode(
   
   // PRIORITY 1: Check if user is making a NEW request (not responding to bot)
   // This must come BEFORE checking for confirm mode to avoid false positives
-  const lowerText = text.toLowerCase()
   const isNewPollRequest = /(make|create|send)\s+(an?\s+)?(poll|survey)/i.test(text) ||
                            /i\s+(want|wanna)\s+(to\s+)?(make|create|send)\s+(an?\s+)?(poll|survey)/i.test(text)
   const isNewAnnouncementRequest = /(make|create|send|post)\s+(an?\s+|out\s+an?\s+)?(announcement|announce|message|blast)/i.test(text) ||
                                    /i\s+(want|wanna)\s+(to\s+)?(make|create|send|post)\s+(an?\s+)?(announcement|announce)/i.test(text) ||
                                    /(broadcast|blast)\s*:/i.test(text) // Colon-style commands are always new
-  
-  // Check if user is asking an explicit question (should be treated as query, not draft input)
-  // Questions can have '?' or just start with question words
-  const isExplicitQuestion = /^(what|when|where|who|how|why|is|are|was|were|do|does|did|will|can|could|should)\s/i.test(text) || text.includes('?')
   
   // If it's a new request, ignore existing drafts and go to IDLE (plan will route to create)
   if (isNewPollRequest || isNewAnnouncementRequest) {
@@ -257,8 +261,7 @@ async function determineMode(
   }
   
   // If draft exists and ready to send, check if we're in confirm mode
-  // BUT: If user is asking an explicit question, treat as IDLE (query) instead
-  if ((activeDraft || activePollDraft) && !isExplicitQuestion) {
+  if (activeDraft || activePollDraft) {
     // Check if last bot message was asking to confirm send
     const lowerLastBot = lastBotMessage.toLowerCase()
     if (lowerLastBot.includes('reply "send it"') || lowerLastBot.includes('reply "send now"')) {
@@ -287,35 +290,33 @@ async function determineMode(
     
     // Otherwise, if draft exists and user is NOT asking a question, we're in input mode
     // But if user IS asking a question, treat as IDLE (query) instead
-    if (!isExplicitQuestion) {
-      if (activeDraft) {
-        return {
-          mode: 'ANNOUNCEMENT_INPUT',
-          pending: {
-            id: activeDraft.id || '',
-            kind: 'announcement',
-            body: activeDraft.content || '',
-            audience: activeDraft.targetAudience === 'all' || !activeDraft.targetAudience ? 'all' : [activeDraft.targetAudience],
-            created_by: normalizedPhone,
-            last_edit_ts: activeDraft.updatedAt || new Date().toISOString(),
-            workspace_id: activeDraft.workspaceId
-          }
+    if (activeDraft) {
+      return {
+        mode: 'ANNOUNCEMENT_INPUT',
+        pending: {
+          id: activeDraft.id || '',
+          kind: 'announcement',
+          body: activeDraft.content || '',
+          audience: activeDraft.targetAudience === 'all' || !activeDraft.targetAudience ? 'all' : [activeDraft.targetAudience],
+          created_by: normalizedPhone,
+          last_edit_ts: activeDraft.updatedAt || new Date().toISOString(),
+          workspace_id: activeDraft.workspaceId
         }
       }
-      
-      if (activePollDraft) {
-        return {
-          mode: 'POLL_INPUT',
-          pending: {
-            id: activePollDraft.id || '',
-            kind: 'poll',
-            question: activePollDraft.question || '',
-            options: activePollDraft.options || [],
-            audience: 'all',
-            created_by: normalizedPhone,
-            last_edit_ts: activePollDraft.updatedAt || new Date().toISOString(),
-            workspace_id: activePollDraft.workspaceId
-          }
+    }
+    
+    if (activePollDraft) {
+      return {
+        mode: 'POLL_INPUT',
+        pending: {
+          id: activePollDraft.id || '',
+          kind: 'poll',
+          question: activePollDraft.question || '',
+          options: activePollDraft.options || [],
+          audience: 'all',
+          created_by: normalizedPhone,
+          last_edit_ts: activePollDraft.updatedAt || new Date().toISOString(),
+          workspace_id: activePollDraft.workspaceId
         }
       }
     }
