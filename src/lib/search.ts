@@ -65,10 +65,11 @@ export interface SearchOptions {
   offset?: number
 }
 
-// Hybrid search that includes regular resources, Google Docs, and Slack messages
-export async function searchResourcesHybrid(
+// Hybrid search with pre-generated embedding (for multi-workspace searches)
+export async function searchResourcesHybridWithEmbedding(
   query: string,
   spaceId: string,
+  queryEmbedding: number[] | null,
   filters: SearchFilters = {},
   options: SearchOptions = {},
   userId?: string
@@ -76,7 +77,6 @@ export async function searchResourcesHybrid(
   const { limit = 20, offset = 0 } = options
   
   if (!query.trim()) {
-    // Return regular resources only for empty queries
     return searchResources(query, spaceId, filters, options, userId)
   }
 
@@ -84,32 +84,14 @@ export async function searchResourcesHybrid(
   const searchId = `${spaceId.substring(0, 8)}...`
   
   try {
-    console.log(`[Hybrid Search] [${searchId}] START - query: "${query}", spaceId: ${spaceId}`)
+    console.log(`[Hybrid Search] [${searchId}] START - query: "${query}", spaceId: ${spaceId}, pregenEmbed=${!!queryEmbedding}`)
     
-    // Search regular resources with FTS (keyword search) FIRST - don't wait for embedding
+    // Search regular resources with FTS (keyword search) FIRST
     const ftsStart = Date.now()
     console.log(`[Hybrid Search] [${searchId}] FTS:start`)
     const regularResults = await searchResources(query, spaceId, filters, { limit: limit * 2, offset: 0 }, userId)
     const ftsDuration = Date.now() - ftsStart
     console.log(`[Hybrid Search] [${searchId}] FTS:done (${ftsDuration}ms, ${regularResults.length} results)`)
-    
-    // Generate embedding for vector search with timeout
-    const embedStart = Date.now()
-    console.log(`[Hybrid Search] [${searchId}] EMBED:start`)
-    let queryEmbedding: number[] | null = null
-    try {
-      queryEmbedding = await pTimeout(
-        embedText(query),
-        2000, // 2s timeout for embedding
-        `embed:${searchId}`
-      )
-      const embedDuration = Date.now() - embedStart
-      console.log(`[Hybrid Search] [${searchId}] EMBED:done (${embedDuration}ms, dims=${queryEmbedding?.length || 0})`)
-    } catch (err) {
-      const embedDuration = Date.now() - embedStart
-      const isTimeout = err instanceof Error && err.message.includes('timeout')
-      console.error(`[Hybrid Search] [${searchId}] EMBED:${isTimeout ? 'timeout' : 'failed'} (${embedDuration}ms)`)
-    }
     
     if (!queryEmbedding) {
       console.log(`[Hybrid Search] [${searchId}] No embedding, returning FTS only (${regularResults.length} results)`)
@@ -459,6 +441,44 @@ export async function searchResourcesHybrid(
     // Fallback to regular search (with user filtering)
     return searchResources(query, spaceId, filters, options, userId)
   }
+}
+
+// Original hybrid search that generates its own embedding (for single-workspace searches)
+export async function searchResourcesHybrid(
+  query: string,
+  spaceId: string,
+  filters: SearchFilters = {},
+  options: SearchOptions = {},
+  userId?: string
+): Promise<SearchResult[]> {
+  const { limit = 20, offset = 0 } = options
+  
+  if (!query.trim()) {
+    return searchResources(query, spaceId, filters, options, userId)
+  }
+
+  const searchId = `${spaceId.substring(0, 8)}...`
+  
+  // Generate embedding inline
+  const embedStart = Date.now()
+  console.log(`[Hybrid Search] [${searchId}] EMBED:start`)
+  let queryEmbedding: number[] | null = null
+  try {
+    queryEmbedding = await pTimeout(
+      embedText(query),
+      2000, // 2s timeout for embedding
+      `embed:${searchId}`
+    )
+    const embedDuration = Date.now() - embedStart
+    console.log(`[Hybrid Search] [${searchId}] EMBED:done (${embedDuration}ms, dims=${queryEmbedding?.length || 0})`)
+  } catch (err) {
+    const embedDuration = Date.now() - embedStart
+    const isTimeout = err instanceof Error && err.message.includes('timeout')
+    console.error(`[Hybrid Search] [${searchId}] EMBED:${isTimeout ? 'timeout' : 'failed'} (${embedDuration}ms)`)
+  }
+  
+  // Delegate to the with-embedding version
+  return searchResourcesHybridWithEmbedding(query, spaceId, queryEmbedding, filters, options, userId)
 }
 
 export async function searchResources(

@@ -76,9 +76,28 @@ export async function executeAnswer(
       }
     }
     
+    // CRITICAL: Generate embedding ONCE upfront to avoid 2s penalty per workspace
+    console.log(`[Execute Answer] [${traceId}] Generating embedding for query: "${query}"`)
+    const embedStart = Date.now()
+    let queryEmbedding: number[] | null = null
+    try {
+      const { embedText } = await import('@/lib/embeddings')
+      queryEmbedding = await pTimeout(
+        embedText(query),
+        3000, // 3s timeout for embedding
+        `embed:${traceId}`
+      )
+      const embedDuration = Date.now() - embedStart
+      console.log(`[Execute Answer] [${traceId}] Embedding generated in ${embedDuration}ms (dims=${queryEmbedding?.length || 0})`)
+    } catch (err) {
+      const embedDuration = Date.now() - embedStart
+      const isTimeout = err instanceof Error && err.message.includes('timeout')
+      console.error(`[Execute Answer] [${traceId}] Embedding ${isTimeout ? 'timed out' : 'failed'} after ${embedDuration}ms:`, err)
+    }
+    
     // Concurrency-limited, timeout-wrapped fan-out (never block on one bad apple)
     const limit = pLimit(2) // Max 2 searches in flight at once
-    const PER_WORKSPACE_TIMEOUT = 2000 // 2s per workspace
+    const PER_WORKSPACE_TIMEOUT = 4000 // 4s per workspace (now that embedding is pre-generated)
     
     console.log(`[Execute Answer] [${traceId}] Starting hybrid search across ${workspaceIds.length} workspaces (concurrency=2, timeout=${PER_WORKSPACE_TIMEOUT}ms per workspace)`)
     
@@ -87,8 +106,10 @@ export async function executeAnswer(
         const searchStart = Date.now()
         console.log(`[Execute Answer] [${traceId}] [${index + 1}/${workspaceIds.length}] Starting search for workspace ${spaceId}`)
         try {
+          // Import searchResourcesHybridWithEmbedding for pre-generated embedding
+          const { searchResourcesHybridWithEmbedding } = await import('@/lib/search')
           const results = await pTimeout(
-            searchResourcesHybrid(query, spaceId, {}, { limit: 5, offset: 0 }, frame.user.id),
+            searchResourcesHybridWithEmbedding(query, spaceId, queryEmbedding, {}, { limit: 5, offset: 0 }, frame.user.id),
             PER_WORKSPACE_TIMEOUT,
             `hybrid_search:${spaceId}`
           )
