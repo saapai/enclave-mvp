@@ -75,13 +75,16 @@ export async function handleSMSMessage(
   console.log(`[UnifiedHandler] Processing message from ${phoneNumber}: "${messageText}"`)
 
   // Load conversation history (timeout to avoid hanging on Supabase)
+  console.log(`[UnifiedHandler] About to load history with timeout wrapper`)
+  const historyStartTime = Date.now()
   const history = await withTimeout(
     loadWeightedHistory(phoneNumber, 10),
     4000,
     'loadWeightedHistory',
     [] as ConversationMessage[]
   )
-  console.log(`[UnifiedHandler] Loaded ${history.length} history messages`)
+  const historyDuration = Date.now() - historyStartTime
+  console.log(`[UnifiedHandler] Loaded ${history.length} history messages in ${historyDuration}ms`)
 
   // Check welcome flow first
   const needsWelcomeFlow = await withTimeout(

@@ -51,15 +51,27 @@ export async function loadWeightedHistory(
   limit: number = 10
 ): Promise<ConversationMessage[]> {
   try {
+    console.log(`[ContextClassifier] loadWeightedHistory: Starting for ${phoneNumber}`)
+    const importStartTime = Date.now()
     const { supabaseAdmin } = await import('@/lib/supabase')
-    if (!supabaseAdmin) return []
+    const importDuration = Date.now() - importStartTime
+    console.log(`[ContextClassifier] loadWeightedHistory: Supabase imported in ${importDuration}ms`)
+    
+    if (!supabaseAdmin) {
+      console.log(`[ContextClassifier] loadWeightedHistory: No supabaseAdmin, returning empty`)
+      return []
+    }
 
+    console.log(`[ContextClassifier] loadWeightedHistory: Querying database`)
+    const queryStartTime = Date.now()
     const { data } = await supabaseAdmin
       .from('sms_conversation_history')
       .select('id, user_message, bot_response, created_at')
       .eq('phone_number', phoneNumber)
       .order('created_at', { ascending: false })
       .limit(limit)
+    const queryDuration = Date.now() - queryStartTime
+    console.log(`[ContextClassifier] loadWeightedHistory: Query completed in ${queryDuration}ms, found ${data?.length || 0} rows`)
 
     if (!data) return []
 
@@ -81,9 +93,11 @@ export async function loadWeightedHistory(
       }
     }
 
+    console.log(`[ContextClassifier] loadWeightedHistory: Returning ${messages.length} messages`)
     return messages
   } catch (err) {
     console.error('[ContextClassifier] Failed to load history:', err)
+    console.error('[ContextClassifier] Error stack:', err instanceof Error ? err.stack : 'No stack')
     return []
   }
 }
