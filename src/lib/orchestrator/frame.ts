@@ -6,11 +6,39 @@
  */
 
 import { TurnFrame, Command, Toxicity, ParsedTime, Draft, PollState } from './types'
-import { supabase } from '@/lib/supabase'
+import { supabaseAdmin } from '@/lib/supabase'
 import { getActiveDraft } from '@/lib/announcements'
 import { getActivePollDraft } from '@/lib/polls'
 import { extractQuotes } from '@/lib/nlp/quotes'
 import { routeAction } from '@/lib/nlp/actionRouter'
+
+/**
+ * Timeout wrapper for Supabase queries
+ */
+async function withQueryTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  fallback: T,
+  label: string
+): Promise<T> {
+  let timeoutId: NodeJS.Timeout | null = null
+  try {
+    const timeoutPromise = new Promise<T>((resolve) => {
+      timeoutId = setTimeout(() => {
+        console.error(`[TurnFrame] ${label} timed out after ${timeoutMs}ms, using fallback`)
+        resolve(fallback)
+      }, timeoutMs)
+    })
+
+    const result = await Promise.race([promise, timeoutPromise])
+    if (timeoutId) clearTimeout(timeoutId)
+    return result
+  } catch (err) {
+    if (timeoutId) clearTimeout(timeoutId)
+    console.error(`[TurnFrame] ${label} threw error:`, err)
+    return fallback
+  }
+}
 
 export function normalizePhone(phone: string): string {
   const cleaned = String(phone).replace(/[^\d]/g, '')
@@ -159,12 +187,22 @@ async function determineMode(
   console.log(`[TurnFrame] determineMode start for ${phoneNumber}`)
   const normalizedPhone = normalizePhone(phoneNumber)
   
-  // Check for active drafts
+  // Check for active drafts with timeouts
   const draftStart = Date.now()
-  const activeDraft = await getActiveDraft(normalizedPhone)
+  const activeDraft = await withQueryTimeout(
+    getActiveDraft(normalizedPhone),
+    3000, // 3 second timeout
+    null,
+    'getActiveDraft (determineMode)'
+  )
   console.log(`[TurnFrame] getActiveDraft (determineMode) completed in ${Date.now() - draftStart}ms ${activeDraft ? '(found)' : '(none)'}`)
   const pollStart = Date.now()
-  const activePollDraft = await getActivePollDraft(normalizedPhone)
+  const activePollDraft = await withQueryTimeout(
+    getActivePollDraft(normalizedPhone),
+    3000, // 3 second timeout
+    null,
+    'getActivePollDraft (determineMode)'
+  )
   console.log(`[TurnFrame] getActivePollDraft (determineMode) completed in ${Date.now() - pollStart}ms ${activePollDraft ? '(found)' : '(none)'}`)
   
   // PRIORITY 1: Check if user is making a NEW request (not responding to bot)
@@ -302,21 +340,34 @@ export async function buildTurnFrame(
   const now = new Date()
   console.log(`[TurnFrame] buildTurnFrame start for ${normalizedPhone}`)
   
-  // Get conversation history
+  // Get conversation history with timeout
   let history: Array<{ user_message: string; bot_response: string; created_at: string }> | null = null
   try {
     const historyStart = Date.now()
     console.log(`[TurnFrame] Loading conversation history for ${normalizedPhone}`)
-    const { data } = await supabase
-      .from('sms_conversation_history')
-      .select('user_message, bot_response, created_at')
-      .eq('phone_number', normalizedPhone)
-      .order('created_at', { ascending: false })
-      .limit(5)
-    history = data
+    if (!supabaseAdmin) {
+      console.error('[TurnFrame] supabaseAdmin is null, skipping history')
+      history = []
+    } else {
+      const queryPromise = supabaseAdmin
+        .from('sms_conversation_history')
+        .select('user_message, bot_response, created_at')
+        .eq('phone_number', normalizedPhone)
+        .order('created_at', { ascending: false })
+        .limit(5)
+      
+      const result = await withQueryTimeout(
+        queryPromise,
+        3000, // 3 second timeout
+        { data: null, error: null } as any,
+        'conversation history query'
+      )
+      history = result.data
+    }
     console.log(`[TurnFrame] Loaded conversation history in ${Date.now() - historyStart}ms (rows=${history?.length || 0})`)
   } catch (err) {
     console.error('[TurnFrame] Failed to load conversation history:', err)
+    history = []
   }
   
   const lastN = (history || []).reverse().flatMap(msg => [
@@ -332,17 +383,32 @@ export async function buildTurnFrame(
     ? { type: 'prompt', text: lastBotMessage, ts: history?.[history.length - 1]?.created_at || now.toISOString() }
     : undefined
   
-  // Determine mode and pending state
+  // Determine mode and pending state with timeout
   const modeStart = Date.now()
-  const { mode, pending } = await determineMode(normalizedPhone, text, lastBotMessage)
+  const { mode, pending } = await withQueryTimeout(
+    determineMode(normalizedPhone, text, lastBotMessage),
+    5000, // 5 second timeout for determineMode (includes draft lookups)
+    { mode: 'IDLE' as const, pending: undefined },
+    'determineMode'
+  )
   console.log(`[TurnFrame] determineMode completed in ${Date.now() - modeStart}ms (mode=${mode})`)
   
-  // Check for active drafts to determine command context
+  // Check for active drafts to determine command context (with timeouts)
   const activeDraftStart = Date.now()
-  const activeDraft = await getActiveDraft(normalizedPhone)
+  const activeDraft = await withQueryTimeout(
+    getActiveDraft(normalizedPhone),
+    3000, // 3 second timeout
+    null,
+    'getActiveDraft'
+  )
   console.log(`[TurnFrame] getActiveDraft completed in ${Date.now() - activeDraftStart}ms ${activeDraft ? '(found)' : '(none)'}`)
   const activePollStart = Date.now()
-  const activePollDraft = await getActivePollDraft(normalizedPhone)
+  const activePollDraft = await withQueryTimeout(
+    getActivePollDraft(normalizedPhone),
+    3000, // 3 second timeout
+    null,
+    'getActivePollDraft'
+  )
   console.log(`[TurnFrame] getActivePollDraft completed in ${Date.now() - activePollStart}ms ${activePollDraft ? '(found)' : '(none)'}`)
   const hasActiveDraft = !!(activeDraft || activePollDraft)
   

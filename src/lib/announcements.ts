@@ -3,7 +3,7 @@
  * Manages announcement drafting, editing, and scheduling via SMS
  */
 
-import { supabase } from './supabase';
+import { supabase, supabaseAdmin } from './supabase';
 import { parseAnnouncementQuotes, hasQuotes } from './nlp/quotes';
 
 export interface AnnouncementDraft {
@@ -418,7 +418,14 @@ export async function saveDraft(
  */
 export async function getActiveDraft(phoneNumber: string): Promise<AnnouncementDraft | null> {
   try {
-    const { data, error } = await supabase
+    // Use supabaseAdmin for server-side operations (more reliable)
+    const client = supabaseAdmin || supabase
+    if (!client) {
+      console.error('[Announcements] No Supabase client available')
+      return null
+    }
+    
+    const { data, error } = await client
       .from('announcement')
       .select('*')
       .eq('creator_phone', phoneNumber)
