@@ -21,10 +21,14 @@ export async function executeAnswer(
   frame: TurnFrame,
   envelope: ContextEnvelope
 ): Promise<ExecuteResult> {
+  const overallStart = Date.now()
+  console.log('[Execute Answer] Starting executeAnswer')
   const query = frame.text
   
   // Get workspace IDs
+  const workspaceStart = Date.now()
   const spaceIds = await getWorkspaceIds()
+  console.log(`[Execute Answer] Retrieved ${spaceIds.length} workspace ids in ${Date.now() - workspaceStart}ms`)
   if (spaceIds.length === 0) {
     return {
       messages: ['I couldn\'t find any workspaces. Please contact support.']
@@ -34,6 +38,7 @@ export async function executeAnswer(
   // Cross-workspace search
   const allResults = []
   for (const spaceId of spaceIds) {
+    const searchStart = Date.now()
     const results = await searchResourcesHybrid(
       query,
       spaceId,
@@ -41,6 +46,7 @@ export async function executeAnswer(
       { limit: 5, offset: 0 },
       undefined
     )
+    console.log(`[Execute Answer] searchResourcesHybrid for space ${spaceId} returned ${results.length} results in ${Date.now() - searchStart}ms`)
     allResults.push(...results)
   }
   
@@ -57,12 +63,16 @@ export async function executeAnswer(
   
   // Use planner-based flow
   try {
+    const planStart = Date.now()
     const plan = await planQuery(query, spaceIds[0])
+    console.log(`[Execute Answer] planQuery completed in ${Date.now() - planStart}ms (intent=${plan.intent}, confidence=${plan.confidence})`)
     
     // Execute plan across all workspaces and combine results
     const allToolResults: any[] = []
     for (const spaceId of spaceIds) {
+      const executePlanStart = Date.now()
       const toolResults = await executePlan(plan, spaceId)
+      console.log(`[Execute Answer] executePlan returned ${toolResults.length} tool results for space ${spaceId} in ${Date.now() - executePlanStart}ms`)
       allToolResults.push(...toolResults)
     }
     
@@ -411,6 +421,8 @@ export async function executeAnswer(
     return {
       messages: ['I couldn\'t process that request. Try asking about events, policies, or people.']
     }
+  } finally {
+    console.log(`[Execute Answer] Finished executeAnswer in ${Date.now() - overallStart}ms`)
   }
 }
 

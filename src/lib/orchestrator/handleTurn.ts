@@ -27,19 +27,29 @@ export async function handleTurn(
   userId?: string,
   orgId?: string
 ): Promise<HandleTurnResult> {
+  const overallStart = Date.now()
+  const textPreview = text.length > 80 ? `${text.substring(0, 77)}...` : text
+  console.log(`[Orchestrator] handleTurn start for ${phoneNumber}: "${textPreview}"`)
   try {
     // 1. Build TurnFrame
+    let stepStart = Date.now()
     const frame = await buildTurnFrame(phoneNumber, text, userId, orgId)
+    console.log(`[Orchestrator] buildTurnFrame completed in ${Date.now() - stepStart}ms`)
     
     // 2. Plan (determine ResponseMode)
+    stepStart = Date.now()
     const mode = plan(frame)
-    console.log(`[Orchestrator] Frame mode: ${frame.state.mode}, Planned mode: ${mode}`)
+    console.log(`[Orchestrator] plan() completed in ${Date.now() - stepStart}ms (frame mode=${frame.state.mode}, planned mode=${mode})`)
     
     // 3. Build ContextEnvelope
+    stepStart = Date.now()
     const envelope = await buildEnvelope(frame, mode, orgId)
+    console.log(`[Orchestrator] buildEnvelope completed in ${Date.now() - stepStart}ms`)
     
     // 4. Execute
+    stepStart = Date.now()
     const result = await execute(mode, frame, envelope)
+    console.log(`[Orchestrator] execute(${mode}) completed in ${Date.now() - stepStart}ms`)
     
     // Log result for debugging
     console.log(`[Orchestrator] Execute result: ${result.messages.length} messages, mode=${mode}`)
@@ -52,11 +62,13 @@ export async function handleTurn(
     // 5. Log decision
     const normalizedPhone = normalizePhone(phoneNumber)
     try {
+      stepStart = Date.now()
       await supabase.from('sms_conversation_history').insert({
         phone_number: normalizedPhone,
         user_message: text,
         bot_response: result.messages.join('\n\n') || 'No response generated'
       })
+      console.log(`[Orchestrator] Saved conversation history in ${Date.now() - stepStart}ms`)
     } catch (err) {
       console.error(`[Orchestrator] Failed to save conversation history:`, err)
     }
@@ -68,9 +80,11 @@ export async function handleTurn(
     }
     
     // 6. Return result
+    console.log(`[Orchestrator] handleTurn success for ${phoneNumber} in ${Date.now() - overallStart}ms`)
     return result
   } catch (error) {
     console.error(`[Orchestrator] Error handling turn:`, error)
+    console.error(`[Orchestrator] handleTurn failed after ${Date.now() - overallStart}ms`)
     return {
       messages: ['I encountered an error processing your request. Please try again.']
     }
