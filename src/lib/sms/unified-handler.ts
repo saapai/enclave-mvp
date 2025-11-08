@@ -9,7 +9,7 @@
  * - Query handling
  */
 
-import { classifyIntent, loadWeightedHistory, IntentType, ConversationMessage } from './context-aware-classifier'
+import { classifyIntent, loadWeightedHistory, IntentType, ConversationMessage, ClassifiedIntent } from './context-aware-classifier'
 import { parseCommand, ParsedCommand } from './smart-command-parser'
 import { needsWelcome, getWelcomeMessage, handleNameInWelcome, initializeNewUser } from './welcome-flow'
 import { generateAnnouncement, formatAnnouncement, AnnouncementDraft } from './enhanced-announcement-generator'
@@ -128,20 +128,27 @@ export async function handleSMSMessage(
   }
 
   // Classify intent FIRST using LLM (it will detect follow-ups)
+  // NOTE: For content queries, this is redundant since route.ts already classified,
+  // but we still need it for follow-up detection and other intents
   console.log(`[UnifiedHandler] Classifying intent for: "${messageText}"`)
   const intentStartTime = Date.now()
-  const intent = await withTimeout(
-    classifyIntent(messageText, history),
-    12000,
-    'classifyIntent',
-    {
-      type: 'content_query',
-      confidence: 0.1,
-      reasoning: 'Timeout fallback',
-      instructions: [],
-      needsGeneration: true
-    }
-  )
+  
+  // Use shorter timeout for async handler (since we already know it's likely content_query)
+  const intentPromise = classifyIntent(messageText, history)
+  const intentTimeoutPromise = new Promise<ClassifiedIntent>((resolve) => {
+    setTimeout(() => {
+      console.error(`[UnifiedHandler] Intent classification timeout after 8 seconds, using fallback`)
+      resolve({
+        type: 'content_query',
+        confidence: 0.1,
+        reasoning: 'Timeout fallback - assuming content_query',
+        instructions: [],
+        needsGeneration: true
+      })
+    }, 8000) // 8 second timeout (matching AbortController timeout)
+  })
+  
+  const intent = await Promise.race([intentPromise, intentTimeoutPromise])
   const intentDuration = Date.now() - intentStartTime
   console.log(`[UnifiedHandler] Intent classified in ${intentDuration}ms: ${intent.type} (confidence: ${intent.confidence}, isFollowUp: ${intent.isFollowUp})`)
   
