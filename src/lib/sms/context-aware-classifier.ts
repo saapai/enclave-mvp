@@ -112,12 +112,20 @@ export async function classifyIntent(
     : `Current message: "${currentMessage}"`
 
   try {
+    console.log(`[ContextClassifier] Starting LLM classification for: "${currentMessage.substring(0, 50)}"`)
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => {
+      console.error(`[ContextClassifier] LLM call timeout after 8 seconds`)
+      controller.abort()
+    }, 8000) // 8 second timeout for LLM call
+    
     const response = await fetch('https://api.mistral.ai/v1/chat/completions', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${ENV.MISTRAL_API_KEY}`
       },
+      signal: controller.signal,
       body: JSON.stringify({
         model: 'mistral-small-latest',
         messages: [
@@ -182,13 +190,18 @@ Return ONLY valid JSON:
         max_tokens: 500
       })
     })
+    
+    clearTimeout(timeoutId)
+    console.log(`[ContextClassifier] LLM response received`)
 
     if (!response.ok) {
+      console.error(`[ContextClassifier] Mistral API error: ${response.status}`)
       throw new Error(`Mistral API error: ${response.status}`)
     }
 
     const data = await response.json()
     const content = data.choices?.[0]?.message?.content || '{}'
+    console.log(`[ContextClassifier] LLM content: ${content.substring(0, 100)}`)
     
     // Extract JSON from response
     const jsonMatch = content.match(/\{[\s\S]*\}/)
@@ -218,10 +231,15 @@ Return ONLY valid JSON:
       }
     }
   } catch (err) {
-    console.error('[ContextClassifier] LLM classification failed:', err)
+    if (err instanceof Error && err.name === 'AbortError') {
+      console.error('[ContextClassifier] LLM classification timed out after 8 seconds')
+    } else {
+      console.error('[ContextClassifier] LLM classification failed:', err)
+    }
   }
 
   // Fallback to rule-based classification
+  console.log('[ContextClassifier] Using fallback classification')
   return fallbackClassify(currentMessage, history)
 }
 

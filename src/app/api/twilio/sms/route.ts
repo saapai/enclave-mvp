@@ -806,14 +806,17 @@ export async function POST(request: NextRequest) {
         console.log(`[Twilio SMS] Starting async handler for content query: "${body.substring(0, 50)}"`)
         
         // Set a timeout to ensure we don't hang forever
+        let timeoutFired = false
         const asyncTimeout = setTimeout(async () => {
-          console.error(`[Twilio SMS] Async handler timeout after 60s for query: "${body.substring(0, 50)}"`)
+          timeoutFired = true
+          console.error(`[Twilio SMS] Async handler timeout after 30s for query: "${body.substring(0, 50)}"`)
           try {
-            await sendSms(from, "Sorry, that query took too long. Please try again.")
+            await sendSms(from, "Sorry, that query took too long. Please try again.", { retries: 1, retryDelay: 2000 })
+            console.log('[Twilio SMS] Timeout message sent')
           } catch (err) {
             console.error('[Twilio SMS] Failed to send timeout message:', err)
           }
-        }, 60000) // 60 second timeout
+        }, 30000) // 30 second timeout
         
         // Re-process the message asynchronously
         const handlerStartTime = Date.now()
@@ -824,10 +827,16 @@ export async function POST(request: NextRequest) {
             console.log(`[Twilio SMS] Async handler completed successfully in ${handlerDuration}ms`)
             console.log(`[Twilio SMS] Async handler returned: "${result?.response?.substring(0, 100) || 'NO RESPONSE'}..."`)
             
+            // If timeout already fired, don't send another message
+            if (timeoutFired) {
+              console.log('[Twilio SMS] Timeout already fired, skipping result send')
+              return
+            }
+            
             // Ensure we have a response
             if (!result || !result.response || result.response.trim().length === 0) {
               console.error('[Twilio SMS] Async handler returned empty response!', result)
-              await sendSms(from, "Sorry, I couldn't find information about that.")
+              await sendSms(from, "Sorry, I couldn't find information about that.", { retries: 1, retryDelay: 2000 })
               return
             }
             
@@ -2552,11 +2561,6 @@ export async function POST(request: NextRequest) {
         // Format response
         let responseMessage = ''
         
-        // Add welcome for new users
-        if (isTrulyNewUser && sassyWelcome) {
-          responseMessage = `${sassyWelcome}\n\n`
-        }
-        
         // Add main response
         responseMessage += finalResponse
         
@@ -2739,12 +2743,6 @@ ${messageXml}
 
     // Format response for SMS
     let responseMessage = ''
-    
-    // Add welcome ONLY for brand new users who just opted in (isTrulyNewUser = true and sassyWelcome was set)
-    // This ensures welcome is ONLY sent on the FIRST message ever from a phone number
-    if (isTrulyNewUser && sassyWelcome) {
-      responseMessage = `${sassyWelcome}\n\n`
-    }
     
     // If this was a query that was answered, add follow-ups
     if (queryAnswer || summary) {
