@@ -105,47 +105,57 @@ async function getWorkspaceIdsInternal(options: WorkspaceOptions = {}): Promise<
   }
 
   // Optional SEP fallback (enabled by default)
-  // SKIP SEP query - it's hanging. Use direct query instead
+  // SKIP SEP query - it's hanging. Use direct query with hard timeout
   if (options.includeSepFallback !== false) {
     tasks.push((async () => {
       const taskStart = Date.now()
       try {
         console.log('[Workspace] Querying all workspaces (skipping SEP filter due to hang)')
         
-        // Use direct query with AbortController
-        const controller = new AbortController()
-        const timeoutId = setTimeout(() => {
-          controller.abort()
-          console.error('[Workspace] Workspace query aborted after 1500ms')
-        }, 1500)
+        // CRITICAL: Wrap entire query in Promise.race with hard 1s timeout
+        // AbortController alone doesn't work fast enough when Supabase is slow
+        const queryPromise = (async () => {
+          const controller = new AbortController()
+          const timeoutId = setTimeout(() => {
+            controller.abort()
+          }, 1000)
 
-        let data: any = null
-        let error: any = null
-        
-        try {
-          const result = await client
-            .from('space')
-            .select('id, name')
-            .limit(20)
-            .abortSignal(controller.signal)
-          
-          data = result.data
-          error = result.error
-        } catch (err: any) {
-          if (err.name === 'AbortError') {
-            console.error('[Workspace] Query aborted due to timeout')
-          } else {
-            error = err
+          try {
+            const result = await client
+              .from('space')
+              .select('id, name')
+              .limit(20)
+              .abortSignal(controller.signal)
+            
+            clearTimeout(timeoutId)
+            return result
+          } catch (err: any) {
+            clearTimeout(timeoutId)
+            throw err
           }
-        } finally {
-          clearTimeout(timeoutId)
-        }
+        })()
+        
+        const timeoutPromise = new Promise<{ data: null; error: any }>((resolve) => {
+          setTimeout(() => {
+            console.error('[Workspace] Query hard timeout after 1000ms')
+            resolve({ data: null, error: { message: 'Hard timeout' } })
+          }, 1000)
+        })
+        
+        const result = await Promise.race([queryPromise, timeoutPromise])
+        const data = result.data
+        const error = result.error
         
         const queryDuration = Date.now() - taskStart
         console.log(`[Workspace] Workspace query completed in ${queryDuration}ms`)
 
         if (error) {
           console.error('[Workspace] Workspace lookup failed:', error)
+          // CRITICAL: If query times out, use hardcoded SEP workspace from env
+          if (process.env.SEP_SPACE_ID) {
+            console.log('[Workspace] Using hardcoded SEP_SPACE_ID from env as fallback')
+            resolved.add(process.env.SEP_SPACE_ID)
+          }
           return
         }
 
