@@ -29,7 +29,7 @@ function normalizeDigits(phone: string): string {
 /**
  * Resolve workspace IDs for a given context (phone, SEP fallback, etc.)
  */
-export async function getWorkspaceIds(options: WorkspaceOptions = {}): Promise<string[]> {
+async function getWorkspaceIdsInternal(options: WorkspaceOptions = {}): Promise<string[]> {
   console.log('[Workspace] getWorkspaceIds called with options:', options)
   const client = supabaseAdmin || supabase
 
@@ -248,5 +248,33 @@ export async function getWorkspaceIds(options: WorkspaceOptions = {}): Promise<s
   }
   
   return workspaceIds
+}
+
+/**
+ * Public wrapper with hard timeout to prevent indefinite hangs
+ */
+export async function getWorkspaceIds(options: WorkspaceOptions = {}): Promise<string[]> {
+  const timeoutMs = 2000 // 2s hard timeout
+  const startTime = Date.now()
+  
+  try {
+    const result = await Promise.race([
+      getWorkspaceIdsInternal(options),
+      new Promise<string[]>((_, reject) => {
+        setTimeout(() => {
+          reject(new Error(`getWorkspaceIds timed out after ${timeoutMs}ms`))
+        }, timeoutMs)
+      })
+    ])
+    
+    const duration = Date.now() - startTime
+    console.log(`[Workspace] getWorkspaceIds completed in ${duration}ms, returning ${result.length} workspaces`)
+    return result
+  } catch (err) {
+    const duration = Date.now() - startTime
+    console.error(`[Workspace] getWorkspaceIds failed after ${duration}ms:`, err)
+    // Return default workspace on timeout/error
+    return [DEFAULT_SPACE_ID]
+  }
 }
 
