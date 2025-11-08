@@ -155,11 +155,17 @@ async function determineMode(
   text: string,
   lastBotMessage: string
 ): Promise<{ mode: Mode; pending?: Draft | PollState }> {
+  const stepStart = Date.now()
+  console.log(`[TurnFrame] determineMode start for ${phoneNumber}`)
   const normalizedPhone = normalizePhone(phoneNumber)
   
   // Check for active drafts
+  const draftStart = Date.now()
   const activeDraft = await getActiveDraft(normalizedPhone)
+  console.log(`[TurnFrame] getActiveDraft (determineMode) completed in ${Date.now() - draftStart}ms ${activeDraft ? '(found)' : '(none)'}`)
+  const pollStart = Date.now()
   const activePollDraft = await getActivePollDraft(normalizedPhone)
+  console.log(`[TurnFrame] getActivePollDraft (determineMode) completed in ${Date.now() - pollStart}ms ${activePollDraft ? '(found)' : '(none)'}`)
   
   // PRIORITY 1: Check if user is making a NEW request (not responding to bot)
   // This must come BEFORE checking for confirm mode to avoid false positives
@@ -278,6 +284,7 @@ async function determineMode(
   }
   
   // Default: IDLE
+  console.log(`[TurnFrame] determineMode fallback to IDLE in ${Date.now() - stepStart}ms`)
   return { mode: 'IDLE' }
 }
 
@@ -290,16 +297,27 @@ export async function buildTurnFrame(
   userId?: string,
   orgId?: string
 ): Promise<TurnFrame> {
+  const overallStart = Date.now()
   const normalizedPhone = normalizePhone(phoneNumber)
   const now = new Date()
+  console.log(`[TurnFrame] buildTurnFrame start for ${normalizedPhone}`)
   
   // Get conversation history
-  const { data: history } = await supabase
-    .from('sms_conversation_history')
-    .select('user_message, bot_response, created_at')
-    .eq('phone_number', normalizedPhone)
-    .order('created_at', { ascending: false })
-    .limit(5)
+  let history: Array<{ user_message: string; bot_response: string; created_at: string }> | null = null
+  try {
+    const historyStart = Date.now()
+    console.log(`[TurnFrame] Loading conversation history for ${normalizedPhone}`)
+    const { data } = await supabase
+      .from('sms_conversation_history')
+      .select('user_message, bot_response, created_at')
+      .eq('phone_number', normalizedPhone)
+      .order('created_at', { ascending: false })
+      .limit(5)
+    history = data
+    console.log(`[TurnFrame] Loaded conversation history in ${Date.now() - historyStart}ms (rows=${history?.length || 0})`)
+  } catch (err) {
+    console.error('[TurnFrame] Failed to load conversation history:', err)
+  }
   
   const lastN = (history || []).reverse().flatMap(msg => [
     { speaker: 'user' as const, text: msg.user_message, ts: msg.created_at },
@@ -315,11 +333,17 @@ export async function buildTurnFrame(
     : undefined
   
   // Determine mode and pending state
+  const modeStart = Date.now()
   const { mode, pending } = await determineMode(normalizedPhone, text, lastBotMessage)
+  console.log(`[TurnFrame] determineMode completed in ${Date.now() - modeStart}ms (mode=${mode})`)
   
   // Check for active drafts to determine command context
+  const activeDraftStart = Date.now()
   const activeDraft = await getActiveDraft(normalizedPhone)
+  console.log(`[TurnFrame] getActiveDraft completed in ${Date.now() - activeDraftStart}ms ${activeDraft ? '(found)' : '(none)'}`)
+  const activePollStart = Date.now()
   const activePollDraft = await getActivePollDraft(normalizedPhone)
+  console.log(`[TurnFrame] getActivePollDraft completed in ${Date.now() - activePollStart}ms ${activePollDraft ? '(found)' : '(none)'}`)
   const hasActiveDraft = !!(activeDraft || activePollDraft)
   
   // Extract signals
@@ -330,8 +354,7 @@ export async function buildTurnFrame(
   const time = parseTime(text)
   const date = parseDate(text, now)
   const people = extractPeople(text)
-  
-  return {
+  const frame: TurnFrame = {
     now,
     user: { id: userId || normalizedPhone, role: undefined },
     convo: { lastN, lastBotAct },
@@ -345,4 +368,7 @@ export async function buildTurnFrame(
       toxicity
     }
   }
+
+  console.log(`[TurnFrame] buildTurnFrame completed in ${Date.now() - overallStart}ms for ${normalizedPhone}`)
+  return frame
 }
