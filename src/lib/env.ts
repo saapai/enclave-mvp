@@ -21,6 +21,7 @@ export const ENV = {
 
   // AI
   MISTRAL_API_KEY: process.env.MISTRAL_API_KEY || '',
+  OPENAI_API_KEY: process.env.OPENAI_API_KEY || '',
 
   // Twilio SMS
   TWILIO_ACCOUNT_SID: process.env.TWILIO_ACCOUNT_SID || '',

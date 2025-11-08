@@ -370,17 +370,24 @@ export async function hybridSearchV2(
   
   // Step 1: Start embedding generation in background (non-blocking)
   let embedding: number[] | null = null
-  let embeddingPromise: Promise<number[] | null> | null = null
+  const normalizedQuery = query.toLowerCase().trim()
+  const cachedEntry = embeddingCache.get(normalizedQuery)
   
-  // Try to get cached embedding first (instant)
-  const cachedEmbedding = await getCachedEmbedding(query, budget)
-  if (cachedEmbedding) {
-    embedding = cachedEmbedding
+  if (cachedEntry && Date.now() - cachedEntry.timestamp < EMBEDDING_CACHE_TTL) {
+    embedding = cachedEntry.embedding
     console.log(`[Search V2] [${searchId}] Embedding: cached (budget: ${budget.getRemainingMs()}ms)`)
-  } else if (budget.hasBudget(SMS_EMBED_MIN_REMAINING_MS)) {
-    // Start embedding generation in background (don't await)
+  } else if (budget.getRemainingMs() > SMS_EMBED_MIN_REMAINING_MS) {
     console.log(`[Search V2] [${searchId}] Starting embedding generation in background`)
-    embeddingPromise = getCachedEmbedding(query, budget)
+    getCachedEmbedding(query, budget)
+      .then(result => {
+        if (result) {
+          embedding = result
+        }
+        return result
+      })
+      .catch(err => {
+        console.error('[Search V2] Background embedding failed:', err?.message || err)
+      })
   } else {
     console.log(`[Search V2] [${searchId}] Skipping embedding (insufficient budget: ${budget.getRemainingMs()}ms)`)
   }
@@ -392,18 +399,6 @@ export async function hybridSearchV2(
     if (budget.getRemainingMs() < 500) {
       console.log(`[Search V2] [${searchId}] Budget exhausted, stopping at ${workspaceResults.length}/${workspaceIds.length} workspaces`)
       break
-    }
-    
-    // Check if embedding is ready (non-blocking check)
-    if (!embedding && embeddingPromise) {
-      const embeddingResult = await Promise.race([
-        embeddingPromise,
-        Promise.resolve(null) // Immediately resolve with null if not ready
-      ])
-      if (embeddingResult) {
-        embedding = embeddingResult
-        console.log(`[Search V2] [${searchId}] Embedding became available during search`)
-      }
     }
     
     const wsResult = await searchWorkspace(query, workspaceId, embedding, budget)
