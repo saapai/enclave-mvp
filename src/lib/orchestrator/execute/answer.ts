@@ -27,7 +27,10 @@ export async function executeAnswer(
   
   // Get workspace IDs
   const workspaceStart = Date.now()
-  const spaceIds = await getWorkspaceIds()
+  const spaceIds = await getWorkspaceIds({
+    phoneNumber: frame.user.id,
+    includeSepFallback: true
+  })
   console.log(`[Execute Answer] Retrieved ${spaceIds.length} workspace ids in ${Date.now() - workspaceStart}ms`)
   console.log('[Execute Answer] Workspace IDs:', spaceIds)
   if (spaceIds.length === 0) {

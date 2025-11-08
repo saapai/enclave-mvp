@@ -4,72 +4,112 @@
 
 import { supabase, supabaseAdmin } from '@/lib/supabase'
 
+const DEFAULT_SPACE_ID = '00000000-0000-0000-0000-000000000000'
+
+interface WorkspaceOptions {
+  phoneNumber?: string
+  includeSepFallback?: boolean
+}
+
+function normalizeDigits(phone: string): string {
+  return phone.replace(/[^\d]/g, '').slice(-10)
+}
+
 /**
- * Get all SEP workspace IDs
+ * Resolve workspace IDs for a given context (phone, SEP fallback, etc.)
  */
-export async function getWorkspaceIds(): Promise<string[]> {
+export async function getWorkspaceIds(options: WorkspaceOptions = {}): Promise<string[]> {
   const client = supabaseAdmin || supabase
 
   if (!client) {
     console.error('[Workspace] No Supabase client available')
-    return []
+    return [DEFAULT_SPACE_ID]
   }
 
-  try {
-    const controller = new AbortController()
-    const timeoutId = setTimeout(() => {
-      controller.abort()
-      console.error('[Workspace] Workspace query timed out after 3000ms')
-    }, 3000)
+  const resolved = new Set<string>()
+  resolved.add(DEFAULT_SPACE_ID)
 
-    const { data: sepWorkspaces, error } = await client
-      .from('space')
-      .select('id, name')
-      .ilike('name', '%SEP%')
-      .abortSignal(controller.signal)
+  const promises: Promise<void>[] = []
 
-    clearTimeout(timeoutId)
+  // Lookup by phone -> app_user.phone
+  if (options.phoneNumber) {
+    const digits = normalizeDigits(options.phoneNumber)
+    if (digits.length === 10) {
+      promises.push((async () => {
+        try {
+          const { data, error } = await client
+            .from('app_user')
+            .select('space_id, phone')
+            .not('phone', 'is', null)
 
-    if (error) {
-      console.error('[Workspace] Failed to load SEP workspaces:', error)
+          if (error) {
+            console.error('[Workspace] app_user lookup failed:', error)
+            return
+          }
+
+          (data || []).forEach(row => {
+            if (!row?.space_id) return
+            const rowDigits = normalizeDigits(String(row.phone || ''))
+            if (rowDigits === digits) {
+              resolved.add(row.space_id)
+            }
+          })
+        } catch (err) {
+          console.error('[Workspace] Error resolving phone-based workspaces:', err)
+        }
+      })())
     }
+  }
 
-    let workspaceData = sepWorkspaces || []
+  // Always try SEP-named workspaces if requested or nothing yet
+  promises.push((async () => {
+    if (!options.includeSepFallback && resolved.size > 1) return
+    try {
+      const { data, error } = await client
+        .from('space')
+        .select('id, name')
+        .ilike('name', '%SEP%')
 
-    if (!workspaceData.length) {
-      console.warn('[Workspace] No SEP workspaces found. Falling back to all spaces.')
-      const fallbackController = new AbortController()
-      const fallbackTimeout = setTimeout(() => {
-        fallbackController.abort()
-        console.error('[Workspace] Fallback workspace query timed out after 3000ms')
-      }, 3000)
+      if (error) {
+        console.error('[Workspace] SEP workspace lookup failed:', error)
+        return
+      }
 
-      const { data: allSpaces, error: fallbackError } = await client
+      (data || []).forEach(space => {
+        if (space?.id) resolved.add(space.id)
+      })
+    } catch (err) {
+      console.error('[Workspace] Error retrieving SEP workspaces:', err)
+    }
+  })())
+
+  // Fallback: fetch all spaces (limited) if still only default
+  promises.push((async () => {
+    await Promise.all(promises)
+    if (resolved.size > 1) return
+    try {
+      const { data, error } = await client
         .from('space')
         .select('id, name')
         .limit(10)
-        .abortSignal(fallbackController.signal)
 
-      clearTimeout(fallbackTimeout)
-
-      if (fallbackError) {
-        console.error('[Workspace] Failed to load fallback workspaces:', fallbackError)
-        return []
+      if (error) {
+        console.error('[Workspace] Fallback workspace lookup failed:', error)
+        return
       }
 
-      workspaceData = allSpaces || []
+      (data || []).forEach(space => {
+        if (space?.id) resolved.add(space.id)
+      })
+    } catch (err) {
+      console.error('[Workspace] Error retrieving fallback workspaces:', err)
     }
+  })())
 
-    const unique = Array.from(new Set(workspaceData.map(w => w.id)))
-    console.log('[Workspace] Workspace IDs resolved:', workspaceData.map(w => ({ id: w.id, name: w.name })))
-    return unique
-  } catch (err) {
-    if (err instanceof Error && err.name === 'AbortError') {
-      console.error('[Workspace] Workspace query aborted due to timeout')
-    } else {
-      console.error('[Workspace] Unexpected error resolving workspaces:', err)
-    }
-    return []
-  }
+  await Promise.all(promises)
+
+  const workspaceIds = Array.from(resolved)
+  console.log('[Workspace] Workspace IDs resolved:', workspaceIds)
+  return workspaceIds
 }
 
