@@ -49,6 +49,28 @@ export async function generateAnnouncement(
       tone: parsedCommand.extractedFields.tone || previousDraft?.tone || 'casual'
     }
   }
+  
+  // If editing and we have previous draft, preserve content unless explicitly changed
+  if (previousDraft && previousDraft.content) {
+    // Check if the edit is just updating time/date (not content)
+    const isJustTimeDateUpdate = !parsedCommand.extractedFields.content || 
+                                 parsedCommand.extractedFields.content.length < 10 ||
+                                 parsedCommand.extractedFields.content.toLowerCase().includes('just say') ||
+                                 parsedCommand.extractedFields.content.toLowerCase().includes('it\'s') ||
+                                 parsedCommand.extractedFields.content.toLowerCase().includes('it is')
+    
+    if (isJustTimeDateUpdate) {
+      // Preserve original content, just update time/date
+      return {
+        content: previousDraft.content,
+        time: parsedCommand.extractedFields.time || previousDraft.time,
+        date: parsedCommand.extractedFields.date || previousDraft.date,
+        location: parsedCommand.extractedFields.location || previousDraft.location,
+        audience: parsedCommand.extractedFields.audience || previousDraft.audience || 'all',
+        tone: parsedCommand.extractedFields.tone || previousDraft.tone || 'casual'
+      }
+    }
+  }
 
   // Generate content using LLM with instructions
   if (parsedCommand.needsGeneration) {

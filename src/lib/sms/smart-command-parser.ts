@@ -191,6 +191,19 @@ function fallbackParse(message: string): ParsedCommand {
     }
   }
 
+  // Extract date (tomorrow, tmr, today, etc.)
+  const lowerMessage = message.toLowerCase()
+  let date: string | undefined
+  const now = new Date()
+  
+  if (lowerMessage.includes('tmr') || lowerMessage.includes('tomorrow')) {
+    const tomorrow = new Date(now)
+    tomorrow.setDate(tomorrow.getDate() + 1)
+    date = tomorrow.toISOString().split('T')[0] // YYYY-MM-DD format
+  } else if (lowerMessage.includes('today')) {
+    date = now.toISOString().split('T')[0]
+  }
+  
   // Extract time
   const timeMatch = message.match(/\b(\d{1,2}):?(\d{2})?\s*(am|pm)\b/i)
   let time: string | undefined
@@ -229,6 +242,7 @@ function fallbackParse(message: string): ParsedCommand {
     extractedFields: {
       content: verbatimText || content,
       time,
+      date,
       location,
       audience
     },

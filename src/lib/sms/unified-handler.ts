@@ -242,10 +242,26 @@ async function handleAnnouncementCommand(
     const workspaceId = spaceIds[0] || null
     
     if (workspaceId) {
+      // Parse date safely
+      let scheduledDate: Date | undefined = undefined
+      if (draft.date) {
+        try {
+          // If it's already a date string (YYYY-MM-DD), parse it
+          const parsedDate = new Date(draft.date)
+          if (!isNaN(parsedDate.getTime())) {
+            scheduledDate = parsedDate
+          } else {
+            console.warn('[UnifiedHandler] Invalid date format:', draft.date)
+          }
+        } catch (err) {
+          console.error('[UnifiedHandler] Error parsing date:', draft.date, err)
+        }
+      }
+      
       await saveDraft(phoneNumber, {
         content: draft.content,
         targetAudience: draft.audience || 'all',
-        scheduledFor: draft.date ? new Date(draft.date) : undefined,
+        scheduledFor: scheduledDate,
         workspaceId
       }, workspaceId)
       
