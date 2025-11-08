@@ -385,10 +385,26 @@ async function handleAnnouncementEdit(
     const workspaceId = existingDraft?.workspaceId || spaceIds[0] || null
     
     if (workspaceId) {
+      // Parse date safely
+      let scheduledDate: Date | undefined = undefined
+      if (draft.date) {
+        try {
+          const parsedDate = new Date(draft.date)
+          if (!isNaN(parsedDate.getTime())) {
+            scheduledDate = parsedDate
+          } else {
+            console.warn('[UnifiedHandler] Invalid date format in edit:', draft.date)
+          }
+        } catch (err) {
+          console.error('[UnifiedHandler] Error parsing date in edit:', draft.date, err)
+        }
+      }
+      
       await saveDraft(phoneNumber, {
         id: existingDraft?.id,
         content: draft.content,
         targetAudience: draft.audience || 'all',
+        scheduledFor: scheduledDate,
         workspaceId
       }, workspaceId)
     } else {
