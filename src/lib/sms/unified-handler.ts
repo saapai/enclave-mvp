@@ -27,6 +27,18 @@ export interface HandlerResult {
   }
 }
 
+function limitEmojis(text: string, maxEmojis = 1): string {
+  const emojiRegex = /[\u{1F300}-\u{1F6FF}\u{1F900}-\u{1F9FF}\u{1FA70}-\u{1FAFF}]/gu
+  let count = 0
+  return text.replace(emojiRegex, (match) => {
+    if (count < maxEmojis) {
+      count += 1
+      return match
+    }
+    return ''
+  })
+}
+
 /**
  * Main handler for incoming SMS messages
  */
@@ -158,7 +170,7 @@ export async function handleSMSMessage(
               content: `You are Jarvis, an SMS bot powered by Enclave. Answer the user's simple question directly and conversationally.
 
 Enclave System Reference:
-- Name: Jarvis
+- Name: Enclave
 - Type: Multi-modal organizational AI assistant platform
 - Purpose: Unify organization's communications and knowledge across SMS, Slack, Google Calendar, Docs
 - Primary developer: Saathvik Pai
@@ -172,10 +184,10 @@ Context from conversation:
 ${history.slice(-5).map(m => `${m.role === 'user' ? 'User' : 'Bot'}: ${m.text}`).join('\n')}
 
 Rules:
-- If they ask about your name, respond based on the information in the Enclave System Reference
-- If they ask how you are, talk about how you're doing and how you can help them
-- If they criticize you or say you
-- NEVER use emojis
+- If they ask about your name, say "i'm jarvis! nice to meet you"
+- If they ask how you are, say "i'm doing great! ready to help with whatever you need"
+- If they mention they've already met you, acknowledge it naturally
+- Use emojis sparingly (0 or 1) and only if it fits the vibe
 - Keep responses brief (1-2 sentences max) and friendly`
             },
             {
@@ -192,8 +204,9 @@ Rules:
         const aiData = await aiResponse.json()
         const response = aiData.choices?.[0]?.message?.content || ''
         if (response.trim().length > 0) {
+          const limitedResponse = limitEmojis(response.trim(), 1)
           return {
-            response: response.trim(),
+            response: limitedResponse,
             shouldSaveHistory: true,
             metadata: { intent: 'simple_question' }
           }
@@ -857,22 +870,19 @@ PERSONALITY RULES:
    - "you suck" → "damn who hurt you"
    - "you're stupid" → "says the person texting a robot"
 
-2. If someone apologizes after being mean, acknowledge it playfully:
+2. If someone apologizes after being mean, acknowledge it wittily:
    - "i'm sorry" → "hey at least ur consistent"
-   - "my bad" → "all good, we're vibing now"
+   - "my bad" → "all good, but i'm not sorry"
 
-3. For normal conversation, be friendly but contextual. Reference the conversation history naturally.
+3. If they point out a mistake you agree you made, own it, apologize quickly, and fix it with humor.
 
-4. If they mention they've already met you, acknowledge it: "yeah we've talked before! what's up?"
+4. For normal conversation, be friendly but contextual. Reference the conversation history naturally.
 
-5. NEVER use emojis. Keep responses brief (1-2 sentences max).
+5. If they mention they've already met you, acknowledge it: "yeah we've talked before! what's up?"
 
-6. If they ask about Enclave, use the reference above to answer factually.
+6. Use emojis sparingly (0 or 1) across 5-8 responses and only if it amplifies the vibe.
 
-Recent conversation:
-${history && Array.isArray(history) ? history.slice(-5).map((m: ConversationMessage) => `${m.role === 'user' ? 'User' : 'Bot'}: ${m.text}`).join('\n') : 'No previous conversation'}
-
-Respond naturally based on what they said.`
+7. Keep responses brief (1-2 sentences max) and friendly.`
           },
           {
             role: 'user',
@@ -888,10 +898,9 @@ Respond naturally based on what they said.`
       const aiData = await aiResponse.json()
       const response = aiData.choices?.[0]?.message?.content || ''
       if (response.trim().length > 0) {
-        // Remove any emojis that might have been generated
-        const cleanedResponse = response.replace(/[\u{1F300}-\u{1F9FF}]/gu, '').trim()
+        const limitedResponse = limitEmojis(response.trim(), 1)
         return {
-          response: cleanedResponse,
+          response: limitedResponse,
           shouldSaveHistory: true,
           metadata: {
             intent: 'random_conversation'
@@ -949,7 +958,7 @@ async function handleQuery(
           messages: [
             {
               role: 'system',
-              content: `You are Jarvis, an SMS bot powered by Enclave. Answer questions about Enclave using ONLY the reference information below. Keep responses brief (1-2 sentences max). NEVER use emojis.
+              content: `You are Jarvis, an SMS bot powered by Enclave. Answer questions about Enclave using ONLY the reference information below. Keep responses brief (1-2 sentences max). Use emojis sparingly (0 or 1) and only if it feels appropriate.
 
 ${enclaveReference}
 

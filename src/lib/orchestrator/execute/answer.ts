@@ -204,7 +204,7 @@ export async function executeAnswer(
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
                 query,
-                context: `Title: ${topResult.title}\nContent: ${topResult.body.substring(0, 2000)}\n\nIMPORTANT: Today is ${currentDayOfWeek}, ${currentDate}. Extract the ACTUAL date from the document content, not "today". If the document says "Nov 13" or "November 13", use that exact date. Do not use relative dates like "today" unless the document explicitly says "today".${actionContext}\n\n${enclaveReference}\n\nIf the user is asking about past actions (e.g., "did you find", "why didn't you send"), use the Recent actions context above to answer their question directly. NEVER use emojis.`,
+                context: `Title: ${topResult.title}\nContent: ${topResult.body.substring(0, 2000)}\n\nIMPORTANT: Today is ${currentDayOfWeek}, ${currentDate}. Extract the ACTUAL date from the document content, not "today". If the document says "Nov 13" or "November 13", use that exact date. Do not use relative dates like "today" unless the document explicitly says "today".${actionContext}\n\n${enclaveReference}\n\nIf the user is asking about past actions (e.g., "did you find", "why didn't you send"), use the Recent actions context above to answer their question directly. Use emojis sparingly (0 or 1).`,
                 type: 'summary'
               }),
               signal: controller.signal
@@ -288,7 +288,7 @@ export async function executeAnswer(
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
                 query,
-                context: `${context}\n\n${enclaveReference}\n\nIMPORTANT: NEVER use emojis. Keep responses brief and factual.`,
+                context: `${context}\n\n${enclaveReference}\n\nIMPORTANT: Keep responses brief and factual. Use emojis sparingly (0 or 1).`,
                 type: 'summary'
               })
             })
@@ -351,7 +351,7 @@ export async function executeAnswer(
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               query,
-              context: `Title: ${topResult.title}\nContent: ${topResult.body.substring(0, 1500)}${actionContext}\n\n${enclaveReference}\n\nProvide a brief, concise answer (1-2 sentences max). NEVER use emojis. If the user is asking about past actions, use the Recent actions context.`,
+              context: `Title: ${topResult.title}\nContent: ${topResult.body.substring(0, 1500)}${actionContext}\n\n${enclaveReference}\n\nProvide a brief, concise answer (1-2 sentences max). Use emojis sparingly (0 or 1). If the user is asking about past actions, use the Recent actions context.`,
               type: 'summary'
             }),
             signal: controller.signal
