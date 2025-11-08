@@ -99,19 +99,34 @@ export async function getWorkspaceIds(options: WorkspaceOptions = {}): Promise<s
       try {
         console.log('[Workspace] Querying all workspaces (skipping SEP filter due to hang)')
         
-        // Use direct query without ilike filter - simpler and faster
-        const queryPromise = client
-          .from('space')
-          .select('id, name')
-          .limit(20)
-
-        // Aggressive timeout wrapper
+        // Use direct query with AbortController
+        const controller = new AbortController()
         const timeoutId = setTimeout(() => {
-          console.error('[Workspace] Workspace query timed out after 1500ms - continuing without results')
+          controller.abort()
+          console.error('[Workspace] Workspace query aborted after 1500ms')
         }, 1500)
 
-        const { data, error } = await queryPromise
-        clearTimeout(timeoutId)
+        let data: any = null
+        let error: any = null
+        
+        try {
+          const result = await client
+            .from('space')
+            .select('id, name')
+            .limit(20)
+            .abortSignal(controller.signal)
+          
+          data = result.data
+          error = result.error
+        } catch (err: any) {
+          if (err.name === 'AbortError') {
+            console.error('[Workspace] Query aborted due to timeout')
+          } else {
+            error = err
+          }
+        } finally {
+          clearTimeout(timeoutId)
+        }
         
         const queryDuration = Date.now() - taskStart
         console.log(`[Workspace] Workspace query completed in ${queryDuration}ms`)
@@ -175,19 +190,30 @@ export async function getWorkspaceIds(options: WorkspaceOptions = {}): Promise<s
   if (resolved.size === 1 && resolved.has(DEFAULT_SPACE_ID)) {
     try {
       console.log('[Workspace] Running fallback workspace query (limit 10)')
-      const queryPromise = client
-        .from('space')
-        .select('id, name')
-        .limit(10)
+          
+          const controller = new AbortController()
+          const timeoutId = setTimeout(() => {
+            controller.abort()
+            console.error('[Workspace] Fallback workspace lookup aborted after 1500ms')
+          }, 1500)
 
-      const timeoutPromise = new Promise<{ data: null; error: { message: string } }>((resolve) => {
-        setTimeout(() => {
-          console.error('[Workspace] Fallback workspace lookup timed out after 2000ms')
-          resolve({ data: null, error: { message: 'Timeout' } })
-        }, 2000)
-      })
-
-      const result = await Promise.race([queryPromise, timeoutPromise])
+          let result: { data: any; error: any } = { data: null, error: null }
+          
+          try {
+            result = await client
+              .from('space')
+              .select('id, name')
+              .limit(10)
+              .abortSignal(controller.signal)
+          } catch (err: any) {
+            if (err.name === 'AbortError') {
+              result = { data: null, error: { message: 'Aborted' } }
+            } else {
+              result = { data: null, error: err }
+            }
+          } finally {
+            clearTimeout(timeoutId)
+          }
 
       if (result.error) {
         console.error('[Workspace] Fallback workspace lookup failed:', result.error)
