@@ -7,7 +7,7 @@
 import { TurnFrame, ContextEnvelope } from '../types'
 import { hybridSearchV2, getCachedEmbedding } from '@/lib/search-v2'
 import { planQuery, composeResponse, executePlan } from '@/lib/planner'
-import { getWorkspaceIds } from '@/lib/workspace'
+import { getWorkspaceIds, rankWorkspaceIds } from '@/lib/workspace'
 import { generateTraceId } from '@/lib/utils'
 import { ENV } from '@/lib/env'
 
@@ -59,7 +59,18 @@ export async function executeAnswer(
     // Hard cap at 4 workspaces for SMS (all 4 UCLA SEP workspaces)
     const workspaceIds = prioritizedSpaces.slice(0, 4)
     
+    let orderedWorkspaceIds = workspaceIds
+    try {
+      const ranked = await rankWorkspaceIds(workspaceIds)
+      if (ranked.length === workspaceIds.length) {
+        orderedWorkspaceIds = ranked
+      }
+    } catch (err) {
+      console.error(`[Execute Answer] [${traceId}] Failed to rank workspaces:`, err)
+    }
+    
     console.log(`[Execute Answer] [${traceId}] Filtered workspaces: ${spaceIds.length} -> ${workspaceIds.length}`)
+    console.log(`[Execute Answer] [${traceId}] Search order: ${orderedWorkspaceIds.join(', ')}`)
     
     // Early exit if no real workspaces
     if (workspaceIds.length === 0) {
@@ -74,7 +85,7 @@ export async function executeAnswer(
     const searchBudget = 8000 // 8s budget for search (OpenAI embeddings are fast ~200-500ms)
     
     console.log(`[Execute Answer] [${traceId}] Starting hybrid search V2 (budget: ${searchBudget}ms)`)
-    const searchResults = await hybridSearchV2(query, workspaceIds, {
+    const searchResults = await hybridSearchV2(query, orderedWorkspaceIds, {
       budgetMs: searchBudget,
       highConfidenceThreshold: 0.75,
       mediumConfidenceThreshold: 0.50

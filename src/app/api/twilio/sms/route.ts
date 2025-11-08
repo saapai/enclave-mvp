@@ -847,9 +847,13 @@ export async function POST(request: NextRequest) {
             console.log(`[Twilio SMS] [${traceId}] Async handler returned: "${result?.response?.substring(0, 100) || 'NO RESPONSE'}..."`)
             
             // If watchdog or timeout already fired, don't send another message
-            if (watchdogFired || timeoutFired) {
-              console.log(`[Twilio SMS] [${traceId}] Watchdog/timeout already fired, skipping result send`)
+            if (timeoutFired) {
+              console.log(`[Twilio SMS] [${traceId}] Hard timeout already fired, skipping result send`)
               return
+            }
+            
+            if (watchdogFired) {
+              console.log(`[Twilio SMS] [${traceId}] Watchdog message already sent; delivering final result update`)
             }
             
             // Ensure we have a response

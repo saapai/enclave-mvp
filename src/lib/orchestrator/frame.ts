@@ -189,7 +189,9 @@ async function determineMode(
   const normalizedPhone = normalizePhone(phoneNumber)
  
   const lowerText = text.toLowerCase()
-  const isExplicitQuestion = /^(what|when|where|who|how|why|is|are|was|were|do|does|did|will|can|could|should)\s/i.test(text) || text.includes('?')
+  const normalizedStart = lowerText.replace(/^['"“”]+/, '')
+  const questionPrefix = /^(what|when|where|who|how|why|is|are|was|were|do|does|did|will|can|could|should|answer)\b/
+  const isExplicitQuestion = questionPrefix.test(normalizedStart) || lowerText.includes('?')
 
   // If message is clearly a question, skip draft lookups and stay idle for query handling
   if (isExplicitQuestion) {

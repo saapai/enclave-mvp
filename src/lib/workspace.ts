@@ -13,6 +13,10 @@ const WORKSPACE_CACHE_TTL = 600000 // 10 minutes (increased from 5 to reduce que
 // Last successful workspace lookup (fallback if cache expires and query fails)
 const lastKnownWorkspaces = new Map<string, string[]>()
 
+const resourceCountCache = new Map<string, { count: number; timestamp: number }>()
+const RESOURCE_COUNT_TTL = 300000 // 5 minutes
+const RESOURCE_COUNT_TIMEOUT_MS = 400
+
 interface WorkspaceOptions {
   phoneNumber?: string
   includeSepFallback?: boolean
@@ -197,4 +201,71 @@ export async function prewarmWorkspaceCache(): Promise<void> {
 export function clearWorkspaceCache(): void {
   workspaceCache.clear()
   console.log('[Workspace] Cache cleared')
+}
+
+async function fetchResourceCounts(spaceIds: string[]): Promise<Record<string, number>> {
+  const counts: Record<string, number> = {}
+  const client = supabaseAdmin || supabase
+  if (!client || spaceIds.length === 0) {
+    return counts
+  }
+
+  const freshIds = spaceIds.filter(id => {
+    const cached = resourceCountCache.get(id)
+    return !cached || Date.now() - cached.timestamp > RESOURCE_COUNT_TTL
+  })
+
+  if (freshIds.length > 0) {
+    try {
+      const queryPromise = client
+        .from('resource')
+        .select('space_id')
+        .in('space_id', freshIds)
+        .limit(2000)
+
+      const timeoutPromise = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('Resource count timeout')), RESOURCE_COUNT_TIMEOUT_MS)
+      )
+
+      const { data, error } = await Promise.race([queryPromise, timeoutPromise])
+      if (error) {
+        console.error('[Workspace] Resource count query error:', error.message)
+      } else if (Array.isArray(data)) {
+        const grouped = new Map<string, number>()
+        for (const row of data as Array<{ space_id: string }>) {
+          if (!row?.space_id) continue
+          grouped.set(row.space_id, (grouped.get(row.space_id) || 0) + 1)
+        }
+        const now = Date.now()
+        for (const id of freshIds) {
+          resourceCountCache.set(id, { count: grouped.get(id) || 0, timestamp: now })
+        }
+      }
+    } catch (err: any) {
+      console.error('[Workspace] Resource count fetch failed:', err.message || err)
+      for (const id of freshIds) {
+        if (!resourceCountCache.has(id)) {
+          resourceCountCache.set(id, { count: 0, timestamp: Date.now() })
+        }
+      }
+    }
+  }
+
+  for (const id of spaceIds) {
+    const cached = resourceCountCache.get(id)
+    counts[id] = cached ? cached.count : 0
+  }
+
+  return counts
+}
+
+export async function rankWorkspaceIds(spaceIds: string[]): Promise<string[]> {
+  if (spaceIds.length <= 1) return spaceIds
+  try {
+    const counts = await fetchResourceCounts(spaceIds)
+    return [...spaceIds].sort((a, b) => (counts[b] || 0) - (counts[a] || 0))
+  } catch (err) {
+    console.error('[Workspace] Failed to rank workspaces:', err)
+    return spaceIds
+  }
 }

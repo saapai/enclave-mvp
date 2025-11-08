@@ -17,6 +17,20 @@ import { checkActionQuery, saveAction, type ActionMemory } from './action-memory
 import { supabaseAdmin } from '@/lib/supabase'
 // Name declaration is handled inline
 
+const PENDING_CONTENT_QUERIES = new Map<string, { query: string; startedAt: number }>()
+
+function isStatusFollowUp(text: string): boolean {
+  const lower = text.trim().toLowerCase()
+  if (!lower || lower.length > 80) return false
+  const patterns = [
+    /^(what('?|\s)is|where('?|\s)is|how('?|\s)is|any)  *.*(answer|update|status)/,
+    /^(answer|respond|status|update)  */,
+    /(still|ever)  *.*(waiting|searching|looking|working)/,
+    /(is it|did it|has it)  *.*(finish|done|complete|find)/
+  ]
+  return patterns.some((rx) => rx.test(lower))
+}
+
 export interface HandlerResult {
   response: string
   shouldSaveHistory: boolean
@@ -162,6 +176,21 @@ export async function handleSMSMessage(
         response: getWelcomeMessage(),
         shouldSaveHistory: true,
         metadata: {}
+      }
+    }
+  }
+
+  const pendingQuery = PENDING_CONTENT_QUERIES.get(phoneNumber)
+  if (pendingQuery && isStatusFollowUp(messageText)) {
+    const elapsed = Date.now() - pendingQuery.startedAt
+    if (elapsed < 600000) { // 10 minutes window
+      console.log(`[UnifiedHandler] Detected status follow-up for pending query: "${pendingQuery.query}"`)
+      return {
+        response: `Still working on "${pendingQuery.query}" — I'll text you as soon as I have an update.`,
+        shouldSaveHistory: true,
+        metadata: {
+          intent: 'follow_up_query'
+        }
       }
     }
   }
@@ -1065,7 +1094,8 @@ async function handleQuery(
   intentType: IntentType,
   prefetchedHistory?: ConversationMessage[]
 ): Promise<HandlerResult> {
-  // Save query to action memory BEFORE processing (so follow-ups can detect it's processing)
+  PENDING_CONTENT_QUERIES.set(phoneNumber, { query: messageText, startedAt: Date.now() })
+
   console.log(`[UnifiedHandler] Saving query to action memory: "${messageText}"`)
   queueActionMemorySave(
     phoneNumber,
@@ -1073,13 +1103,15 @@ async function handleQuery(
       type: 'query',
       details: {
         query: messageText,
-        queryResults: undefined, // Will be updated after processing
-        queryAnswer: undefined // Will be updated after processing
+        queryResults: undefined,
+        queryAnswer: undefined
       }
     },
     'saveAction (initial)'
   )
-  
+
+  let finalResult: HandlerResult
+
   try {
     // Use orchestrator for content query handling
     console.log(`[UnifiedHandler] Importing orchestrator...`)
@@ -1118,14 +1150,14 @@ async function handleQuery(
         },
         'saveAction (no messages)'
       )
-      
-      return {
+      finalResult = {
         response: "I couldn't find information about that.",
         shouldSaveHistory: true,
         metadata: {
           intent: intentType
         }
       }
+      return finalResult
     }
     
     const responseText = result.messages.join('\n\n')
@@ -1146,87 +1178,50 @@ async function handleQuery(
         },
         'saveAction (empty response)'
       )
-      
-      return {
+      finalResult = {
         response: "I couldn't find information about that.",
         shouldSaveHistory: true,
         metadata: {
           intent: intentType
         }
       }
+      return finalResult
     }
     
-    console.log(`[UnifiedHandler] Returning query response: "${responseText.substring(0, 100)}..."`)
-    
-    // Determine if we found results
-    const hasResults = !responseText.toLowerCase().includes("couldn't find") && 
-                       !responseText.toLowerCase().includes("i couldn't") &&
-                       !responseText.toLowerCase().includes("looking that up") &&
-                       responseText.length > 20
-    const resultCount = hasResults ? 1 : 0
-    
-    // Extract concise answer (first 300 chars or first sentence)
-    let queryAnswer = responseText
-    if (responseText.length > 300) {
-      // Try to get first sentence or first 300 chars
-      const firstSentence = responseText.match(/^[^.!?]+[.!?]/)
-      queryAnswer = firstSentence ? firstSentence[0] : responseText.substring(0, 300)
-    }
-    
-    // Update action memory with results (fire-and-forget to avoid blocking response)
+    // Update action memory with results
     queueActionMemorySave(
       phoneNumber,
       {
         type: 'query',
         details: {
           query: messageText,
-          queryResults: resultCount,
-          queryAnswer: queryAnswer
+          queryResults: 1, // Assuming 1 result for now, as we don't have a direct count from orchestrator
+          queryAnswer: responseText // Use the full response as the answer
         }
       },
       'saveAction (result)'
     )
-    
-    return {
+ 
+    finalResult = {
       response: responseText,
-      shouldSaveHistory: false, // Orchestrator saves history
-      metadata: {
-        intent: intentType
-      }
-    }
-  } catch (err) {
-    console.error('[UnifiedHandler] Query handling error:', err)
-    console.error('[UnifiedHandler] Error type:', err instanceof Error ? err.constructor.name : typeof err)
-    console.error('[UnifiedHandler] Error message:', err instanceof Error ? err.message : String(err))
-    console.error('[UnifiedHandler] Error stack:', err instanceof Error ? err.stack : 'No stack trace')
-    
-    // Check if it's a timeout
-    const isTimeout = err instanceof Error && (err.message.includes('timeout') || err.message.includes('Timeout'))
-    const errorMessage = isTimeout 
-      ? "That query took too long. Please try again with a more specific question."
-      : "I couldn't process that query. Please try again."
-    
-    // Update action memory with error
-    queueActionMemorySave(
-      phoneNumber,
-      {
-        type: 'query',
-        details: {
-          query: messageText,
-          queryResults: 0,
-          queryAnswer: undefined
-        }
-      },
-      'saveAction (error)'
-    )
-    
-    return {
-      response: errorMessage,
       shouldSaveHistory: true,
       metadata: {
         intent: intentType
       }
     }
+    return finalResult
+  } catch (err) {
+    console.error('[UnifiedHandler] Query handling error:', err)
+    finalResult = {
+      response: "sorry, something went wrong while answering that.",
+      shouldSaveHistory: true,
+      metadata: {
+        intent: intentType
+      }
+    }
+    return finalResult
+  } finally {
+    PENDING_CONTENT_QUERIES.delete(phoneNumber)
   }
 }
 

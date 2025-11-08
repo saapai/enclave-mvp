@@ -1,4 +1,4 @@
-import { supabase } from './supabase'
+import { supabase, supabaseAdmin } from './supabase'
 import { ENV } from './env'
 
 // Use OpenAI embeddings (much faster and more reliable than Mistral)
@@ -59,7 +59,12 @@ export async function upsertResourceEmbedding(resourceId: string, text: string):
     return false
   }
   console.log('Upserting embedding for resource:', resourceId, 'with dimensions:', embedding.length)
-  const { error } = await (supabase as any)
+  const client = supabaseAdmin || supabase
+  if (!client) {
+    console.error('No Supabase client available for embedding upsert')
+    return false
+  }
+  const { error } = await client
     .from('resource_embedding')
     .upsert({ resource_id: resourceId, embedding, updated_at: new Date().toISOString() })
   if (error) {
@@ -86,6 +91,21 @@ export async function upsertResourceChunks(resourceId: string, text: string): Pr
   }
   if (current.trim()) chunks.push(current.trim())
 
+  const client = supabaseAdmin || supabase
+  if (!client) {
+    console.error('No Supabase client available for chunk upsert')
+    return
+  }
+
+  try {
+    await client
+      .from('resource_chunk')
+      .delete()
+      .eq('resource_id', resourceId)
+  } catch (err) {
+    console.error('Failed to clear existing chunks:', err)
+  }
+
   // Insert chunks and embeddings (best-effort)
   for (let i = 0; i < chunks.length; i++) {
     const chunk = chunks[i]
@@ -93,7 +113,7 @@ export async function upsertResourceChunks(resourceId: string, text: string): Pr
     try {
       embedding = await embedText(chunk)
     } catch { /* ignore */ }
-    await (supabase as any)
+    await client
       .from('resource_chunk')
       .insert({
         resource_id: resourceId,

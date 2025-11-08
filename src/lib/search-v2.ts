@@ -22,6 +22,8 @@ const SMS_FTS_TIMEOUT_MS = Number(process.env.SMS_FTS_TIMEOUT_MS || '800') // 80
 const SMS_EMBED_TIMEOUT_MS = Number(process.env.SMS_EMBED_TIMEOUT_MS || '2000') // 2s for embedding (OpenAI is fast ~200-500ms)
 const SMS_VECTOR_TIMEOUT_MS = Number(process.env.SMS_VECTOR_TIMEOUT_MS || '1200') // 1.2s per vector
 const SMS_EMBED_MIN_REMAINING_MS = Number(process.env.SMS_EMBED_MIN_REMAINING_MS || '2500') // Need 2.5s left to embed (slightly more than timeout)
+const SMS_FTS_HARD_TIMEOUT_MS = Number(process.env.SMS_FTS_HARD_TIMEOUT_MS || '350')
+const SMS_VECTOR_HARD_TIMEOUT_MS = Number(process.env.SMS_VECTOR_HARD_TIMEOUT_MS || '600')
 
 // Circuit breaker: if embedding fails 3 times in 5 min, disable for next queries
 const embeddingFailures: number[] = []
@@ -153,21 +155,22 @@ async function searchFTS(
   console.log(`[Search V2 FTS] Searching "${query}" in space ${spaceId.substring(0, 8)}... (timeout: ${timeoutMs}ms)`)
   
   try {
-    const controller = new AbortController()
-    const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
-    
-    // Use the proper FTS RPC function
-    const { data, error } = await client
-      .rpc('search_resources_fts', {
+    const hardTimeout = Math.min(timeoutMs, SMS_FTS_HARD_TIMEOUT_MS)
+    const response = await Promise.race([
+      client.rpc('search_resources_fts', {
         search_query: query,
         target_space_id: spaceId,
         limit_count: limit,
         offset_count: 0
-      })
-      .abortSignal(controller.signal)
-    
-    clearTimeout(timeoutId)
-    
+      }),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('FTS hard timeout')), hardTimeout))
+    ]) as any
+
+    if (!response) {
+      return []
+    }
+
+    const { data, error } = response
     if (error) {
       console.error('[Search V2 FTS] RPC error:', error.message)
       return []
@@ -184,10 +187,10 @@ async function searchFTS(
     return results
     
   } catch (err: any) {
-    if (err.name === 'AbortError') {
-      console.log('[Search V2 FTS] Timed out')
+    if (err?.message === 'FTS hard timeout') {
+      console.warn('[Search V2 FTS] Hard timeout reached, skipping workspace')
     } else {
-      console.error('[Search V2 FTS] Error:', err.message)
+      console.error('[Search V2 FTS] Error:', err?.message || err)
     }
     return []
   }
@@ -218,21 +221,23 @@ async function searchVector(
   console.log(`[Search V2 Vector] Searching space ${spaceId.substring(0, 8)}... (timeout: ${timeoutMs}ms)`)
   
   try {
-    const controller = new AbortController()
-    const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
-    
-    const { data, error } = await client
-      .rpc('search_resources_vector', {
+    const hardTimeout = Math.min(timeoutMs, SMS_VECTOR_HARD_TIMEOUT_MS)
+    const response = await Promise.race([
+      client.rpc('search_resources_vector', {
         query_embedding: embedding,
         target_space_id: spaceId,
         limit_count: limit,
         offset_count: 0,
-        target_user_id: null // Search all resources in workspace
-      })
-      .abortSignal(controller.signal)
-    
-    clearTimeout(timeoutId)
-    
+        target_user_id: null
+      }),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Vector hard timeout')), hardTimeout))
+    ]) as any
+
+    if (!response) {
+      return []
+    }
+
+    const { data, error } = response
     if (error) {
       console.error('[Search V2 Vector] RPC error:', error.message)
       return []
@@ -241,8 +246,7 @@ async function searchVector(
     const results = (data || []).map((hit: any) => ({
       ...hit,
       tags: [],
-      rank: hit.similarity || 0,
-      score: hit.similarity || 0,
+      score: typeof hit.similarity === 'number' ? hit.similarity : 0,
       source: 'vector'
     } as SearchResult))
     
@@ -250,10 +254,10 @@ async function searchVector(
     return results
     
   } catch (err: any) {
-    if (err.name === 'AbortError') {
-      console.log('[Search V2 Vector] Timed out')
+    if (err?.message === 'Vector hard timeout') {
+      console.warn('[Search V2 Vector] Hard timeout reached, skipping workspace')
     } else {
-      console.error('[Search V2 Vector] Error:', err.message)
+      console.error('[Search V2 Vector] Error:', err?.message || err)
     }
     return []
   }
@@ -279,7 +283,7 @@ async function searchWorkspace(
   
   // Check if FTS gave us a high-confidence result
   const topFtsScore = ftsResults[0]?.score || 0
-  if (topFtsScore >= 0.70) {
+  if (topFtsScore >= 0.90) {
     console.log(`[Search V2] High-confidence FTS result (${topFtsScore.toFixed(3)}), skipping vector`)
     return {
       workspaceId,
