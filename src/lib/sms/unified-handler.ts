@@ -127,6 +127,8 @@ export async function handleSMSMessage(
       }
     }
   }
+  
+  console.log(`[UnifiedHandler] Welcome flow check done, proceeding to intent classification`)
 
   // Classify intent FIRST using LLM (it will detect follow-ups)
   // If pre-classified intent provided (from route.ts), use it to avoid redundant LLM call
