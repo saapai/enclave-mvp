@@ -29,13 +29,13 @@ export async function getWorkspaceIds(options: WorkspaceOptions = {}): Promise<s
   const resolved = new Set<string>()
   resolved.add(DEFAULT_SPACE_ID)
 
-  const promises: Promise<void>[] = []
+  const tasks: Promise<void>[] = []
 
   // Lookup by phone -> app_user.phone
   if (options.phoneNumber) {
     const digits = normalizeDigits(options.phoneNumber)
     if (digits.length === 10) {
-      promises.push((async () => {
+      tasks.push((async () => {
         try {
           const { data, error } = await client
             .from('app_user')
@@ -61,32 +61,33 @@ export async function getWorkspaceIds(options: WorkspaceOptions = {}): Promise<s
     }
   }
 
-  // Always try SEP-named workspaces if requested or nothing yet
-  promises.push((async () => {
-    if (!options.includeSepFallback && resolved.size > 1) return
-    try {
-      const { data, error } = await client
-        .from('space')
-        .select('id, name')
-        .ilike('name', '%SEP%')
+  // Optional SEP fallback (enabled by default)
+  if (options.includeSepFallback !== false) {
+    tasks.push((async () => {
+      try {
+        const { data, error } = await client
+          .from('space')
+          .select('id, name')
+          .ilike('name', '%SEP%')
 
-      if (error) {
-        console.error('[Workspace] SEP workspace lookup failed:', error)
-        return
+        if (error) {
+          console.error('[Workspace] SEP workspace lookup failed:', error)
+          return
+        }
+
+        (data || []).forEach(space => {
+          if (space?.id) resolved.add(space.id)
+        })
+      } catch (err) {
+        console.error('[Workspace] Error retrieving SEP workspaces:', err)
       }
+    })())
+  }
 
-      (data || []).forEach(space => {
-        if (space?.id) resolved.add(space.id)
-      })
-    } catch (err) {
-      console.error('[Workspace] Error retrieving SEP workspaces:', err)
-    }
-  })())
+  await Promise.all(tasks)
 
-  // Fallback: fetch all spaces (limited) if still only default
-  promises.push((async () => {
-    await Promise.all(promises)
-    if (resolved.size > 1) return
+  // Final fallback: grab a few spaces if we only have the default
+  if (resolved.size === 1) {
     try {
       const { data, error } = await client
         .from('space')
@@ -95,18 +96,15 @@ export async function getWorkspaceIds(options: WorkspaceOptions = {}): Promise<s
 
       if (error) {
         console.error('[Workspace] Fallback workspace lookup failed:', error)
-        return
+      } else {
+        (data || []).forEach(space => {
+          if (space?.id) resolved.add(space.id)
+        })
       }
-
-      (data || []).forEach(space => {
-        if (space?.id) resolved.add(space.id)
-      })
     } catch (err) {
       console.error('[Workspace] Error retrieving fallback workspaces:', err)
     }
-  })())
-
-  await Promise.all(promises)
+  }
 
   const workspaceIds = Array.from(resolved)
   console.log('[Workspace] Workspace IDs resolved:', workspaceIds)
