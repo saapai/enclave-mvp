@@ -806,24 +806,24 @@ export async function POST(request: NextRequest) {
         // Process query asynchronously (don't await)
         console.log(`[Twilio SMS] [${traceId}] Starting async handler for content query: "${body.substring(0, 50)}"`)
         
-      // WATCHDOG: 4s timeout to prevent silent hangs (must be well under Vercel's 10s limit)
+      // WATCHDOG: 8s timeout to prevent silent hangs (Vercel Pro allows 60s)
       let watchdogFired = false
       const watchdog = setTimeout(async () => {
         watchdogFired = true
-        console.error(`[Twilio SMS] [${traceId}] WATCHDOG: content_query exceeded 4s, sending degraded reply`)
+        console.error(`[Twilio SMS] [${traceId}] WATCHDOG: content_query exceeded 8s, sending degraded reply`)
         try {
           await sendSms(from, "Still searching... this is taking longer than expected. I'll keep trying.", { retries: 1, retryDelay: 2000 })
           console.log(`[Twilio SMS] [${traceId}] Watchdog message sent`)
         } catch (err) {
           console.error(`[Twilio SMS] [${traceId}] Failed to send watchdog message:`, err)
         }
-      }, 4000) // 4 second watchdog (leaves 6s for cleanup before Vercel kills us)
+      }, 8000) // 8 second watchdog
         
-      // Set a hard timeout before Vercel kills us
+      // Set a hard timeout before Vercel kills us (Pro = 60s)
       let timeoutFired = false
       const asyncTimeout = setTimeout(async () => {
         timeoutFired = true
-        console.error(`[Twilio SMS] [${traceId}] Async handler timeout after 8s for query: "${body.substring(0, 50)}"`)
+        console.error(`[Twilio SMS] [${traceId}] Async handler timeout after 55s for query: "${body.substring(0, 50)}"`)
         if (!watchdogFired) {
           try {
             await sendSms(from, "Sorry, that query took too long. Please try a simpler question.", { retries: 1, retryDelay: 2000 })
@@ -832,7 +832,7 @@ export async function POST(request: NextRequest) {
             console.error(`[Twilio SMS] [${traceId}] Failed to send timeout message:`, err)
           }
         }
-      }, 8000) // 8 second timeout (2s buffer before Vercel's 10s limit)
+      }, 55000) // 55 second timeout (5s buffer before Vercel's 60s limit)
         
         // Re-process the message asynchronously
         // Pass the already-classified intent to avoid redundant LLM call
