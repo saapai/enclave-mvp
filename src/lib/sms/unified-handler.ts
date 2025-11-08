@@ -1035,7 +1035,14 @@ Answer factually based on the reference above.`
     // Use orchestrator for content query handling
     const { handleTurn } = await import('@/lib/orchestrator/handleTurn')
     console.log(`[UnifiedHandler] Calling orchestrator for query: "${messageText}"`)
-    const result = await handleTurn(phoneNumber, messageText)
+    
+    // Add timeout wrapper to prevent hanging
+    const orchestratorPromise = handleTurn(phoneNumber, messageText)
+    const timeoutPromise = new Promise((_, reject) => {
+      setTimeout(() => reject(new Error('Orchestrator timeout after 45 seconds')), 45000)
+    })
+    
+    const result = await Promise.race([orchestratorPromise, timeoutPromise]) as any
     
     console.log(`[UnifiedHandler] Orchestrator result: ${result.messages?.length || 0} messages`)
     
@@ -1121,7 +1128,15 @@ Answer factually based on the reference above.`
     }
   } catch (err) {
     console.error('[UnifiedHandler] Query handling error:', err)
+    console.error('[UnifiedHandler] Error type:', err instanceof Error ? err.constructor.name : typeof err)
+    console.error('[UnifiedHandler] Error message:', err instanceof Error ? err.message : String(err))
     console.error('[UnifiedHandler] Error stack:', err instanceof Error ? err.stack : 'No stack trace')
+    
+    // Check if it's a timeout
+    const isTimeout = err instanceof Error && (err.message.includes('timeout') || err.message.includes('Timeout'))
+    const errorMessage = isTimeout 
+      ? "That query took too long. Please try again with a more specific question."
+      : "I couldn't process that query. Please try again."
     
     // Update action memory with error
     await saveAction(phoneNumber, {
@@ -1134,7 +1149,7 @@ Answer factually based on the reference above.`
     }).catch(saveErr => console.error('[UnifiedHandler] Failed to update action memory on error:', saveErr))
     
     return {
-      response: "I couldn't process that query. Please try again.",
+      response: errorMessage,
       shouldSaveHistory: true,
       metadata: {
         intent: intentType

@@ -816,10 +816,12 @@ export async function POST(request: NextRequest) {
         }, 60000) // 60 second timeout
         
         // Re-process the message asynchronously
+        const handlerStartTime = Date.now()
         handleSMSMessage(phoneNumber, from, body)
           .then(async (result) => {
             clearTimeout(asyncTimeout)
-            console.log(`[Twilio SMS] Async handler completed successfully`)
+            const handlerDuration = Date.now() - handlerStartTime
+            console.log(`[Twilio SMS] Async handler completed successfully in ${handlerDuration}ms`)
             console.log(`[Twilio SMS] Async handler returned: "${result?.response?.substring(0, 100) || 'NO RESPONSE'}..."`)
             
             // Ensure we have a response
