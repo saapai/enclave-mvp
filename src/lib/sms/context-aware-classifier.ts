@@ -90,16 +90,21 @@ export async function loadWeightedHistory(
 
     console.log(`[ContextClassifier] loadWeightedHistory: Querying database`)
     const queryStartTime = Date.now()
-    const queryPromise = client
-      .from('sms_conversation_history')
-      .select('id, user_message, bot_response, created_at')
-      .eq('phone_number', phoneNumber)
-      .order('created_at', { ascending: false })
-      .limit(limit) as unknown as Promise<{ data: any; error: any }>
     const result = await withTimeout(
-      queryPromise,
+      (async () => {
+        const res = await client
+          .from('sms_conversation_history')
+          .select('id, user_message, bot_response, created_at')
+          .eq('phone_number', phoneNumber)
+          .order('created_at', { ascending: false })
+          .limit(limit)
+        return res as { data: any; error: any }
+      })(),
       3000,
-      { data: null, error: null } as any,
+      () => {
+        console.error('[ContextClassifier] loadWeightedHistory: falling back after timeout')
+        return { data: null, error: null } as any
+      },
       'loadWeightedHistory query'
     )
     const queryDuration = Date.now() - queryStartTime
