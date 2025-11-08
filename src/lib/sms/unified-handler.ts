@@ -96,9 +96,11 @@ export async function handleSMSMessage(
     case 'poll_response':
       return handlePollResponse(phoneNumber, messageText)
 
+    case 'random_conversation':
+      return handleSmalltalk(messageText)
+    
     case 'content_query':
     case 'enclave_query':
-    case 'random_conversation':
       return handleQuery(phoneNumber, messageText, intent.type)
 
     default:
@@ -189,8 +191,35 @@ async function handleAnnouncementCommand(
   // Parse command
   const parsed = await parseCommand(messageText, history)
 
+  // Check if content was provided
+  const hasContent = parsed.extractedFields.content && 
+                     parsed.extractedFields.content.trim().length > 0 &&
+                     parsed.extractedFields.content !== 'Announcement'
+  
+  if (!hasContent && !parsed.verbatimText) {
+    // No content provided, ask for it
+    return {
+      response: "what would you like the announcement to say?",
+      shouldSaveHistory: true,
+      metadata: {
+        intent: 'announcement_command'
+      }
+    }
+  }
+
   // Generate announcement
   const draft = await generateAnnouncement(parsed)
+  
+  // Ensure draft has content
+  if (!draft.content || draft.content.trim().length === 0 || draft.content === 'Announcement') {
+    return {
+      response: "what would you like the announcement to say?",
+      shouldSaveHistory: true,
+      metadata: {
+        intent: 'announcement_command'
+      }
+    }
+  }
   
   // Save draft using existing function
   try {
@@ -556,7 +585,54 @@ async function handlePollResponse(
 }
 
 /**
- * Handle queries (content, enclave, random conversation)
+ * Handle smalltalk/random conversation
+ */
+async function handleSmalltalk(messageText: string): Promise<HandlerResult> {
+  const lower = messageText.toLowerCase().trim()
+  
+  // Simple responses for common smalltalk
+  if (/^(hi|hey|hello|sup|what'?s\s+up|yo)$/i.test(lower)) {
+    return {
+      response: "hey! what's up?",
+      shouldSaveHistory: true,
+      metadata: {
+        intent: 'random_conversation'
+      }
+    }
+  }
+  
+  if (/^(thanks?|thank\s+you|ty|thx)$/i.test(lower)) {
+    return {
+      response: "no problem!",
+      shouldSaveHistory: true,
+      metadata: {
+        intent: 'random_conversation'
+      }
+    }
+  }
+  
+  if (/^(ok|okay|sure|alright|got\s+it|cool|nice|sweet)$/i.test(lower)) {
+    return {
+      response: "👍",
+      shouldSaveHistory: true,
+      metadata: {
+        intent: 'random_conversation'
+      }
+    }
+  }
+  
+  // Default smalltalk response
+  return {
+    response: "hey! how can i help?",
+    shouldSaveHistory: true,
+    metadata: {
+      intent: 'random_conversation'
+    }
+  }
+}
+
+/**
+ * Handle queries (content, enclave)
  */
 async function handleQuery(
   phoneNumber: string,

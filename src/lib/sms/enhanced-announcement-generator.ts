@@ -146,22 +146,33 @@ Generate a natural, conversational announcement message. Keep it casual and frie
  * Format announcement for preview/sending
  */
 export function formatAnnouncement(draft: AnnouncementDraft): string {
-  let message = draft.content
+  if (!draft || !draft.content) {
+    return 'Announcement'
+  }
+  
+  let message = draft.content.trim()
 
   // Add time if present
-  if (draft.time) {
-    // Convert 24-hour to 12-hour for display
-    const [hours, minutes] = draft.time.split(':')
-    const hour24 = parseInt(hours)
-    const hour12 = hour24 > 12 ? hour24 - 12 : hour24 === 0 ? 12 : hour24
-    const ampm = hour24 >= 12 ? 'pm' : 'am'
-    const timeStr = `${hour12}:${minutes}${ampm}`
-    message += ` (at ${timeStr})`
+  if (draft.time && draft.time.trim().length > 0) {
+    try {
+      // Convert 24-hour to 12-hour for display
+      const [hours, minutes] = draft.time.split(':')
+      const hour24 = parseInt(hours)
+      if (!isNaN(hour24)) {
+        const hour12 = hour24 > 12 ? hour24 - 12 : hour24 === 0 ? 12 : hour24
+        const ampm = hour24 >= 12 ? 'pm' : 'am'
+        const minStr = minutes || '00'
+        const timeStr = `${hour12}:${minStr}${ampm}`
+        message += ` (at ${timeStr})`
+      }
+    } catch (err) {
+      // Skip time formatting if there's an error
+    }
   }
 
   // Add location if present
-  if (draft.location) {
-    message += ` at ${draft.location}`
+  if (draft.location && draft.location.trim().length > 0) {
+    message += ` at ${draft.location.trim()}`
   }
 
   return message
