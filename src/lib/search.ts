@@ -72,39 +72,45 @@ export async function searchResourcesHybrid(
     return searchResources(query, spaceId, filters, options, userId)
   }
 
+  const searchStart = Date.now()
+  const searchId = `${spaceId.substring(0, 8)}...`
+  
   try {
-    console.log(`[Hybrid Search] Starting hybrid search for query: "${query}", spaceId: ${spaceId}`)
+    console.log(`[Hybrid Search] [${searchId}] START - query: "${query}", spaceId: ${spaceId}`)
     
     // Search regular resources with FTS (keyword search) FIRST - don't wait for embedding
-    console.log(`[Hybrid Search] Starting FTS search...`)
+    const ftsStart = Date.now()
+    console.log(`[Hybrid Search] [${searchId}] FTS:start`)
     const regularResults = await searchResources(query, spaceId, filters, { limit: limit * 2, offset: 0 }, userId)
-    console.log(`[Hybrid Search] FTS search returned ${regularResults.length} results`)
+    const ftsDuration = Date.now() - ftsStart
+    console.log(`[Hybrid Search] [${searchId}] FTS:done (${ftsDuration}ms, ${regularResults.length} results)`)
     
     // Generate embedding for vector search with timeout
-    console.log(`[Hybrid Search] Generating embedding with timeout...`)
+    const embedStart = Date.now()
+    console.log(`[Hybrid Search] [${searchId}] EMBED:start`)
     let queryEmbedding: number[] | null = null
     try {
-      const embeddingPromise = embedText(query)
-      const timeoutPromise = new Promise<null>((resolve) => {
-        setTimeout(() => {
-          console.error('[Hybrid Search] Embedding generation timed out after 3000ms, skipping vector search')
-          resolve(null)
-        }, 3000)
-      })
-      queryEmbedding = await Promise.race([embeddingPromise, timeoutPromise])
+      queryEmbedding = await pTimeout(
+        embedText(query),
+        2000, // 2s timeout for embedding
+        `embed:${searchId}`
+      )
+      const embedDuration = Date.now() - embedStart
+      console.log(`[Hybrid Search] [${searchId}] EMBED:done (${embedDuration}ms, dims=${queryEmbedding?.length || 0})`)
     } catch (err) {
-      console.error('[Hybrid Search] Embedding generation failed:', err)
+      const embedDuration = Date.now() - embedStart
+      const isTimeout = err instanceof Error && err.message.includes('timeout')
+      console.error(`[Hybrid Search] [${searchId}] EMBED:${isTimeout ? 'timeout' : 'failed'} (${embedDuration}ms)`)
     }
     
     if (!queryEmbedding) {
-      console.log('[Hybrid Search] No embedding available, returning FTS results only')
+      console.log(`[Hybrid Search] [${searchId}] No embedding, returning FTS only (${regularResults.length} results)`)
       return regularResults.slice(offset, offset + limit)
     }
     
-    console.log(`[Hybrid Search] Embedding generated, dimensions: ${queryEmbedding.length}`)
-    
     // Search regular resources with vector search (semantic search for PDFs, uploads, etc.)
-    console.log(`[Vector Search] Searching for regular resource embeddings - Space: ${spaceId}, User: ${userId}`)
+    const vectorStart = Date.now()
+    console.log(`[Hybrid Search] [${searchId}] VECTOR:start`)
     
     // For default workspace (personal), filter by user to ensure privacy
     // For custom workspaces, allow searching all resources in that workspace
@@ -113,39 +119,44 @@ export async function searchResourcesHybrid(
     
     let resourceVectorResults: any[] | null = null
     let vectorError: any = null
-    const vectorResponse = await runWithAbort<{ data: any[] | null; error: any }>(
-      'search_resources_vector',
-      VECTOR_TIMEOUT_MS,
-      (signal) =>
-        searchClient
-          .rpc('search_resources_vector', {
-            query_embedding: queryEmbedding,
-            target_space_id: spaceId,
-            limit_count: limit * 2,
-            offset_count: 0,
-            target_user_id: shouldFilterByUser ? userId : null // Filter by user only in personal workspace
-          })
-          .abortSignal(signal)
-          .then((res) => res as { data: any[] | null; error: any })
-    )
+    
+    try {
+      const vectorResponse = await runWithAbort<{ data: any[] | null; error: any }>(
+        'search_resources_vector',
+        VECTOR_TIMEOUT_MS,
+        (signal) =>
+          searchClient
+            .rpc('search_resources_vector', {
+              query_embedding: queryEmbedding,
+              target_space_id: spaceId,
+              limit_count: limit * 2,
+              offset_count: 0,
+              target_user_id: shouldFilterByUser ? userId : null // Filter by user only in personal workspace
+            })
+            .abortSignal(signal)
+            .then((res) => res as { data: any[] | null; error: any })
+      )
 
-    if (vectorResponse) {
-      resourceVectorResults = vectorResponse.data
-      vectorError = vectorResponse.error
-    } else {
-      console.warn(`[Vector Search] RPC timed out for space ${spaceId}`)
-    }
-
-    if (vectorError) {
-      console.error('[Vector Search] RPC error:', vectorError)
-    } else {
-      console.log(`[Vector Search] RPC returned ${resourceVectorResults?.length || 0} resource matches`)
-      if (resourceVectorResults && resourceVectorResults.length > 0) {
-        console.log(`[Vector Search] First match:`, {
-          title: resourceVectorResults[0].title,
-          similarity: resourceVectorResults[0].similarity
-        })
+      if (vectorResponse) {
+        resourceVectorResults = vectorResponse.data
+        vectorError = vectorResponse.error
       }
+      
+      const vectorDuration = Date.now() - vectorStart
+      if (vectorError) {
+        console.error(`[Hybrid Search] [${searchId}] VECTOR:error (${vectorDuration}ms):`, vectorError)
+      } else {
+        console.log(`[Hybrid Search] [${searchId}] VECTOR:done (${vectorDuration}ms, ${resourceVectorResults?.length || 0} matches)`)
+        if (resourceVectorResults && resourceVectorResults.length > 0) {
+          console.log(`[Hybrid Search] [${searchId}] VECTOR:top`, {
+            title: resourceVectorResults[0].title,
+            similarity: resourceVectorResults[0].similarity
+          })
+        }
+      }
+    } catch (err) {
+      const vectorDuration = Date.now() - vectorStart
+      console.error(`[Hybrid Search] [${searchId}] VECTOR:failed (${vectorDuration}ms):`, err)
     }
     
     // Convert vector search results to SearchResult format
@@ -157,7 +168,8 @@ export async function searchResourcesHybrid(
     } as SearchResult))
     
     // Search Google Docs chunks using admin client (pass userId for filtering)
-    console.log(`[GDocs Search] Searching for Google Doc chunks - Space: ${spaceId}, User: ${userId}`)
+    const gdocsStart = Date.now()
+    console.log(`[Hybrid Search] [${searchId}] GDOCS:start`)
     
     // For default workspace (personal), filter by user to ensure privacy
     // For custom workspaces, allow searching all resources in that workspace
@@ -165,40 +177,45 @@ export async function searchResourcesHybrid(
     
     let googleDocsResults: any[] | null = null
     let gdError: any = null
-    const gdocResponse = await runWithAbort<{ data: any[] | null; error: any }>(
-      'search_google_docs_vector',
-      GDOC_TIMEOUT_MS,
-      (signal) =>
-        searchClient
-          .rpc('search_google_docs_vector', {
-            query_embedding: queryEmbedding,
-            target_space_id: spaceId,
-            limit_count: limit * 2,
-            offset_count: 0,
-            target_user_id: shouldFilterGoogleDocsByUser ? userId : null
-          })
-          .abortSignal(signal)
-          .then((res) => res as { data: any[] | null; error: any })
-    )
-
-    if (gdocResponse) {
-      googleDocsResults = gdocResponse.data
-      gdError = gdocResponse.error
-    } else {
-      console.warn(`[GDocs Search] RPC timed out for space ${spaceId}`)
-    }
-
-    if (gdError) {
-      console.error('[GDocs Search] RPC error:', gdError)
-    } else {
-      console.log(`[GDocs Search] RPC returned ${googleDocsResults?.length || 0} chunks`)
-      if (googleDocsResults && googleDocsResults.length > 0) {
-        console.log(`[GDocs Search] First chunk:`, {
-          text_preview: googleDocsResults[0].text?.substring(0, 100),
-          added_by: googleDocsResults[0].added_by,
-          similarity: googleDocsResults[0].similarity
-        })
+    
+    try {
+      const gdocsResponse = await runWithAbort<{ data: any[] | null; error: any }>(
+        'search_google_docs_vector',
+        GDOC_TIMEOUT_MS,
+        (signal) =>
+          searchClient
+            .rpc('search_google_docs_vector', {
+              query_embedding: queryEmbedding,
+              target_space_id: spaceId,
+              limit_count: limit * 2,
+              offset_count: 0,
+              target_user_id: shouldFilterGoogleDocsByUser ? userId : null
+            })
+            .abortSignal(signal)
+            .then((res) => res as { data: any[] | null; error: any })
+      )
+      
+      if (gdocsResponse) {
+        googleDocsResults = gdocsResponse.data
+        gdError = gdocsResponse.error
       }
+      
+      const gdocsDuration = Date.now() - gdocsStart
+      if (gdError) {
+        console.error(`[Hybrid Search] [${searchId}] GDOCS:error (${gdocsDuration}ms):`, gdError)
+      } else {
+        console.log(`[Hybrid Search] [${searchId}] GDOCS:done (${gdocsDuration}ms, ${googleDocsResults?.length || 0} chunks)`)
+        if (googleDocsResults && googleDocsResults.length > 0) {
+          console.log(`[Hybrid Search] [${searchId}] GDOCS:top`, { 
+            text_preview: googleDocsResults[0].text?.substring(0, 100), 
+            added_by: googleDocsResults[0].added_by,
+            similarity: googleDocsResults[0].similarity 
+          })
+        }
+      }
+    } catch (err) {
+      const gdocsDuration = Date.now() - gdocsStart
+      console.error(`[Hybrid Search] [${searchId}] GDOCS:failed (${gdocsDuration}ms):`, err)
     }
 
     // Search Calendar Events using admin client (pass userId for filtering)
@@ -362,7 +379,8 @@ export async function searchResourcesHybrid(
     } as SearchResult))
 
     // Combine and rank results from all sources
-    console.log(`[Hybrid Search] Result counts - Regular FTS: ${regularResults.length}, Regular Vector: ${vectorSearchResults.length}, GDocs: ${googleDocsSearchResults.length}, Calendar: ${calendarSearchResults.length}, Slack: ${slackSearchResults.length}`)
+    const totalDuration = Date.now() - searchStart
+    console.log(`[Hybrid Search] [${searchId}] COMPOSE:start (FTS:${regularResults.length}, Vector:${vectorSearchResults.length}, GDocs:${googleDocsSearchResults.length}, Calendar:${calendarSearchResults.length}, Slack:${slackSearchResults.length})`)
     
     // Filter out unwanted documents BEFORE reranking (e.g., deleted resources that still show up)
     const blockedTitles = ['fu\'s', 'fu\'s palace', 'f u\'s', 'f us palace'].map(t => t.toLowerCase())
@@ -408,15 +426,19 @@ export async function searchResourcesHybrid(
       allResults.sort((a, b) => (b.score || 0) - (a.score || 0))
     }
     
-    console.log(`[Hybrid Search] Top 5 results:`)
+    const composeDuration = Date.now() - searchStart
+    console.log(`[Hybrid Search] [${searchId}] COMPOSE:done (${composeDuration}ms total)`)
+    console.log(`[Hybrid Search] [${searchId}] Top 5 results:`)
     allResults.slice(0, 5).forEach((result, i) => {
       const finalScore = (result as any).finalScore
       const scoreDisplay = finalScore ? `final: ${finalScore.toFixed(3)}` : `score: ${result.score?.toFixed(3)}`
-      console.log(`  ${i+1}. [${result.type}] ${result.title} (${scoreDisplay}, source: ${(result as any).source})`)
+      console.log(`[Hybrid Search] [${searchId}]   ${i+1}. [${result.type}] ${result.title} (${scoreDisplay}, source: ${(result as any).source})`)
     })
     
     // Apply limit and offset
-    return allResults.slice(offset, offset + limit)
+    const finalResults = allResults.slice(offset, offset + limit)
+    console.log(`[Hybrid Search] [${searchId}] DONE (${Date.now() - searchStart}ms total, returning ${finalResults.length} results)`)
+    return finalResults
     
   } catch (error) {
     console.error('Hybrid search error:', error)

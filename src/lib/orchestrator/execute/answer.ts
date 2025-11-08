@@ -6,9 +6,11 @@
 
 import { TurnFrame, ContextEnvelope } from '../types'
 import { searchResourcesHybrid } from '@/lib/search'
+import { SearchResult } from '@/lib/database.types'
 import { planQuery, composeResponse, executePlan } from '@/lib/planner'
 import { getWorkspaceIds } from '@/lib/workspace'
 import { pTimeout, safeAll, generateTraceId } from '@/lib/utils'
+import pLimit from 'p-limit'
 
 export interface ExecuteResult {
   messages: string[]
@@ -49,58 +51,78 @@ export async function executeAnswer(
     console.log(`[Execute Answer] [${traceId}] Retrieved ${spaceIds.length} workspace ids in ${workspaceDuration}ms`)
     console.log(`[Execute Answer] [${traceId}] Workspace IDs:`, spaceIds)
     
-    // Early exit if no workspaces
-    if (spaceIds.length === 0) {
-      console.warn(`[Execute Answer] [${traceId}] No workspaces found, returning early`)
+    // CRITICAL: Filter out default workspace and prioritize real spaces
+    const DEFAULT_SPACE_ID = '00000000-0000-0000-0000-000000000000'
+    const realSpaces = spaceIds.filter(id => id && id !== DEFAULT_SPACE_ID)
+    
+    // Optional: prioritize SEP workspace if env var is set
+    const SEP_SPACE_ID = process.env.SEP_SPACE_ID
+    const prioritizedSpaces = SEP_SPACE_ID && realSpaces.includes(SEP_SPACE_ID)
+      ? [SEP_SPACE_ID, ...realSpaces.filter(id => id !== SEP_SPACE_ID)]
+      : realSpaces
+    
+    // Hard cap at 5 workspaces
+    const workspaceIds = prioritizedSpaces.slice(0, 5)
+    
+    console.log(`[Execute Answer] [${traceId}] Filtered workspaces: ${spaceIds.length} -> ${workspaceIds.length} (removed default, prioritized SEP)`)
+    
+    // Early exit if no real workspaces
+    if (workspaceIds.length === 0) {
+      console.warn(`[Execute Answer] [${traceId}] No real workspaces found, returning early`)
       return {
-        messages: ["I don't have a workspace linked for you yet. Please contact support to get set up."]
+        messages: ["No workspace is linked yet. Link SEP or specify a space."]
       }
     }
     
-    // Cross-workspace search using Promise.allSettled + timeouts (prevents one slow workspace from hanging everything)
-    console.log(`[Execute Answer] [${traceId}] Starting hybrid search across ${spaceIds.length} workspaces`)
-    const searchPromises = spaceIds.map((spaceId) =>
-      pTimeout(
-        (async () => {
-          const searchStart = Date.now()
-          console.log(`[Execute Answer] [${traceId}] Searching workspace ${spaceId} for query: "${query}"`)
-          try {
-            const results = await searchResourcesHybrid(
-              query,
-              spaceId,
-              {},
-              { limit: 5, offset: 0 },
-              undefined
-            )
-            const searchDuration = Date.now() - searchStart
-            console.log(`[Execute Answer] [${traceId}] searchResourcesHybrid for space ${spaceId} returned ${results.length} results in ${searchDuration}ms`)
-            if (results.length > 0) {
-              console.log(`[Execute Answer] [${traceId}] Top result for space ${spaceId}:`, {
-                title: results[0]?.title,
-                type: results[0]?.type,
-                score: results[0]?.score,
-                source: (results[0] as any)?.source
-              })
-            }
-            return results
-          } catch (err) {
-            console.error(`[Execute Answer] [${traceId}] Error searching workspace ${spaceId}:`, err)
-            return []
+    // Concurrency-limited, timeout-wrapped fan-out (never block on one bad apple)
+    const limit = pLimit(2) // Max 2 searches in flight at once
+    const PER_WORKSPACE_TIMEOUT = 2000 // 2s per workspace
+    
+    console.log(`[Execute Answer] [${traceId}] Starting hybrid search across ${workspaceIds.length} workspaces (concurrency=2, timeout=${PER_WORKSPACE_TIMEOUT}ms per workspace)`)
+    
+    const searchPromises = workspaceIds.map((spaceId, index) =>
+      limit(async () => {
+        const searchStart = Date.now()
+        console.log(`[Execute Answer] [${traceId}] [${index + 1}/${workspaceIds.length}] Starting search for workspace ${spaceId}`)
+        try {
+          const results = await pTimeout(
+            searchResourcesHybrid(query, spaceId, {}, { limit: 5, offset: 0 }, frame.user.id),
+            PER_WORKSPACE_TIMEOUT,
+            `hybrid_search:${spaceId}`
+          )
+          const searchDuration = Date.now() - searchStart
+          console.log(`[Execute Answer] [${traceId}] Workspace ${spaceId} completed in ${searchDuration}ms, returned ${results.length} results`)
+          if (results.length > 0) {
+            console.log(`[Execute Answer] [${traceId}] Workspace ${spaceId} top result:`, {
+              title: results[0]?.title,
+              type: results[0]?.type,
+              score: results[0]?.score,
+              source: (results[0] as any)?.source
+            })
           }
-        })(),
-        2500, // 2.5s timeout per workspace search
-        `hybrid_search:${spaceId}`
-      ).catch(() => {
-        console.error(`[Execute Answer] [${traceId}] Workspace ${spaceId} search timed out`)
-        return []
+          return results
+        } catch (err) {
+          const searchDuration = Date.now() - searchStart
+          const isTimeout = err instanceof Error && err.message.includes('timeout')
+          console.error(`[Execute Answer] [${traceId}] Workspace ${spaceId} ${isTimeout ? 'timed out' : 'failed'} after ${searchDuration}ms:`, err)
+          return []
+        }
       })
     )
     
-    // Use safeAll to get all results (even if some timed out)
-    const allResultsArrays = await safeAll(searchPromises)
-    const allResults = allResultsArrays.flat()
+    // Use Promise.allSettled so one failure doesn't kill everything
+    const settled = await Promise.allSettled(searchPromises)
+    const allResultsArrays = settled
+      .filter((r): r is PromiseFulfilledResult<SearchResult[]> => r.status === 'fulfilled')
+      .map(r => r.value)
+    
+    const allResults = allResultsArrays.flat().slice(0, 20) // Cap total results
+    
+    console.log(`[Execute Answer] [${traceId}] Search completed: ${settled.length} tasks, ${allResultsArrays.length} succeeded, ${allResults.length} total results`)
 
-    console.log(`[Execute Answer] [${traceId}] Total aggregated results: ${allResults.length}`)
+    if (allResults.length === 0) {
+      console.warn(`[Execute Answer] [${traceId}] No results found across ${workspaceIds.length} workspaces`)
+    }
 
     // Deduplicate
     const uniqueResultsMap = new Map()

@@ -166,8 +166,13 @@ export async function getWorkspaceIds(options: WorkspaceOptions = {}): Promise<s
   console.log(`[Workspace] All tasks completed in ${allTasksDuration}ms`)
   console.log('[Workspace] Workspace resolution after tasks:', Array.from(resolved))
 
+  if (resolved.size > 1 && resolved.has(DEFAULT_SPACE_ID)) {
+    console.log('[Workspace] Removing default workspace (other workspaces found)')
+    resolved.delete(DEFAULT_SPACE_ID)
+  }
+
   // Final fallback: grab a few spaces if we only have the default
-  if (resolved.size === 1) {
+  if (resolved.size === 1 && resolved.has(DEFAULT_SPACE_ID)) {
     try {
       console.log('[Workspace] Running fallback workspace query (limit 10)')
       const queryPromise = client
