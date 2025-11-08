@@ -19,11 +19,11 @@ const searchClient = supabaseAdmin!
 // Feature flag: Enable reranking with time decay + authority
 const USE_RERANKING = process.env.USE_RERANKING === 'true'
 
-const DEFAULT_TIMEOUT_MS = Number(process.env.SEARCH_DEFAULT_TIMEOUT_MS || '4000')
-const VECTOR_TIMEOUT_MS = Number(process.env.SEARCH_VECTOR_TIMEOUT_MS || '1500') // Aggressive 1.5s timeout for vector RPC
-const FTS_TIMEOUT_MS = Number(process.env.SEARCH_FTS_TIMEOUT_MS || '1500') // Aggressive 1.5s timeout for FTS
-const CALENDAR_TIMEOUT_MS = Number(process.env.SEARCH_CALENDAR_TIMEOUT_MS || '1500') // Aggressive 1.5s timeout for calendar RPC
-const GDOC_TIMEOUT_MS = Number(process.env.SEARCH_GDOC_TIMEOUT_MS || '1500') // Aggressive 1.5s timeout for gdocs RPC
+const DEFAULT_TIMEOUT_MS = Number(process.env.SEARCH_DEFAULT_TIMEOUT_MS || '1500') // Aggressive 1.5s default
+const VECTOR_TIMEOUT_MS = Number(process.env.SEARCH_VECTOR_TIMEOUT_MS || '800') // 800ms for vector (often hangs)
+const FTS_TIMEOUT_MS = Number(process.env.SEARCH_FTS_TIMEOUT_MS || '500') // 500ms for FTS
+const CALENDAR_TIMEOUT_MS = Number(process.env.SEARCH_CALENDAR_TIMEOUT_MS || '800') // 800ms for calendar
+const GDOC_TIMEOUT_MS = Number(process.env.SEARCH_GDOC_TIMEOUT_MS || '800') // 800ms for gdocs
 
 function isAbortError(err: unknown): boolean {
   return err instanceof Error && err.name === 'AbortError'
@@ -466,7 +466,7 @@ export async function searchResourcesHybrid(
   try {
     queryEmbedding = await pTimeout(
       embedText(query),
-      3000, // 3s timeout for embedding (fail fast if Mistral is degraded)
+      3000, // 3s timeout for embedding (inline fallback, aggressive)
       `embed:${searchId}`
     )
     const embedDuration = Date.now() - embedStart

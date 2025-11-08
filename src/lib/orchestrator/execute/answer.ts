@@ -84,7 +84,7 @@ export async function executeAnswer(
       const { embedText } = await import('@/lib/embeddings')
       queryEmbedding = await pTimeout(
         embedText(query),
-        3000, // 3s timeout for embedding (fail fast if Mistral is degraded)
+        3000, // 3s timeout for embedding (aggressive, fallback to FTS-only)
         `embed:${traceId}`
       )
       const embedDuration = Date.now() - embedStart
