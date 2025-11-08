@@ -233,6 +233,12 @@ export async function handleSMSMessage(
       
       if (isRepeatQuery && !isStatusCheck) {
         console.log(`[UnifiedHandler] User is repeating the same query, treating as new content_query`)
+        // Override intent type to force content_query handling
+        intent = {
+          ...intent,
+          type: 'content_query'
+        }
+        console.log(`[UnifiedHandler] Intent overridden to content_query`)
         // Fall through to normal query handling (don't return here)
       } else {
         // This is a genuine status check or different follow-up
