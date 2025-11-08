@@ -13,6 +13,7 @@ import { classifyIntent, loadWeightedHistory, IntentType, ConversationMessage } 
 import { parseCommand, ParsedCommand } from './smart-command-parser'
 import { needsWelcome, getWelcomeMessage, handleNameInWelcome, initializeNewUser } from './welcome-flow'
 import { generateAnnouncement, formatAnnouncement, AnnouncementDraft } from './enhanced-announcement-generator'
+import { checkActionQuery, saveAction } from './action-memory'
 import { supabaseAdmin } from '@/lib/supabase'
 // Name declaration is handled inline
 
@@ -66,6 +67,16 @@ export async function handleSMSMessage(
         shouldSaveHistory: true,
         metadata: {}
       }
+    }
+  }
+
+  // Check if user is asking about a past action
+  const actionQuery = await checkActionQuery(phoneNumber, messageText)
+  if (actionQuery.isActionQuery && actionQuery.response) {
+    return {
+      response: actionQuery.response,
+      shouldSaveHistory: true,
+      metadata: {}
     }
   }
 
@@ -237,6 +248,15 @@ async function handleAnnouncementCommand(
         scheduledFor: draft.date ? new Date(draft.date) : undefined,
         workspaceId
       }, workspaceId)
+      
+      // Save action memory
+      await saveAction(phoneNumber, {
+        type: 'draft_created',
+        details: {
+          draftType: 'announcement',
+          announcementContent: draft.content
+        }
+      })
     } else {
       console.warn('[UnifiedHandler] No workspace found, skipping draft save')
     }
@@ -275,14 +295,9 @@ async function handlePollCommand(
       const pollQuestion = await generatePollQuestion({ question: parsed.extractedFields.content })
       
       // Get workspace IDs
-      const { supabaseAdmin } = await import('@/lib/supabase')
-      const { data: memberships } = await supabaseAdmin
-        ?.from('app_user')
-        .select('space_id')
-        .eq('phone', phoneNumber)
-        .limit(1)
-      
-      const workspaceId = memberships?.[0]?.space_id || null
+      const { getWorkspaceIds } = await import('@/lib/workspace')
+      const spaceIds = await getWorkspaceIds()
+      const workspaceId = spaceIds[0] || null
       
       // Save draft
       await savePollDraft(phoneNumber, {
@@ -456,6 +471,15 @@ async function handleControlCommand(
         const twilioClient = twilio(ENV.TWILIO_ACCOUNT_SID, ENV.TWILIO_AUTH_TOKEN)
         const { sentCount, airtableLink } = await sendPoll(activePollDraft.id, twilioClient)
         const linkText = airtableLink ? `\n\nview results: ${airtableLink}` : ''
+        
+        // Save action memory
+        await saveAction(phoneNumber, {
+          type: 'poll_sent',
+          details: {
+            pollQuestion: activePollDraft.question
+          }
+        })
+        
         return {
           response: `sent poll to ${sentCount} people 📊${linkText}`,
           shouldSaveHistory: true,
@@ -466,6 +490,15 @@ async function handleControlCommand(
       } else if (activeDraft?.id) {
         const twilioClient = twilio(ENV.TWILIO_ACCOUNT_SID, ENV.TWILIO_AUTH_TOKEN)
         const sentCount = await sendAnnouncement(activeDraft.id, twilioClient)
+        
+        // Save action memory
+        await saveAction(phoneNumber, {
+          type: 'announcement_sent',
+          details: {
+            announcementContent: activeDraft.content
+          }
+        })
+        
         return {
           response: `sent to ${sentCount} people 📢`,
           shouldSaveHistory: true,
@@ -556,6 +589,15 @@ async function handlePollResponse(
     )
     
     if (success) {
+      // Save action memory
+      await saveAction(phoneNumber, {
+        type: 'poll_response_recorded',
+        details: {
+          pollQuestion: activePoll.question,
+          pollResponse: option
+        }
+      })
+      
       return {
         response: "got it! thanks for responding.",
         shouldSaveHistory: true,
@@ -644,8 +686,49 @@ async function handleQuery(
     const { handleTurn } = await import('@/lib/orchestrator/handleTurn')
     const result = await handleTurn(phoneNumber, messageText)
     
+    // Ensure we have messages
+    if (!result.messages || result.messages.length === 0) {
+      console.error('[UnifiedHandler] Orchestrator returned no messages!')
+      return {
+        response: "I couldn't find information about that.",
+        shouldSaveHistory: true,
+        metadata: {
+          intent: intentType
+        }
+      }
+    }
+    
+    const responseText = result.messages.join('\n\n')
+    
+    // Ensure response is not empty
+    if (!responseText || responseText.trim().length === 0) {
+      console.error('[UnifiedHandler] Empty response text from orchestrator!')
+      return {
+        response: "I couldn't find information about that.",
+        shouldSaveHistory: true,
+        metadata: {
+          intent: intentType
+        }
+      }
+    }
+    
+    // Save action memory for query
+    const hasResults = !responseText.toLowerCase().includes("couldn't find") && 
+                       !responseText.toLowerCase().includes("i couldn't") &&
+                       responseText.length > 20
+    const resultCount = hasResults ? 1 : 0
+    
+    await saveAction(phoneNumber, {
+      type: 'query',
+      details: {
+        query: messageText,
+        queryResults: resultCount,
+        queryAnswer: responseText.length < 200 ? responseText : responseText.substring(0, 200)
+      }
+    })
+    
     return {
-      response: result.messages.join('\n\n') || "I couldn't find information about that.",
+      response: responseText,
       shouldSaveHistory: false, // Orchestrator saves history
       metadata: {
         intent: intentType
