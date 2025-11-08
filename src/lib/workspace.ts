@@ -6,9 +6,9 @@ import { supabase, supabaseAdmin } from '@/lib/supabase'
 
 const DEFAULT_SPACE_ID = '00000000-0000-0000-0000-000000000000'
 
-// Cache workspace lookups for 5 minutes to avoid slow Supabase queries
+// Cache workspace lookups for 10 minutes to avoid slow Supabase queries
 const workspaceCache = new Map<string, { workspaces: string[]; timestamp: number }>()
-const WORKSPACE_CACHE_TTL = 300000 // 5 minutes (increased from 2)
+const WORKSPACE_CACHE_TTL = 600000 // 10 minutes (increased from 5 to reduce query frequency) (increased from 2)
 
 // Last successful workspace lookup (fallback if cache expires and query fails)
 const lastKnownWorkspaces = new Map<string, string[]>()
@@ -60,21 +60,20 @@ async function getWorkspaceIdsInternal(options: WorkspaceOptions = {}): Promise<
 
   const resolved = new Set<string>()
 
-  // CRITICAL FIX: Query with aggressive timeout and immediate fallback
+  // CRITICAL FIX: Query with hard Promise.race timeout (AbortController doesn't work reliably)
   try {
-    console.log('[Workspace] Querying spaces with 400ms timeout')
-    
-    const controller = new AbortController()
-    const timeoutId = setTimeout(() => controller.abort(), 400) // Very aggressive timeout
+    console.log('[Workspace] Querying spaces with 400ms hard timeout')
     
     const queryPromise = client
       .from('space')
       .select('id, name')
-      .limit(10) // Reduced from 20
-      .abortSignal(controller.signal)
+      .limit(10)
     
-    const { data, error } = await queryPromise
-    clearTimeout(timeoutId)
+    const timeoutPromise = new Promise<never>((_, reject) => 
+      setTimeout(() => reject(new Error('Workspace query timeout')), 400)
+    )
+    
+    const { data, error } = await Promise.race([queryPromise, timeoutPromise])
     
     if (error) {
       console.error('[Workspace] Space query error:', error.message)
@@ -116,12 +115,22 @@ async function getWorkspaceIdsInternal(options: WorkspaceOptions = {}): Promise<
   // If we found workspaces, cache them and save as last known
   if (workspaces.length > 0) {
     console.log(`[Workspace] Resolved ${workspaces.length} workspaces in ${Date.now() - startTime}ms`)
+    // Cache with LONG TTL (10 minutes) since workspace list rarely changes
     workspaceCache.set(cacheKey, { workspaces, timestamp: Date.now() })
     lastKnownWorkspaces.set(cacheKey, workspaces)
     return workspaces
   }
   
-  // No workspaces found, return default
+  // No workspaces found - check if we have last known workspaces to return
+  const lastKnown = lastKnownWorkspaces.get(cacheKey)
+  if (lastKnown && lastKnown.length > 0 && lastKnown[0] !== DEFAULT_SPACE_ID) {
+    console.log(`[Workspace] No workspaces found in query, using last known (${lastKnown.length} workspaces)`)
+    // Cache the last known for next time
+    workspaceCache.set(cacheKey, { workspaces: lastKnown, timestamp: Date.now() })
+    return lastKnown
+  }
+  
+  // No workspaces found and no last known, return default
   console.log('[Workspace] No SEP workspaces found, returning default')
   const fallback = [DEFAULT_SPACE_ID]
   workspaceCache.set(cacheKey, { workspaces: fallback, timestamp: Date.now() })

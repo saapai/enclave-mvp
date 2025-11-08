@@ -71,7 +71,7 @@ export async function executeAnswer(
     
     // Step 2: Hybrid search (V2 - sequential, budget-aware)
     const searchStart = Date.now()
-    const searchBudget = 8000 // 8s budget for search (leaves 2s for planning/composition)
+    const searchBudget = 12000 // 12s budget for search (allows 8s for embedding + 4s for search)
     
     console.log(`[Execute Answer] [${traceId}] Starting hybrid search V2 (budget: ${searchBudget}ms)`)
     const searchResults = await hybridSearchV2(query, workspaceIds, {
