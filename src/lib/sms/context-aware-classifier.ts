@@ -126,10 +126,15 @@ Classify the user's message into ONE of these intents:
 - announcement_command: User wants to create/send an announcement (e.g., "send out a message", "make an announcement", "broadcast")
 - poll_command: User wants to create/send a poll (e.g., "make a poll", "create a poll", "send a poll")
 - poll_response: User is responding to an active poll (e.g., "yes", "no", "option 1")
-- announcement_edit: User is editing an announcement draft (e.g., "make it say X", "change the time to Y")
+- announcement_edit: User is editing an announcement draft (e.g., "make it say X", "change the time to Y") - ONLY if there's an active draft AND they're clearly editing it
 - poll_edit: User is editing a poll draft
 - name_declaration: User is stating their name (e.g., "I'm John", "my name is Sarah")
 - control_command: Control commands (e.g., "send it", "cancel", "yes", "no")
+
+IMPORTANT: 
+- Questions starting with "why" or "did you" are usually content_query or random_conversation, NOT announcement_edit
+- Only classify as announcement_edit if user is clearly modifying draft content (e.g., "make it say", "change to", "update")
+- Questions about past actions (e.g., "why didn't you send", "did you find") are content_query or random_conversation
 
 For announcement/poll commands, also extract:
 - verbatimText: Exact text the user wants to use (if they say "use my exact wording" or quote text)
@@ -194,6 +199,23 @@ function fallbackClassify(
   const lower = message.toLowerCase().trim()
   const lastBotMessage = history.filter(m => m.role === 'bot').pop()?.text || ''
   const lowerLastBot = lastBotMessage.toLowerCase()
+
+  // Questions about past actions should NOT be announcement_edit
+  if (/^why\s+(didn'?t|did\s+not|wasn'?t)/i.test(lower)) {
+    return {
+      type: 'random_conversation',
+      confidence: 0.8,
+      reasoning: 'Question about past action'
+    }
+  }
+  
+  if (/^(did\s+you|have\s+you|were\s+you)/i.test(lower)) {
+    return {
+      type: 'content_query',
+      confidence: 0.7,
+      reasoning: 'Question about past action'
+    }
+  }
 
   // Control commands
   if (/^(send\s+it|send\s+now|yes|yep|yeah|y|broadcast|ship\s+it|confirm|go\s+ahead|cancel|stop|never\s+mind|forget\s+it|discard|no|nope|edit|change|update)$/i.test(lower)) {

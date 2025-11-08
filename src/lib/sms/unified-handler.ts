@@ -748,21 +748,23 @@ async function handleQuery(
     
     console.log(`[UnifiedHandler] Returning query response: "${responseText.substring(0, 100)}..."`)
     
-    // Save action memory for query
+    // Save action memory for query (don't await - fire and forget to avoid blocking)
     const hasResults = !responseText.toLowerCase().includes("couldn't find") && 
                        !responseText.toLowerCase().includes("i couldn't") &&
                        responseText.length > 20
     const resultCount = hasResults ? 1 : 0
     
-    await saveAction(phoneNumber, {
+    // Fire and forget - don't block response
+    saveAction(phoneNumber, {
       type: 'query',
       details: {
         query: messageText,
         queryResults: resultCount,
         queryAnswer: responseText.length < 200 ? responseText : responseText.substring(0, 200)
       }
-    })
+    }).catch(err => console.error('[UnifiedHandler] Failed to save action memory:', err))
     
+    // Return immediately - don't wait for action memory save
     return {
       response: responseText,
       shouldSaveHistory: false, // Orchestrator saves history

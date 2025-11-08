@@ -97,6 +97,9 @@ export async function checkActionQuery(
     /what\s+(did|was)\s+(you|i)\s+(find|send|do)/i,
     /did\s+you\s+find\s+(that|the|it|info|information)/i,
     /(did|have)\s+you\s+(find|found)\s+(that|the|it|info|information)/i,
+    /why\s+(didn'?t|did\s+not)\s+you\s+(send|find|get)/i,
+    /why\s+didn'?t\s+(you|i)\s+(send|get|find)/i,
+    /why\s+(was|wasn'?t)\s+(it|that)\s+(sent|found|sent\s+out)/i,
   ]
   
   const isActionQuery = actionQueryPatterns.some(pattern => pattern.test(messageText))
@@ -142,6 +145,25 @@ export async function checkActionQuery(
     return {
       isActionQuery: true,
       response: "i don't see that in my recent actions. what would you like me to do?"
+    }
+  }
+  
+  // Check if asking "why didn't you send"
+  const isWhyQuestion = /why\s+(didn'?t|did\s+not)/i.test(messageText)
+  const isAboutSending = /(send|sent|send\s+out)/i.test(messageText)
+  
+  if (isWhyQuestion && isAboutSending) {
+    // Check if there was a query that found results
+    const queryAction = recentActions.find(a => a.type === 'query' && a.details.queryResults > 0)
+    if (queryAction) {
+      return {
+        isActionQuery: true,
+        response: "sorry about that! i found the info but there was a delay sending it. i'll make sure responses go out right away next time."
+      }
+    }
+    return {
+      isActionQuery: true,
+      response: "i'm not sure what you're referring to. could you clarify?"
     }
   }
   
