@@ -83,8 +83,11 @@ export async function handleSMSMessage(
   }
 
   // Classify intent FIRST using LLM (it will detect follow-ups)
+  console.log(`[UnifiedHandler] Classifying intent for: "${messageText}"`)
+  const intentStartTime = Date.now()
   const intent = await classifyIntent(messageText, history)
-  console.log(`[UnifiedHandler] Intent: ${intent.type} (confidence: ${intent.confidence}, isFollowUp: ${intent.isFollowUp})`)
+  const intentDuration = Date.now() - intentStartTime
+  console.log(`[UnifiedHandler] Intent classified in ${intentDuration}ms: ${intent.type} (confidence: ${intent.confidence}, isFollowUp: ${intent.isFollowUp})`)
   
   // Handle follow-up queries based on LLM classification
   if (intent.type === 'follow_up_query' || intent.isFollowUp) {
@@ -274,6 +277,7 @@ Rules:
     
     case 'content_query':
     case 'enclave_query':
+      console.log(`[UnifiedHandler] Routing to handleQuery for intent: ${intent.type}`)
       return handleQuery(phoneNumber, messageText, intent.type)
 
     default:
