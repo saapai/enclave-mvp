@@ -15,29 +15,44 @@ export async function embedText(text: string): Promise<number[] | null> {
   
   // Try different Mistral embedding models
   const models = ['mistral-embed', 'mistral-large-latest', 'mistral-small-latest']
+  const timeoutMs = Number(process.env.MISTRAL_EMBED_TIMEOUT_MS || '6000')
   
   for (const model of models) {
     console.log('Trying model:', model)
-    const res = await fetch('https://api.mistral.ai/v1/embeddings', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${MISTRAL_API_KEY}`,
-      },
-      body: JSON.stringify({
-        model: model,
-        input: cleaned,
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
+
+    try {
+      const res = await fetch('https://api.mistral.ai/v1/embeddings', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${MISTRAL_API_KEY}`,
+        },
+        body: JSON.stringify({
+          model,
+          input: cleaned,
+        }),
+        signal: controller.signal
       })
-    })
-    
-    if (res.ok) {
-      const json = await res.json()
-      const embedding = json?.data?.[0]?.embedding as number[]
-      console.log('Generated embedding with dimensions:', embedding?.length, 'using model:', model)
-      return embedding || null
-    } else {
-      const errorText = await res.text()
-      console.log('Model', model, 'failed:', res.status, errorText)
+      
+      if (res.ok) {
+        const json = await res.json()
+        const embedding = json?.data?.[0]?.embedding as number[]
+        console.log('Generated embedding with dimensions:', embedding?.length, 'using model:', model)
+        return embedding || null
+      } else {
+        const errorText = await res.text()
+        console.log('Model', model, 'failed:', res.status, errorText)
+      }
+    } catch (err) {
+      if (err instanceof Error && err.name === 'AbortError') {
+        console.error(`Embedding request for model ${model} timed out after ${timeoutMs}ms`)
+      } else {
+        console.error(`Embedding request failed for model ${model}:`, err)
+      }
+    } finally {
+      clearTimeout(timeoutId)
     }
   }
   

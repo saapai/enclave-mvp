@@ -138,12 +138,12 @@ Return ONLY valid JSON with this exact structure:
       signal: controller.signal
     })
 
-    if (!response.ok) {
-      console.error(`[Planner LLM] API error: ${response.status}`)
-      return null
-    }
+      if (!response.ok) {
+        console.error(`[Planner LLM] API error: ${response.status}`)
+        return null
+      }
 
-    const data = await response.json()
+      const data = await response.json()
       const content = data.choices[0]?.message?.content
 
       if (!content) {
