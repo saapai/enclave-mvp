@@ -23,16 +23,32 @@ export interface WelcomeState {
  */
 export async function needsWelcome(phoneNumber: string): Promise<boolean> {
   try {
+    console.log(`[WelcomeFlow] needsWelcome: Starting check for ${phoneNumber}`)
+    if (!supabaseAdmin) {
+      console.error('[WelcomeFlow] needsWelcome: supabaseAdmin is null/undefined')
+      return false
+    }
+    
+    console.log(`[WelcomeFlow] needsWelcome: Querying database`)
+    const queryStartTime = Date.now()
     const { data } = await supabaseAdmin
-      ?.from('sms_optin')
+      .from('sms_optin')
       .select('name, needs_name')
       .eq('phone', phoneNumber)
       .maybeSingle()
+    const queryDuration = Date.now() - queryStartTime
+    console.log(`[WelcomeFlow] needsWelcome: Query completed in ${queryDuration}ms, data=${data ? 'found' : 'null'}`)
 
-    if (!data) return true // New user
-    return !data.name || data.name.trim().length === 0 || data.needs_name === true
+    if (!data) {
+      console.log('[WelcomeFlow] needsWelcome: No data found, returning true (new user)')
+      return true // New user
+    }
+    const result = !data.name || data.name.trim().length === 0 || data.needs_name === true
+    console.log(`[WelcomeFlow] needsWelcome: Returning ${result} (name="${data.name}", needs_name=${data.needs_name})`)
+    return result
   } catch (err) {
     console.error('[WelcomeFlow] Error checking welcome status:', err)
+    console.error('[WelcomeFlow] Error stack:', err instanceof Error ? err.stack : 'No stack')
     return false
   }
 }

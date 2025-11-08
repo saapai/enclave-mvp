@@ -87,12 +87,17 @@ export async function handleSMSMessage(
   console.log(`[UnifiedHandler] Loaded ${history.length} history messages in ${historyDuration}ms`)
 
   // Check welcome flow first
+  console.log(`[UnifiedHandler] Checking welcome flow...`)
+  const welcomeStartTime = Date.now()
   const needsWelcomeFlow = await withTimeout(
     needsWelcome(phoneNumber),
     2000,
     'needsWelcome',
     false
   )
+  const welcomeDuration = Date.now() - welcomeStartTime
+  console.log(`[UnifiedHandler] Welcome check completed in ${welcomeDuration}ms, needsWelcomeFlow=${needsWelcomeFlow}`)
+  
   if (needsWelcomeFlow) {
     console.log('[UnifiedHandler] User needs welcome flow')
     // Check if this is a name declaration
