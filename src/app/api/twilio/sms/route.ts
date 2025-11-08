@@ -821,7 +821,7 @@ export async function POST(request: NextRequest) {
         // Re-process the message asynchronously
         // Pass the already-classified intent to avoid redundant LLM call
         const handlerStartTime = Date.now()
-        handleSMSMessage(phoneNumber, from, body, intent)
+        handleSMSMessage(phoneNumber, from, body, intent, history)
           .then(async (result) => {
             clearTimeout(asyncTimeout)
             const handlerDuration = Date.now() - handlerStartTime
@@ -911,7 +911,7 @@ export async function POST(request: NextRequest) {
       
       // For non-content queries (commands, smalltalk, etc.), process synchronously
       // Pass the already-classified intent to avoid redundant LLM call
-      const result = await handleSMSMessage(phoneNumber, from, body, intent)
+      const result = await handleSMSMessage(phoneNumber, from, body, intent, history)
       
       console.log(`[Twilio SMS] Unified handler returned: "${result.response.substring(0, 100)}..."`)
       

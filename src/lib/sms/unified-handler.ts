@@ -102,21 +102,28 @@ export async function handleSMSMessage(
   phoneNumber: string,
   fullPhoneNumber: string, // E.164 format
   messageText: string,
-  preClassifiedIntent?: ClassifiedIntent // Optional: skip classification if already done
+  preClassifiedIntent?: ClassifiedIntent, // Optional: skip classification if already done
+  prefetchedHistory?: ConversationMessage[]
 ): Promise<HandlerResult> {
   console.log(`[UnifiedHandler] Processing message from ${phoneNumber}: "${messageText}"`)
 
   // Load conversation history (timeout to avoid hanging on Supabase)
   console.log(`[UnifiedHandler] About to load history with timeout wrapper`)
-  const historyStartTime = Date.now()
-  const history = await withTimeout(
-    loadWeightedHistory(phoneNumber, 10),
-    4000,
-    'loadWeightedHistory',
-    [] as ConversationMessage[]
-  )
-  const historyDuration = Date.now() - historyStartTime
-  console.log(`[UnifiedHandler] Loaded ${history.length} history messages in ${historyDuration}ms`)
+  let history: ConversationMessage[]
+  if (prefetchedHistory && prefetchedHistory.length > 0) {
+    history = prefetchedHistory
+    console.log(`[UnifiedHandler] Using prefetched history with ${history.length} messages`)
+  } else {
+    const historyStartTime = Date.now()
+    history = await withTimeout(
+      loadWeightedHistory(phoneNumber, 10),
+      4000,
+      'loadWeightedHistory',
+      [] as ConversationMessage[]
+    )
+    const historyDuration = Date.now() - historyStartTime
+    console.log(`[UnifiedHandler] Loaded ${history.length} history messages in ${historyDuration}ms`)
+  }
 
   // Check welcome flow first
   console.log(`[UnifiedHandler] Checking welcome flow...`)
