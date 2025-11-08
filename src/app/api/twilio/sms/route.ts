@@ -853,14 +853,20 @@ export async function POST(request: NextRequest) {
               const message = messages[i]
               try {
                 console.log(`[Twilio SMS] Sending async message ${i + 1}/${messages.length} (length: ${message.length})`)
-                const smsResult = await sendSms(from, message)
+                const smsResult = await sendSms(from, message, { retries: 1, retryDelay: 2000 })
                 if (smsResult.ok) {
-                  console.log(`[Twilio SMS] Async message ${i + 1} sent successfully, SID: ${smsResult.sid}`)
+                  if (smsResult.deliveryError) {
+                    console.warn(`[Twilio SMS] Message ${i + 1} accepted but delivery may fail: ${smsResult.error}`)
+                  } else {
+                    console.log(`[Twilio SMS] Async message ${i + 1} sent successfully, SID: ${smsResult.sid}`)
+                  }
                 } else {
                   console.error(`[Twilio SMS] Failed to send async message ${i + 1}: ${smsResult.error}`)
+                  // Don't break the loop - continue sending remaining messages
                 }
               } catch (err) {
                 console.error(`[Twilio SMS] Error sending async message ${i + 1}:`, err)
+                // Don't break the loop - continue sending remaining messages
               }
             }
             console.log(`[Twilio SMS] Finished sending all async messages`)
