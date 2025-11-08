@@ -21,13 +21,15 @@ export async function buildEnvelope(
   switch (mode) {
     case 'Answer':
       // Answer queries need RESOURCE and CONVO scopes
-      const convoSnapshot = await retrieveConvoSnapshot(frame.user.id, 3)
+      // SKIP convo snapshot retrieval for now - it's hanging
+      console.log('[Envelope] Skipping convoSnapshot retrieval to avoid hang')
+      // const convoSnapshot = await retrieveConvoSnapshot(frame.user.id, 3)
       // Note: RESOURCE retrieval would be done in execute.answer.ts
       // Here we just structure the envelope
       return {
         intent: 'info_query',
         scopes: ['RESOURCE', 'CONVO'],
-        evidence: convoSnapshot.evidence,
+        evidence: [], // convoSnapshot.evidence,
         system_state: {
           pending_draft: frame.state.pending?.kind === 'announcement' ? frame.state.pending : undefined,
           pending_poll: frame.state.pending?.kind === 'poll' ? {
