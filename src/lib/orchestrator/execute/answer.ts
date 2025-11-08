@@ -192,7 +192,7 @@ export async function executeAnswer(
       pTimeout(
         (async () => {
           const executePlanStart = Date.now()
-          const toolResults = await executePlan(plan, spaceId)
+          const toolResults = await executePlan(plan, spaceId, queryEmbedding)
           console.log(`[Execute Answer] [${traceId}] executePlan returned ${toolResults.length} tool results for space ${spaceId} in ${Date.now() - executePlanStart}ms`)
           if (toolResults.length > 0) {
             console.log(`[Execute Answer] [${traceId}] Tool summary for space ${spaceId}:`, toolResults.map(t => ({ tool: t.tool, success: t.success, confidence: t.confidence, resultCount: t.data?.results?.length })))
