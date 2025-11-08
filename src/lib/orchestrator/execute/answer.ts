@@ -297,6 +297,54 @@ export async function executeAnswer(
       if (!finalText || finalText === composed.text) {
         finalText = allResults[0]?.body || allResults[0]?.title || composed.text
       }
+    } else if (plan.intent === 'chat' && toolResults.length > 0 && toolResults[0].data?.results) {
+      // For chat intent with results, try to summarize concisely
+      const allResults = toolResults[0].data.results
+      const topResult = allResults[0]
+      
+      if (topResult?.body && topResult.body.length > 100) {
+        // Try AI summarization for chat responses too
+        try {
+          const aiUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'https://www.tryenclave.com'}/api/ai`
+          const controller = new AbortController()
+          const timeoutId = setTimeout(() => controller.abort(), 5000)
+          
+          // Get action memory context if available
+          const actionMemory = envelope.evidence?.find(e => e.scope === 'ACTION' && e.source_id?.includes('action_memory'))
+          const actionContext = actionMemory?.text ? `\n\nRecent actions:\n${actionMemory.text}` : ''
+          
+          const aiRes = await fetch(aiUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              query,
+              context: `Title: ${topResult.title}\nContent: ${topResult.body.substring(0, 1500)}${actionContext}\n\nProvide a brief, concise answer (1-2 sentences max). If the user is asking about past actions, use the Recent actions context.`,
+              type: 'summary'
+            }),
+            signal: controller.signal
+          })
+          
+          clearTimeout(timeoutId)
+          
+          if (aiRes.ok) {
+            const aiData = await aiRes.json()
+            const response = aiData.response || ''
+            if (response.length > 10 && response.length < 500) {
+              finalText = response
+              console.log(`[Execute Answer] Chat intent AI summary succeeded, length: ${finalText.length}`)
+            }
+          }
+        } catch (err) {
+          console.error(`[Execute Answer] Chat intent AI call failed:`, err)
+        }
+      }
+      
+      // Fallback for chat intent
+      if (!finalText || finalText === composed.text) {
+        // Use a shorter snippet for chat responses
+        const snippet = topResult?.body?.substring(0, 200) || topResult?.title || composed.text
+        finalText = snippet
+      }
     }
     
     // Ensure we have a response - always provide something

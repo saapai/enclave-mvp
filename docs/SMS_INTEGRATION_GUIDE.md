@@ -201,3 +201,4 @@ AIRTABLE_TABLE_NAME=your_table_name
 4. Enhance query integration
 5. Add more features (scheduling, templates, etc.)
 
+

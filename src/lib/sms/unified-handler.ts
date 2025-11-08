@@ -70,8 +70,45 @@ export async function handleSMSMessage(
     }
   }
 
+  // Check for follow-up questions about past actions BEFORE classifying intent
+  // This prevents misclassification and ensures we use action memory
+  const isFollowUpQuestion = /^(and\s+)?(what'?s|what\s+is|what\s+was)\s+(the\s+)?(answer|result|info|information)/i.test(messageText) ||
+                            /^(did\s+you|have\s+you)\s+(find|found|get|got|track|record)/i.test(messageText) ||
+                            /^(what|where)\s+(did|was)\s+(you|it)/i.test(messageText)
+  
+  if (isFollowUpQuestion) {
+    console.log(`[UnifiedHandler] Detected follow-up question, checking action memory`)
+    const { getRecentActions } = await import('./action-memory')
+    const recentActions = await getRecentActions(phoneNumber, 5)
+    
+    // Find the most recent query action
+    const lastQuery = recentActions.find(a => a.type === 'query')
+    
+    if (lastQuery && lastQuery.details.queryResults > 0 && lastQuery.details.queryAnswer) {
+      console.log(`[UnifiedHandler] Found previous query result, returning it`)
+      return {
+        response: lastQuery.details.queryAnswer,
+        shouldSaveHistory: true,
+        metadata: { intent: 'content_query' }
+      }
+    } else if (lastQuery && lastQuery.details.queryResults === 0) {
+      return {
+        response: "i couldn't find information about that.",
+        shouldSaveHistory: true,
+        metadata: { intent: 'content_query' }
+      }
+    } else if (lastQuery) {
+      // Query is still processing
+      return {
+        response: "still looking that up, give me a sec!",
+        shouldSaveHistory: true,
+        metadata: { intent: 'content_query' }
+      }
+    }
+    // If no recent query found, continue with normal flow
+  }
+
   // Classify intent with context
-  // Note: Action memory queries are now handled by the orchestrator via LLM, not regex patterns
   const intent = await classifyIntent(messageText, history)
   console.log(`[UnifiedHandler] Intent: ${intent.type} (confidence: ${intent.confidence})`)
 
@@ -742,8 +779,17 @@ async function handleQuery(
     // Save action memory for query (don't await - fire and forget to avoid blocking)
     const hasResults = !responseText.toLowerCase().includes("couldn't find") && 
                        !responseText.toLowerCase().includes("i couldn't") &&
+                       !responseText.toLowerCase().includes("looking that up") &&
                        responseText.length > 20
     const resultCount = hasResults ? 1 : 0
+    
+    // Extract concise answer (first 300 chars or first sentence)
+    let queryAnswer = responseText
+    if (responseText.length > 300) {
+      // Try to get first sentence or first 300 chars
+      const firstSentence = responseText.match(/^[^.!?]+[.!?]/)
+      queryAnswer = firstSentence ? firstSentence[0] : responseText.substring(0, 300)
+    }
     
     // Fire and forget - don't block response
     saveAction(phoneNumber, {
@@ -751,7 +797,7 @@ async function handleQuery(
       details: {
         query: messageText,
         queryResults: resultCount,
-        queryAnswer: responseText.length < 200 ? responseText : responseText.substring(0, 200)
+        queryAnswer: queryAnswer
       }
     }).catch(err => console.error('[UnifiedHandler] Failed to save action memory:', err))
     

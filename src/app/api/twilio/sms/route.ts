@@ -799,13 +799,16 @@ export async function POST(request: NextRequest) {
         )
         
         // Process query asynchronously (don't await)
+        console.log(`[Twilio SMS] Starting async handler for query: "${body.substring(0, 50)}"`)
         handleSMSMessage(phoneNumber, from, body)
           .then(async (result) => {
-            console.log(`[Twilio SMS] Async handler returned: "${result.response.substring(0, 100)}..."`)
+            console.log(`[Twilio SMS] Async handler completed successfully`)
+            console.log(`[Twilio SMS] Async handler returned: "${result?.response?.substring(0, 100) || 'NO RESPONSE'}..."`)
             
             // Ensure we have a response
-            if (!result.response || result.response.trim().length === 0) {
-              console.error('[Twilio SMS] Async handler returned empty response!')
+            if (!result || !result.response || result.response.trim().length === 0) {
+              console.error('[Twilio SMS] Async handler returned empty response!', result)
+              await sendSms(from, "Sorry, I couldn't find information about that.")
               return
             }
             
@@ -817,6 +820,7 @@ export async function POST(request: NextRequest) {
                   user_message: body,
                   bot_response: result.response
                 })
+                console.log(`[Twilio SMS] Saved conversation history`)
               } catch (err) {
                 console.error('[Twilio SMS] Failed to save conversation history:', err)
               }
@@ -825,26 +829,37 @@ export async function POST(request: NextRequest) {
             // Split long messages
             const messages = splitLongMessage(result.response, 1600)
             
-            console.log(`[Twilio SMS] Sending ${messages.length} async message(s) to user`)
+            console.log(`[Twilio SMS] Sending ${messages.length} async message(s) to user at ${from}`)
             
             // Send via Twilio API
-            for (const message of messages) {
+            for (let i = 0; i < messages.length; i++) {
+              const message = messages[i]
               try {
+                console.log(`[Twilio SMS] Sending async message ${i + 1}/${messages.length} (length: ${message.length})`)
                 const smsResult = await sendSms(from, message)
                 if (smsResult.ok) {
-                  console.log(`[Twilio SMS] Async message sent successfully, SID: ${smsResult.sid}`)
+                  console.log(`[Twilio SMS] Async message ${i + 1} sent successfully, SID: ${smsResult.sid}`)
                 } else {
-                  console.error(`[Twilio SMS] Failed to send async message: ${smsResult.error}`)
+                  console.error(`[Twilio SMS] Failed to send async message ${i + 1}: ${smsResult.error}`)
                 }
               } catch (err) {
-                console.error(`[Twilio SMS] Error sending async message:`, err)
+                console.error(`[Twilio SMS] Error sending async message ${i + 1}:`, err)
               }
             }
+            console.log(`[Twilio SMS] Finished sending all async messages`)
           })
           .catch((err) => {
             console.error('[Twilio SMS] Async handler error:', err)
+            console.error('[Twilio SMS] Error stack:', err?.stack)
             // Send error message to user
             sendSms(from, "Sorry, I encountered an error processing your query. Please try again.")
+              .then(result => {
+                if (result.ok) {
+                  console.log(`[Twilio SMS] Error message sent successfully`)
+                } else {
+                  console.error(`[Twilio SMS] Failed to send error message: ${result.error}`)
+                }
+              })
               .catch(e => console.error('[Twilio SMS] Failed to send error message:', e))
           })
         

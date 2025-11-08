@@ -28,3 +28,4 @@ COMMENT ON TABLE sms_session_state IS 'Stores conversation session state for SMS
 COMMENT ON COLUMN sms_session_state.phone IS 'Phone number (normalized, no +1 prefix)';
 COMMENT ON COLUMN sms_session_state.state_json IS 'JSON blob containing SessionState (mode, draft, history_window_ids)';
 
+
