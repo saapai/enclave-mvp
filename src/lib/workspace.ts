@@ -96,26 +96,26 @@ export async function getWorkspaceIds(options: WorkspaceOptions = {}): Promise<s
     tasks.push((async () => {
       try {
         console.log('[Workspace] Querying SEP workspaces')
-        const controller = new AbortController()
-        const timeoutId = setTimeout(() => {
-          controller.abort()
-          console.error('[Workspace] SEP workspace lookup timed out after 3000ms')
-        }, 3000)
-
-        const { data, error } = await client
+        const queryPromise = client
           .from('space')
           .select('id, name')
           .ilike('name', '%SEP%')
-          .abortSignal(controller.signal)
 
-        clearTimeout(timeoutId)
+        const timeoutPromise = new Promise<{ data: null; error: { message: string } }>((resolve) => {
+          setTimeout(() => {
+            console.error('[Workspace] SEP workspace lookup timed out after 2000ms')
+            resolve({ data: null, error: { message: 'Timeout' } })
+          }, 2000)
+        })
 
-        if (error) {
-          console.error('[Workspace] SEP workspace lookup failed:', error)
+        const result = await Promise.race([queryPromise, timeoutPromise])
+
+        if (result.error) {
+          console.error('[Workspace] SEP workspace lookup failed:', result.error)
           return
         }
 
-        const rows = (data ?? []) as SpaceRow[]
+        const rows = ((result.data ?? []) as SpaceRow[])
         console.log(`[Workspace] SEP lookup returned ${rows.length} rows`)
         for (const space of rows) {
           if (space?.id) {
@@ -135,15 +135,24 @@ export async function getWorkspaceIds(options: WorkspaceOptions = {}): Promise<s
   if (resolved.size === 1) {
     try {
       console.log('[Workspace] Running fallback workspace query (limit 10)')
-      const { data, error } = await client
+      const queryPromise = client
         .from('space')
         .select('id, name')
         .limit(10)
 
-      if (error) {
-        console.error('[Workspace] Fallback workspace lookup failed:', error)
+      const timeoutPromise = new Promise<{ data: null; error: { message: string } }>((resolve) => {
+        setTimeout(() => {
+          console.error('[Workspace] Fallback workspace lookup timed out after 2000ms')
+          resolve({ data: null, error: { message: 'Timeout' } })
+        }, 2000)
+      })
+
+      const result = await Promise.race([queryPromise, timeoutPromise])
+
+      if (result.error) {
+        console.error('[Workspace] Fallback workspace lookup failed:', result.error)
       } else {
-        const rows = (data ?? []) as SpaceRow[]
+        const rows = ((result.data ?? []) as SpaceRow[])
         console.log(`[Workspace] Fallback lookup returned ${rows.length} rows`)
         for (const space of rows) {
           if (space?.id) {
