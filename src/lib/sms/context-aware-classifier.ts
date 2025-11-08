@@ -7,6 +7,31 @@
 
 import { ENV } from '@/lib/env'
 
+async function withTimeout<T>(
+  promise: Promise<T>,
+  ms: number,
+  onTimeout: () => T,
+  label: string
+): Promise<T> {
+  let timeoutId: NodeJS.Timeout | null = null
+  try {
+    const timeoutPromise = new Promise<T>((resolve) => {
+      timeoutId = setTimeout(() => {
+        console.error(`[ContextClassifier] ${label} timed out after ${ms}ms`)
+        resolve(onTimeout())
+      }, ms)
+    })
+
+    const result = await Promise.race([promise, timeoutPromise])
+    if (timeoutId) clearTimeout(timeoutId)
+    return result
+  } catch (err) {
+    if (timeoutId) clearTimeout(timeoutId)
+    console.error(`[ContextClassifier] ${label} threw error:`, err)
+    return onTimeout()
+  }
+}
+
 export type IntentType = 
   | 'content_query'      // Questions about documents, events, resources (needs async search)
   | 'simple_question'    // Simple questions answered immediately (name, greeting)
@@ -53,24 +78,36 @@ export async function loadWeightedHistory(
   try {
     console.log(`[ContextClassifier] loadWeightedHistory: Starting for ${phoneNumber}`)
     const importStartTime = Date.now()
-    const { supabaseAdmin } = await import('@/lib/supabase')
+    const { supabaseAdmin, supabase } = await import('@/lib/supabase')
     const importDuration = Date.now() - importStartTime
     console.log(`[ContextClassifier] loadWeightedHistory: Supabase imported in ${importDuration}ms`)
     
-    if (!supabaseAdmin) {
-      console.log(`[ContextClassifier] loadWeightedHistory: No supabaseAdmin, returning empty`)
+    const client = supabaseAdmin || supabase
+    if (!client) {
+      console.error('[ContextClassifier] loadWeightedHistory: No Supabase client available')
       return []
     }
 
     console.log(`[ContextClassifier] loadWeightedHistory: Querying database`)
     const queryStartTime = Date.now()
-    const { data } = await supabaseAdmin
+    const queryPromise = client
       .from('sms_conversation_history')
       .select('id, user_message, bot_response, created_at')
       .eq('phone_number', phoneNumber)
       .order('created_at', { ascending: false })
-      .limit(limit)
+      .limit(limit) as unknown as Promise<{ data: any; error: any }>
+    const result = await withTimeout(
+      queryPromise,
+      3000,
+      { data: null, error: null } as any,
+      'loadWeightedHistory query'
+    )
     const queryDuration = Date.now() - queryStartTime
+    const data = (result as any)?.data ?? null
+    const error = (result as any)?.error ?? null
+    if (error) {
+      console.error('[ContextClassifier] loadWeightedHistory: Supabase error:', error)
+    }
     console.log(`[ContextClassifier] loadWeightedHistory: Query completed in ${queryDuration}ms, found ${data?.length || 0} rows`)
 
     if (!data) return []
