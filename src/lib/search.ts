@@ -529,24 +529,56 @@ export async function searchResources(
     const DEFAULT_SPACE_ID = '00000000-0000-0000-0000-000000000000'
     const shouldFilterByUser = spaceId === DEFAULT_SPACE_ID
     
-    const ftsResponse = await runWithAbort<{ data: any[] | null; error: any }>(
-      'search_resources_fts',
-      FTS_TIMEOUT_MS,
-      (signal) =>
-        (dbClient as any)
-          .rpc('search_resources_fts', {
-            search_query: query,
-            target_space_id: spaceId,
-            limit_count: limit,
-            offset_count: offset,
-            target_user_id: shouldFilterByUser ? userId : null // Filter by user only in personal workspace
-          })
-          .abortSignal(signal)
-          .then((res: { data: any[] | null; error: any }) => res)
-    )
-
+    // CRITICAL: Skip RPC entirely - it's hanging in Postgres
+    // Use direct ilike query instead
+    console.log(`[FTS Search] BYPASSING RPC - using direct ilike query`)
     let hits: any[] | null = null
     let rpcError: any = null
+    
+    try {
+      const ilikeStart = Date.now()
+      const { data: ilikeResults, error: ilikeError } = await pTimeout(
+        dbClient
+          .from('resource')
+          .select('*')
+          .eq('space_id', spaceId)
+          .or(`title.ilike.%${query}%,body.ilike.%${query}%`)
+          .limit(limit)
+          .range(offset, offset + limit - 1),
+        1500, // 1.5s timeout
+        'fts_ilike_direct'
+      )
+      
+      const ilikeDuration = Date.now() - ilikeStart
+      console.log(`[FTS Search] Direct ilike completed in ${ilikeDuration}ms, returned ${ilikeResults?.length || 0} results`)
+      
+      if (ilikeError) {
+        console.error('[FTS Search] Direct ilike error:', ilikeError)
+        rpcError = ilikeError
+      } else {
+        hits = (ilikeResults || []).map((r: any) => ({ ...r, rank: 0.5 }))
+      }
+    } catch (err) {
+      console.error('[FTS Search] Direct ilike timed out:', err)
+      rpcError = err
+    }
+    
+    // OLD CODE (HANGING):
+    // const ftsResponse = await runWithAbort<{ data: any[] | null; error: any }>(
+    //   'search_resources_fts',
+    //   FTS_TIMEOUT_MS,
+    //   (signal) =>
+    //     (dbClient as any)
+    //       .rpc('search_resources_fts', {
+    //         search_query: query,
+    //         target_space_id: spaceId,
+    //         limit_count: limit,
+    //         offset_count: offset,
+    //         target_user_id: shouldFilterByUser ? userId : null
+    //       })
+    //       .abortSignal(signal)
+    //       .then((res: { data: any[] | null; error: any }) => res)
+    // )
 
     if (ftsResponse) {
       hits = ftsResponse.data
