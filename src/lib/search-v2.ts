@@ -19,9 +19,9 @@ import type { SearchResult } from './search'
 
 const SMS_SEARCH_BUDGET_MS = Number(process.env.SMS_SEARCH_BUDGET_MS || '10000') // 10s total
 const SMS_FTS_TIMEOUT_MS = Number(process.env.SMS_FTS_TIMEOUT_MS || '800') // 800ms per FTS
-const SMS_EMBED_TIMEOUT_MS = Number(process.env.SMS_EMBED_TIMEOUT_MS || '2000') // 2s for embedding
+const SMS_EMBED_TIMEOUT_MS = Number(process.env.SMS_EMBED_TIMEOUT_MS || '4000') // 4s for embedding (increased from 2s)
 const SMS_VECTOR_TIMEOUT_MS = Number(process.env.SMS_VECTOR_TIMEOUT_MS || '1200') // 1.2s per vector
-const SMS_EMBED_MIN_REMAINING_MS = Number(process.env.SMS_EMBED_MIN_REMAINING_MS || '4000') // Need 4s left to embed
+const SMS_EMBED_MIN_REMAINING_MS = Number(process.env.SMS_EMBED_MIN_REMAINING_MS || '5000') // Need 5s left to embed (increased from 4s)
 
 // Circuit breaker: if embedding fails twice in 5 min, disable for next queries
 const embeddingFailures: number[] = []

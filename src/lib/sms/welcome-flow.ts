@@ -44,40 +44,36 @@ export async function needsWelcome(phoneNumber: string): Promise<boolean> {
       return fallback
     }
     
-    console.log(`[WelcomeFlow] needsWelcome: Querying database`)
+    console.log(`[WelcomeFlow] needsWelcome: Querying database with 500ms timeout`)
     const queryStartTime = Date.now()
     
-    // Add AbortController with 1.5s timeout
-    const controller = new AbortController()
-    const timeoutId = setTimeout(() => {
-      controller.abort()
-      console.error('[WelcomeFlow] needsWelcome: Query aborted after 1500ms')
-    }, 1500)
-    
+    // Use Promise.race with aggressive 500ms timeout
     let data: any = null
     let error: any = null
     
     try {
-      const result = await supabaseAdmin
-        .from('sms_optin')
-        .select('name, needs_name')
-        .eq('phone', phoneNumber)
-        .maybeSingle()
-        .abortSignal(controller.signal)
+      const result = await Promise.race([
+        supabaseAdmin
+          .from('sms_optin')
+          .select('name, needs_name')
+          .eq('phone', phoneNumber)
+          .maybeSingle(),
+        new Promise<never>((_, reject) => 
+          setTimeout(() => reject(new Error('needsWelcome timeout')), 500)
+        )
+      ])
       
       data = result.data
       error = result.error
     } catch (err: any) {
-      if (err.name === 'AbortError') {
-        console.error('[WelcomeFlow] needsWelcome: Query aborted due to timeout')
+      if (err.message === 'needsWelcome timeout') {
+        console.error('[WelcomeFlow] needsWelcome: Query timed out after 500ms')
         // On timeout, assume user exists (safer default)
         const fallback = false
         welcomeCache.set(phoneNumber, { result: fallback, timestamp: Date.now() })
         return fallback
       }
       error = err
-    } finally {
-      clearTimeout(timeoutId)
     }
     
     const queryDuration = Date.now() - queryStartTime
