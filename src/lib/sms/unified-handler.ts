@@ -85,14 +85,14 @@ export async function handleSMSMessage(
     
     if (recentQueries.length > 0) {
       // Check if any queries have answers
-      const answeredQueries = recentQueries.filter(q => q.details.queryResults > 0 && q.details.queryAnswer)
+      const answeredQueries = recentQueries.filter(q => (q.details.queryResults || 0) > 0 && q.details.queryAnswer)
       
       if (answeredQueries.length > 0) {
         // Return the most recent answered query
         const lastAnswered = answeredQueries[0]
         console.log(`[UnifiedHandler] Found previous query result: "${lastAnswered.details.query}"`)
         return {
-          response: lastAnswered.details.queryAnswer,
+          response: lastAnswered.details.queryAnswer || "i couldn't find information about that.",
           shouldSaveHistory: true,
           metadata: { intent: 'content_query' }
         }
@@ -172,9 +172,9 @@ Context from conversation:
 ${history.slice(-5).map(m => `${m.role === 'user' ? 'User' : 'Bot'}: ${m.text}`).join('\n')}
 
 Rules:
-- If they ask about your name, say "i'm jarvis! nice to meet you"
-- If they ask how you are, say "i'm doing great! ready to help with whatever you need"
-- If they mention they've already met you, acknowledge it naturally
+- If they ask about your name, respond based on the information in the Enclave System Reference
+- If they ask how you are, talk about how you're doing and how you can help them
+- If they criticize you or say you
 - NEVER use emojis
 - Keep responses brief (1-2 sentences max) and friendly`
             },
@@ -239,7 +239,6 @@ Rules:
     
     case 'content_query':
     case 'enclave_query':
-    case 'simple_question': // Simple questions that need search (fallback)
       return handleQuery(phoneNumber, messageText, intent.type)
 
     default:
@@ -447,7 +446,7 @@ async function handlePollCommand(
       await savePollDraft(phoneNumber, {
         question: pollQuestion,
         options: ['Yes', 'No', 'Maybe'],
-        workspaceId
+        workspaceId: workspaceId || undefined
       }, workspaceId || '')
       
       return {
@@ -789,7 +788,7 @@ async function handlePollResponse(
 /**
  * Handle smalltalk/random conversation
  */
-async function handleSmalltalk(messageText: string): Promise<HandlerResult> {
+async function handleSmalltalk(messageText: string, history: ConversationMessage[] = []): Promise<HandlerResult> {
   const lower = messageText.toLowerCase().trim()
   
   // Simple responses for common smalltalk
@@ -871,7 +870,7 @@ PERSONALITY RULES:
 6. If they ask about Enclave, use the reference above to answer factually.
 
 Recent conversation:
-${history.slice(-5).map(m => `${m.role === 'user' ? 'User' : 'Bot'}: ${m.text}`).join('\n') || 'No previous conversation'}
+${history && Array.isArray(history) ? history.slice(-5).map((m: ConversationMessage) => `${m.role === 'user' ? 'User' : 'Bot'}: ${m.text}`).join('\n') : 'No previous conversation'}
 
 Respond naturally based on what they said.`
           },
