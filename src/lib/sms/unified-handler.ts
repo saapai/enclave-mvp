@@ -391,7 +391,7 @@ Rules:
     case 'content_query':
     case 'enclave_query':
       console.log(`[UnifiedHandler] Routing to handleQuery for intent: ${intent.type}`)
-      return handleQuery(phoneNumber, messageText, intent.type)
+      return handleQuery(phoneNumber, messageText, intent.type, history)
 
     default:
       return {
@@ -1083,7 +1083,8 @@ PERSONALITY RULES:
 async function handleQuery(
   phoneNumber: string,
   messageText: string,
-  intentType: IntentType
+  intentType: IntentType,
+  prefetchedHistory?: ConversationMessage[]
 ): Promise<HandlerResult> {
   // Handle enclave queries directly with LLM + reference
   if (intentType === 'enclave_query') {
@@ -1179,7 +1180,7 @@ Answer factually based on the reference above.`
     
     // Add timeout wrapper to prevent hanging
     const orchestratorStartTime = Date.now()
-    const orchestratorPromise = handleTurn(phoneNumber, messageText)
+    const orchestratorPromise = handleTurn(phoneNumber, messageText, undefined, undefined, { prefetchedHistory })
     const timeoutPromise = new Promise((_, reject) => {
       setTimeout(() => reject(new Error('Orchestrator timeout after 45 seconds')), 45000)
     })

@@ -25,7 +25,8 @@ export async function handleTurn(
   phoneNumber: string,
   text: string,
   userId?: string,
-  orgId?: string
+  orgId?: string,
+  options?: { prefetchedHistory?: ConversationMessage[] }
 ): Promise<HandleTurnResult> {
   const overallStart = Date.now()
   const textPreview = text.length > 80 ? `${text.substring(0, 77)}...` : text
@@ -33,7 +34,7 @@ export async function handleTurn(
   try {
     // 1. Build TurnFrame
     let stepStart = Date.now()
-    const frame = await buildTurnFrame(phoneNumber, text, userId, orgId)
+    const frame = await buildTurnFrame(phoneNumber, text, userId, orgId, options?.prefetchedHistory)
     console.log(`[Orchestrator] buildTurnFrame completed in ${Date.now() - stepStart}ms`)
     
     // 2. Plan (determine ResponseMode)

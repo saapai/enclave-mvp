@@ -11,6 +11,7 @@ import { getActiveDraft } from '@/lib/announcements'
 import { getActivePollDraft } from '@/lib/polls'
 import { extractQuotes } from '@/lib/nlp/quotes'
 import { routeAction } from '@/lib/nlp/actionRouter'
+import type { ConversationMessage } from '@/lib/sms/context-aware-classifier'
 
 /**
  * Timeout wrapper for Supabase queries
@@ -334,55 +335,75 @@ export async function buildTurnFrame(
   phoneNumber: string,
   text: string,
   userId?: string,
-  orgId?: string
+  orgId?: string,
+  prefetchedHistory?: ConversationMessage[]
 ): Promise<TurnFrame> {
   const overallStart = Date.now()
   const normalizedPhone = normalizePhone(phoneNumber)
   const now = new Date()
   console.log(`[TurnFrame] buildTurnFrame start for ${normalizedPhone}`)
   
-  // Get conversation history with timeout
-  let history: Array<{ user_message: string; bot_response: string; created_at: string }> | null = null
-  try {
-    const historyStart = Date.now()
-    console.log(`[TurnFrame] Loading conversation history for ${normalizedPhone}`)
-    if (!supabaseAdmin) {
-      console.error('[TurnFrame] supabaseAdmin is null, skipping history')
-      history = []
-    } else {
-      const result = await withQueryTimeout(
-        (async () => {
-          const res = await supabaseAdmin
-            .from('sms_conversation_history')
-            .select('user_message, bot_response, created_at')
-            .eq('phone_number', normalizedPhone)
-            .order('created_at', { ascending: false })
-            .limit(5)
-          return res as { data: any; error: any }
-        })(),
-        3000, // 3 second timeout
-        { data: null, error: null } as any,
-        'conversation history query'
-      )
-      history = result?.data || []
+  // Get conversation history with timeout or use prefetched messages
+  let history: Array<{ user_message: string; bot_response: string; created_at: string }> = []
+
+  if (prefetchedHistory && prefetchedHistory.length > 0) {
+    console.log(`[TurnFrame] Using prefetched history with ${prefetchedHistory.length} messages`)
+    const paired: Array<{ user_message: string; bot_response: string; created_at: string }> = []
+    for (let i = 0; i < prefetchedHistory.length; i++) {
+      const msg = prefetchedHistory[i]
+      if (msg.role === 'user') {
+        const next = prefetchedHistory[i + 1]
+        paired.push({
+          user_message: msg.text,
+          bot_response: next?.role === 'bot' ? next.text : '',
+          created_at: msg.timestamp
+        })
+      }
     }
-    console.log(`[TurnFrame] Loaded conversation history in ${Date.now() - historyStart}ms (rows=${history?.length || 0})`)
-  } catch (err) {
-    console.error('[TurnFrame] Failed to load conversation history:', err)
-    history = []
+    history = paired.slice(-5)
+    console.log(`[TurnFrame] Prefetched conversation pairs: ${history.length}`)
+  } else {
+    try {
+      const historyStart = Date.now()
+      console.log(`[TurnFrame] Loading conversation history for ${normalizedPhone}`)
+      if (!supabaseAdmin) {
+        console.error('[TurnFrame] supabaseAdmin is null, skipping history')
+        history = []
+      } else {
+        const result = await withQueryTimeout(
+          (async () => {
+            const res = await supabaseAdmin
+              .from('sms_conversation_history')
+              .select('user_message, bot_response, created_at')
+              .eq('phone_number', normalizedPhone)
+              .order('created_at', { ascending: false })
+              .limit(5)
+            return res as { data: any; error: any }
+          })(),
+          3000, // 3 second timeout
+          { data: null, error: null } as any,
+          'conversation history query'
+        )
+        history = result?.data || []
+      }
+      console.log(`[TurnFrame] Loaded conversation history in ${Date.now() - historyStart}ms (rows=${history.length})`)
+    } catch (err) {
+      console.error('[TurnFrame] Failed to load conversation history:', err)
+      history = []
+    }
   }
   
-  const lastN = (history || []).reverse().flatMap((msg: any) => [
+  const lastN = history.reverse().flatMap((msg: any) => [
     { speaker: 'user' as const, text: msg.user_message, ts: msg.created_at },
     { speaker: 'bot' as const, text: msg.bot_response, ts: msg.created_at }
   ])
   
-  const lastBotMessage = history && history.length > 0 
+  const lastBotMessage = history.length > 0
     ? history[history.length - 1].bot_response 
     : ''
   
   const lastBotAct = lastBotMessage 
-    ? { type: 'prompt', text: lastBotMessage, ts: history?.[history.length - 1]?.created_at || now.toISOString() }
+    ? { type: 'prompt', text: lastBotMessage, ts: history[history.length - 1]?.created_at || now.toISOString() }
     : undefined
   
   const isQuestion = /^(what|when|where|who|how|why|is|are|was|were|do|does|did|will|can|could|should)\s/i.test(text) || text.includes('?')
