@@ -37,72 +37,16 @@ export async function needsWelcome(phoneNumber: string): Promise<boolean> {
       return cached.result
     }
     
-    if (!supabaseAdmin) {
-      console.error('[WelcomeFlow] needsWelcome: supabaseAdmin is null/undefined')
-      const fallback = false
-      welcomeCache.set(phoneNumber, { result: fallback, timestamp: Date.now() })
-      return fallback
-    }
+    // CRITICAL: Skip database query entirely - it hangs for 6+ seconds even with Promise.race
+    // For SMS queries, always assume user exists (return false) to avoid blocking
+    // The welcome flow is only for truly new users, and we handle that in route.ts
+    console.log('[WelcomeFlow] needsWelcome: No cache, assuming user exists (false) to avoid blocking')
+    const fallback = false
+    welcomeCache.set(phoneNumber, { result: fallback, timestamp: Date.now() })
+    return fallback
     
-    console.log(`[WelcomeFlow] needsWelcome: Querying database with 500ms timeout`)
-    const queryStartTime = Date.now()
-    
-    // Use Promise.race with aggressive 500ms timeout
-    let data: any = null
-    let error: any = null
-    
-    try {
-      const result = await Promise.race([
-        supabaseAdmin
-          .from('sms_optin')
-          .select('name, needs_name')
-          .eq('phone', phoneNumber)
-          .maybeSingle(),
-        new Promise<never>((_, reject) => 
-          setTimeout(() => reject(new Error('needsWelcome timeout')), 500)
-        )
-      ])
-      
-      data = result.data
-      error = result.error
-    } catch (err: any) {
-      if (err.message === 'needsWelcome timeout') {
-        console.error('[WelcomeFlow] needsWelcome: Query timed out after 500ms')
-        // On timeout, assume user exists (safer default)
-        const fallback = false
-        welcomeCache.set(phoneNumber, { result: fallback, timestamp: Date.now() })
-        return fallback
-      }
-      error = err
-    }
-    
-    const queryDuration = Date.now() - queryStartTime
-    console.log(`[WelcomeFlow] needsWelcome: Query completed in ${queryDuration}ms, data=${data ? 'found' : 'null'}`)
-
-    if (error) {
-      console.error('[WelcomeFlow] needsWelcome: Query error:', error)
-      const fallback = false
-      welcomeCache.set(phoneNumber, { result: fallback, timestamp: Date.now() })
-      return fallback
-    }
-
-    if (!data) {
-      console.log('[WelcomeFlow] needsWelcome: No data found, returning true (new user)')
-      const result = true
-      welcomeCache.set(phoneNumber, { result, timestamp: Date.now() })
-      return result
-    }
-    
-    const result = !data.name || data.name.trim().length === 0 || data.needs_name === true
-    console.log(`[WelcomeFlow] needsWelcome: Returning ${result} (name="${data.name}", needs_name=${data.needs_name})`)
-    
-    // Cache the result
-    welcomeCache.set(phoneNumber, { result, timestamp: Date.now() })
-    
-    return result
   } catch (err) {
     console.error('[WelcomeFlow] Error checking welcome status:', err)
-    console.error('[WelcomeFlow] Error stack:', err instanceof Error ? err.stack : 'No stack')
     const fallback = false
     welcomeCache.set(phoneNumber, { result: fallback, timestamp: Date.now() })
     return fallback
