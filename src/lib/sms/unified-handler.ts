@@ -386,19 +386,6 @@ Rules:
   if (intent.type === 'content_query' || intent.type === 'enclave_query') {
     console.log(`[UnifiedHandler] Routing to handleQuery for intent: ${intent.type}`)
     
-    // Save query to action memory (fire-and-forget with timeout)
-    console.log(`[UnifiedHandler] Saving query to action memory: "${messageText}"`)
-    queueActionMemorySave(
-      phoneNumber,
-      {
-        type: 'query',
-        details: {
-          query: messageText
-        }
-      },
-      'saveAction (initial)'
-    )
-    
     return await handleQuery(phoneNumber, messageText, intent.type, history)
   }
   
@@ -1121,75 +1108,6 @@ async function handleQuery(
   intentType: IntentType,
   prefetchedHistory?: ConversationMessage[]
 ): Promise<HandlerResult> {
-  // Handle enclave queries directly with LLM + reference
-  if (intentType === 'enclave_query') {
-    try {
-      const { ENV } = await import('@/lib/env')
-      const enclaveReference = `Enclave System Reference:
-- Name: Enclave
-- Type: Multi-modal organizational AI assistant platform
-- Purpose: Unify organization's communications and knowledge across SMS, Slack, Google Calendar, Docs
-- Primary developer: Saathvik Pai
-- Core team: The Inquiyr development team
-- Built as part of the Inquiyr ecosystem
-- Technical stack: Next.js, TypeScript, Supabase, Twilio, Mistral AI
-- Capabilities: Knowledge retrieval, SMS messaging, announcements, polls, alerts, search
-- Target users: Student organizations, professional fraternities, small teams, clubs
-- Deployment: Vercel (frontend + APIs), Supabase (Postgres + vector store)
-- Compliance: Twilio SMS opt-in/opt-out, privacy policy at tryenclave.com/privacy`
-      
-      const aiResponse = await fetch('https://api.mistral.ai/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${ENV.MISTRAL_API_KEY}`
-        },
-        body: JSON.stringify({
-          model: 'mistral-small-latest',
-          messages: [
-            {
-              role: 'system',
-              content: `You are Jarvis, an SMS bot powered by Enclave. Answer questions about Enclave using ONLY the reference information below. Keep responses brief (1-2 sentences max). Use emojis sparingly (0 or 1) and only if it feels appropriate.
-
-${enclaveReference}
-
-Answer factually based on the reference above.`
-            },
-            {
-              role: 'user',
-              content: messageText
-            }
-          ],
-          temperature: 0.3,
-          max_tokens: 200
-        })
-      })
-      
-      if (aiResponse.ok) {
-        const aiData = await aiResponse.json()
-        const response = aiData.choices?.[0]?.message?.content || ''
-        if (response.trim().length > 0) {
-          // Remove any emojis
-          const cleanedResponse = response.replace(/[\u{1F300}-\u{1F9FF}]/gu, '').trim()
-          return {
-            response: cleanedResponse,
-            shouldSaveHistory: true,
-            metadata: { intent: 'enclave_query' }
-          }
-        }
-      }
-    } catch (err) {
-      console.error('[UnifiedHandler] Enclave query LLM failed:', err)
-    }
-    
-    // Fallback
-    return {
-      response: "enclave is a multi-modal organizational AI assistant platform built by Saathvik Pai and the Inquiyr team. it unifies communications and knowledge across SMS, Slack, Google Calendar, and Docs.",
-      shouldSaveHistory: true,
-      metadata: { intent: 'enclave_query' }
-    }
-  }
-  
   // Save query to action memory BEFORE processing (so follow-ups can detect it's processing)
   console.log(`[UnifiedHandler] Saving query to action memory: "${messageText}"`)
   queueActionMemorySave(

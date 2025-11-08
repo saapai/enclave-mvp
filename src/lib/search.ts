@@ -1,8 +1,16 @@
 import { supabase, supabaseAdmin } from './supabase'
-import { ResourceWithTags, SearchResult } from './database.types'
 import { embedText } from './embeddings'
 import { searchSlackMessages } from './slack'
 import { rerankResults } from './reranker'
+import { pTimeout } from './utils'
+
+interface ResourceTag {
+  name: string | null
+}
+
+export type SearchResult = Record<string, any>
+
+export type ResourceWithTags = Record<string, any>
 
 // Use admin client for vector searches to bypass RLS (user auth validated at API level)
 // Regular client used for standard queries with user context
@@ -125,16 +133,18 @@ export async function searchResourcesHybrid(
         'search_resources_vector',
         VECTOR_TIMEOUT_MS,
         (signal) =>
-          searchClient
-            .rpc('search_resources_vector', {
-              query_embedding: queryEmbedding,
-              target_space_id: spaceId,
-              limit_count: limit * 2,
-              offset_count: 0,
-              target_user_id: shouldFilterByUser ? userId : null // Filter by user only in personal workspace
-            })
-            .abortSignal(signal)
-            .then((res) => res as { data: any[] | null; error: any })
+          (async () => {
+            const res = await searchClient
+              .rpc('search_resources_vector', {
+                query_embedding: queryEmbedding,
+                target_space_id: spaceId,
+                limit_count: limit * 2,
+                offset_count: 0,
+                target_user_id: shouldFilterByUser ? userId : null // Filter by user only in personal workspace
+              })
+              .abortSignal(signal)
+            return res as { data: any[] | null; error: any }
+          })()
       )
 
       if (vectorResponse) {
@@ -183,16 +193,18 @@ export async function searchResourcesHybrid(
         'search_google_docs_vector',
         GDOC_TIMEOUT_MS,
         (signal) =>
-          searchClient
-            .rpc('search_google_docs_vector', {
-              query_embedding: queryEmbedding,
-              target_space_id: spaceId,
-              limit_count: limit * 2,
-              offset_count: 0,
-              target_user_id: shouldFilterGoogleDocsByUser ? userId : null
-            })
-            .abortSignal(signal)
-            .then((res) => res as { data: any[] | null; error: any })
+          (async () => {
+            const res = await searchClient
+              .rpc('search_google_docs_vector', {
+                query_embedding: queryEmbedding,
+                target_space_id: spaceId,
+                limit_count: limit * 2,
+                offset_count: 0,
+                target_user_id: shouldFilterGoogleDocsByUser ? userId : null
+              })
+              .abortSignal(signal)
+            return res as { data: any[] | null; error: any }
+          })()
       )
       
       if (gdocsResponse) {
@@ -229,16 +241,18 @@ export async function searchResourcesHybrid(
       'search_calendar_events_vector',
       CALENDAR_TIMEOUT_MS,
       (signal) =>
-        searchClient
-          .rpc('search_calendar_events_vector', {
-            query_embedding: queryEmbedding,
-            target_space_id: spaceId,
-            limit_count: limit * 2,
-            offset_count: 0,
-            target_user_id: shouldFilterCalendarByUser ? userId : null
-          })
-          .abortSignal(signal)
-          .then((res) => res as { data: any[] | null; error: any })
+        (async () => {
+          const res = await searchClient
+            .rpc('search_calendar_events_vector', {
+              query_embedding: queryEmbedding,
+              target_space_id: spaceId,
+              limit_count: limit * 2,
+              offset_count: 0,
+              target_user_id: shouldFilterCalendarByUser ? userId : null
+            })
+            .abortSignal(signal)
+          return res as { data: any[] | null; error: any }
+        })()
     )
 
     if (calendarResponse) {
@@ -537,29 +551,38 @@ export async function searchResources(
     
     try {
       const ilikeStart = Date.now()
-      const { data: ilikeResults, error: ilikeError } = await pTimeout(
-        dbClient
-          .from('resource')
-          .select('*')
-          .eq('space_id', spaceId)
-          .or(`title.ilike.%${query}%,body.ilike.%${query}%`)
-          .limit(limit)
-          .range(offset, offset + limit - 1),
-        1500, // 1.5s timeout
-        'fts_ilike_direct'
+      const ilikeResponse = await runWithAbort<{ data: any[] | null; error: any }>(
+        'fts_ilike_direct',
+        1500,
+        (signal) =>
+          (async () => {
+            const res = await (dbClient as any)
+              .from('resource')
+              .select('*')
+              .eq('space_id', spaceId)
+              .or(`title.ilike.%${query}%,body.ilike.%${query}%`)
+              .limit(limit)
+              .range(offset, offset + limit - 1)
+              .abortSignal(signal)
+            return res as { data: any[] | null; error: any }
+          })()
       )
       
       const ilikeDuration = Date.now() - ilikeStart
-      console.log(`[FTS Search] Direct ilike completed in ${ilikeDuration}ms, returned ${ilikeResults?.length || 0} results`)
-      
-      if (ilikeError) {
-        console.error('[FTS Search] Direct ilike error:', ilikeError)
-        rpcError = ilikeError
+      if (!ilikeResponse) {
+        console.warn(`[FTS Search] Direct ilike timed out after ${ilikeDuration}ms`)
+        rpcError = new Error('timeout:fts_ilike_direct')
       } else {
-        hits = (ilikeResults || []).map((r: any) => ({ ...r, rank: 0.5 }))
+        console.log(`[FTS Search] Direct ilike completed in ${ilikeDuration}ms, returned ${ilikeResponse.data?.length || 0} results`)
+        if (ilikeResponse.error) {
+          console.error('[FTS Search] Direct ilike error:', ilikeResponse.error)
+          rpcError = ilikeResponse.error
+        } else {
+          hits = (ilikeResponse.data || []).map((r: any) => ({ ...r, rank: 0.5 }))
+        }
       }
     } catch (err) {
-      console.error('[FTS Search] Direct ilike timed out:', err)
+      console.error('[FTS Search] Direct ilike failed:', err)
       rpcError = err
     }
     
@@ -687,7 +710,13 @@ export function getSearchableText(resource: ResourceWithTags): string {
   }
   
   if (resource.tags) {
-    parts.push(resource.tags.map(tag => tag.name).join(' '))
+    const tagsArray = Array.isArray(resource.tags) ? resource.tags : []
+    const tagNames = tagsArray
+      .map((tag: ResourceTag | null) => tag?.name ?? '')
+      .filter((tagName: string) => tagName.length > 0)
+    if (tagNames.length > 0) {
+      parts.push(tagNames.join(' '))
+    }
   }
   
   if (resource.event_meta?.location) {
