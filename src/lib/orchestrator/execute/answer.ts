@@ -87,8 +87,7 @@ export async function executeAnswer(
     console.log(`[Execute Answer] [${traceId}] Starting hybrid search V2 (budget: ${searchBudget}ms)`)
     const searchResults = await hybridSearchV2(query, orderedWorkspaceIds, {
       budgetMs: searchBudget,
-      highConfidenceThreshold: 0.75,
-      mediumConfidenceThreshold: 0.50
+      highConfidenceThreshold: 0.75
     })
     
     const searchDuration = Date.now() - searchStart
