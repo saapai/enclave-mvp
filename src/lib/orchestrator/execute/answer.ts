@@ -154,7 +154,9 @@ async function composeDirectResponse(
       )
     )
 
-    const textFieldOrder = [
+    type GenericRecord = Record<string, unknown>
+
+    const textFieldOrder: Array<keyof GenericRecord> = [
       'highlight',
       'snippet',
       'body',
@@ -165,36 +167,68 @@ async function composeDirectResponse(
       'summary',
       'description',
       'notes'
-    ] as const
+    ]
+
+    const collectStringValues = (value: unknown, depth = 0): string[] => {
+      if (typeof value === 'string') {
+        return [value.trim()]
+      }
+      if (!value || depth > 2) {
+        return []
+      }
+      if (Array.isArray(value)) {
+        return value.flatMap((item) => collectStringValues(item, depth + 1))
+      }
+      if (typeof value === 'object') {
+        return Object.values(value as GenericRecord).flatMap((item) => collectStringValues(item, depth + 1))
+      }
+      return []
+    }
 
     const extractSnippet = (result: SearchResult): string => {
-      const collected: string[] = []
+      const candidateTexts: string[] = []
 
+      // Prioritise known fields first
       for (const field of textFieldOrder) {
-        const value = (result as Record<string, unknown>)[field]
-        if (typeof value === 'string' && value.trim().length > 0) {
-          collected.push(value.trim())
+        const value = (result as GenericRecord)[field as string]
+        if (value) {
+          candidateTexts.push(...collectStringValues(value))
         }
       }
 
-      if (collected.length === 0) {
+      // Include other string fields if not already captured
+      for (const [key, value] of Object.entries(result as GenericRecord)) {
+        if (textFieldOrder.includes(key)) continue
+        candidateTexts.push(...collectStringValues(value))
+      }
+
+      const normalizedCandidates = candidateTexts
+        .map((text) => text.replace(/\s+/g, ' ').trim())
+        .filter((text) => text.length > 0)
+
+      if (normalizedCandidates.length === 0) {
         return ''
       }
 
-      const combined = collected.join('\n').replace(/\s+/g, ' ').trim()
-      if (!combined) return ''
+      const chooseSegment = (text: string): string => {
+        const segments = text.split(/(?<=[\.!?\n])\s+/)
+        for (const segment of segments) {
+          const lower = segment.toLowerCase()
+          if (keywordSet.some((keyword) => lower.includes(keyword))) {
+            return segment.trim()
+          }
+        }
+        return text.slice(0, 320).trim()
+      }
 
-      // Try to find a sentence or clause containing the keywords
-      const candidateSegments = combined.split(/(?<=[\.!?\n])\s+/)
-      for (const segment of candidateSegments) {
-        const lower = segment.toLowerCase()
-        if (keywordSet.some((keyword) => lower.includes(keyword))) {
-          return segment.trim()
+      for (const candidate of normalizedCandidates) {
+        const chosen = chooseSegment(candidate)
+        if (chosen) {
+          return chosen
         }
       }
 
-      // Fallback to first 320 characters if no keyword match
-      return combined.slice(0, 320).trim()
+      return normalizedCandidates[0].slice(0, 320)
     }
 
     const contextBlocks = results.map((result, index) => {
@@ -209,10 +243,22 @@ async function composeDirectResponse(
       if (typeof result.source === 'string') {
         metadataParts.push(`Source: ${result.source}`)
       }
-      if (typeof result.path === 'string') {
-        metadataParts.push(`Path: ${result.path}`)
-      } else if (typeof result.url === 'string') {
-        metadataParts.push(`URL: ${result.url}`)
+
+      const metadata = (result as GenericRecord).metadata as GenericRecord | undefined
+      if (metadata) {
+        const dateFields = ['event_date', 'date', 'start_date', 'start_time', 'location']
+        for (const field of dateFields) {
+          const value = metadata[field]
+          if (typeof value === 'string' && value.trim().length > 0) {
+            metadataParts.push(`${field.replace(/_/g, ' ')}: ${value}`)
+          }
+        }
+      }
+
+      if (typeof (result as GenericRecord).path === 'string') {
+        metadataParts.push(`Path: ${(result as GenericRecord).path}`)
+      } else if (typeof (result as GenericRecord).url === 'string') {
+        metadataParts.push(`URL: ${(result as GenericRecord).url}`)
       }
 
       return `${metadataParts.join(' | ')}\n${safeSnippet}`
