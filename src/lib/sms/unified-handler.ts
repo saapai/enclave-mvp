@@ -46,18 +46,6 @@ function cleanupQueryTracking(phoneNumber: string) {
   }
 }
 
-function isStatusFollowUp(text: string): boolean {
-  const lower = text.trim().toLowerCase()
-  if (!lower || lower.length > 160) return false
-  const patterns = [
-    /^(what('?|\s)is|where('?|\s)is|how('?|\s)is|any)  *.*(answer|update|status)/,
-    /^(answer|respond|status|update)  */,
-    /(still|ever)  *.*(waiting|searching|looking|working)/,
-    /(is it|did it|has it)  *.*(finish|done|complete|find)/
-  ]
-  return patterns.some((rx) => rx.test(lower))
-}
-
 export interface HandlerResult {
   response: string
   shouldSaveHistory: boolean
