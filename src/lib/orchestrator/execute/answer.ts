@@ -5,7 +5,7 @@
  */
 
 import { TurnFrame, ContextEnvelope } from '../types'
-import { hybridSearchV2, getCachedEmbedding } from '@/lib/search-v2'
+import { hybridSearchV2 } from '@/lib/search-v2'
 import { planQuery, composeResponse, executePlan } from '@/lib/planner'
 import { getWorkspaceIds, rankWorkspaceIds } from '@/lib/workspace'
 import { generateTraceId } from '@/lib/utils'
@@ -101,27 +101,8 @@ export async function executeAnswer(
     // Step 3: If we have good results, compose response directly
     if (searchResults.length > 0 && searchResults[0].score && searchResults[0].score >= 0.60) {
       console.log(`[Execute Answer] [${traceId}] Good results found, composing response directly`)
-      
-      // Use the top result's body for context
-      const topResult = searchResults[0]
-      const context = topResult.body || topResult.title
-      
-      if (!context || context.length < 10) {
-        console.log(`[Execute Answer] [${traceId}] Top result has no content, trying next result`)
-        if (searchResults.length > 1) {
-          const secondResult = searchResults[1]
-          const secondContext = secondResult.body || secondResult.title
-          if (secondContext && secondContext.length >= 10) {
-            return await composeDirectResponse(query, secondContext, traceId)
-          }
-        }
-        // Fallback
-        return {
-          messages: [`Found "${topResult.title}" but couldn't extract the details. Try asking more specifically.`]
-        }
-      }
-      
-      return await composeDirectResponse(query, context, traceId)
+      const topResults = searchResults.slice(0, 3)
+      return await composeDirectResponse(query, topResults, traceId)
     }
     
     // Step 4: If no good results, return helpful message
@@ -134,17 +115,8 @@ export async function executeAnswer(
     
     // Step 5: Low-confidence results - try to compose something useful
     console.log(`[Execute Answer] [${traceId}] Low-confidence results, attempting composition`)
-    const topResult = searchResults[0]
-    const context = topResult.body || topResult.title
-    
-    if (context && context.length >= 10) {
-      return await composeDirectResponse(query, context, traceId)
-    }
-    
-    // Final fallback
-    return {
-      messages: [`Found some results but they don't seem relevant to "${query}". Try being more specific.`]
-    }
+    const fallbackResults = searchResults.slice(0, 3)
+    return await composeDirectResponse(query, fallbackResults, traceId)
     
   } catch (error) {
     console.error(`[Execute Answer] [${traceId}] Error:`, error)
@@ -162,17 +134,36 @@ export async function executeAnswer(
  */
 async function composeDirectResponse(
   query: string,
-  context: string,
+  results: SearchResult[],
   traceId: string
 ): Promise<ExecuteResult> {
   console.log(`[Execute Answer] [${traceId}] Composing direct response`)
   
+  if (!results || results.length === 0) {
+    return {
+      messages: ["I found some results but couldn't extract useful information. Try rephrasing your question or check if the document is uploaded."]
+    }
+  }
+  
   try {
-    // Truncate context if too long
+    const contextBlocks = results.map((result, index) => {
+      const snippet = (result.body || '').trim()
+      const trimmedSnippet = snippet.length > 700 ? `${snippet.slice(0, 700)}...` : snippet
+      const safeSnippet = trimmedSnippet && trimmedSnippet.length > 0 ? trimmedSnippet : '[No body text available]'
+      const metadataLines = [
+        `Result ${index + 1}: ${result.title || 'Untitled resource'}`,
+        result.score !== undefined ? `Score: ${result.score.toFixed(3)}` : undefined,
+        result.source ? `Source: ${result.source}` : undefined
+      ].filter(Boolean)
+      return `${metadataLines.join(' | ')}
+${safeSnippet}`
+    })
+    
+    const combinedContext = contextBlocks.join('\n\n')
     const maxContextLength = 2000
-    const truncatedContext = context.length > maxContextLength
-      ? context.substring(0, maxContextLength) + '...'
-      : context
+    const truncatedContext = combinedContext.length > maxContextLength
+      ? combinedContext.substring(0, maxContextLength) + '...'
+      : combinedContext
     
     const response = await fetch('https://api.mistral.ai/v1/chat/completions', {
       method: 'POST',
@@ -185,15 +176,15 @@ async function composeDirectResponse(
         messages: [
           {
             role: 'system',
-            content: 'You are a helpful assistant answering questions based on provided context. Be concise and direct. If the context doesn\'t contain the answer, say so.'
+            content: 'You are a helpful assistant answering questions for a sorority/fraternity operations team. Use ONLY the provided search results to answer. If any result mentions a date, time, or definition relevant to the question, surface it directly. If the context lacks the answer, say so explicitly and suggest the closest relevant details you do see.'
           },
           {
             role: 'user',
-            content: `Context:\n${truncatedContext}\n\nQuestion: ${query}\n\nAnswer the question based on the context above. Be brief and specific.`
+            content: `Search Results:\n${truncatedContext}\n\nQuestion: ${query}\n\nRespond with the answer using the evidence above. Quote or reference the relevant result (e.g., "Result 1") when possible. If the answer truly is not present, state that clearly.`
           }
         ],
-        temperature: 0.3,
-        max_tokens: 200
+        temperature: 0.2,
+        max_tokens: 220
       })
     })
     

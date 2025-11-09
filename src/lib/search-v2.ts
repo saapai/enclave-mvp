@@ -52,6 +52,10 @@ interface WorkspaceSearchResult {
   topScore: number
 }
 
+interface EmbeddingState {
+  value: number[] | null
+}
+
 // ============================================================================
 // UTILITIES
 // ============================================================================
@@ -270,7 +274,8 @@ async function searchVector(
 async function searchWorkspace(
   query: string,
   workspaceId: string,
-  embedding: number[] | null,
+  embeddingState: EmbeddingState,
+  embeddingPromise: Promise<number[] | null> | null,
   budget: SearchBudget
 ): Promise<WorkspaceSearchResult> {
   const wsStart = Date.now()
@@ -281,26 +286,31 @@ async function searchWorkspace(
   const ftsResults = await searchFTS(query, workspaceId, budget, 5)
   const ftsMs = Date.now() - ftsStart
   
-  // Check if FTS gave us a high-confidence result
-  const topFtsScore = ftsResults[0]?.score || 0
-  if (topFtsScore >= 0.95) {
-    console.log(`[Search V2] High-confidence FTS result (${topFtsScore.toFixed(3)}), skipping vector`)
-    return {
-      workspaceId,
-      results: ftsResults,
-      ftsMs,
-      vectorMs: 0,
-      topScore: topFtsScore
-    }
-  }
-  
   // Step 2: Vector search (if we have embedding and budget)
   let vectorResults: SearchResult[] = []
   let vectorMs = 0
+
+  let embedding = embeddingState.value
+
+  if (!embedding && embeddingPromise) {
+    const remaining = budget.getRemainingMs()
+    const waitBudget = Math.max(0, remaining - (SMS_VECTOR_TIMEOUT_MS + 100))
+    if (waitBudget > 0) {
+      const waitMs = Math.min(500, waitBudget)
+      console.log(`[Search V2] Waiting up to ${waitMs}ms for embedding before vector search`)
+      embedding = await Promise.race([
+        embeddingPromise,
+        new Promise<number[] | null>(resolve => setTimeout(() => resolve(null), waitMs))
+      ])
+      if (embedding) {
+        embeddingState.value = embedding
+      }
+    }
+  }
   
-  if (embedding !== null && budget.getRemainingMs() > 1500) {
+  if (embedding !== null && budget.getRemainingMs() > (SMS_VECTOR_TIMEOUT_MS + 100)) {
     const vectorStart = Date.now()
-    vectorResults = await searchVector(embedding as number[], workspaceId, budget, 5)
+    vectorResults = await searchVector(embedding, workspaceId, budget, 5)
     vectorMs = Date.now() - vectorStart
   } else {
     console.log('[Search V2] Skipping vector search (no embedding or insufficient budget)')
@@ -345,13 +355,11 @@ export async function hybridSearchV2(
   options: {
     budgetMs?: number
     highConfidenceThreshold?: number
-    mediumConfidenceThreshold?: number
   } = {}
 ): Promise<SearchResult[]> {
   const {
     budgetMs = SMS_SEARCH_BUDGET_MS,
-    highConfidenceThreshold = 0.75,
-    mediumConfidenceThreshold = 0.50
+    highConfidenceThreshold = 0.75
   } = options
   
   const budget = createBudget(budgetMs)
@@ -373,25 +381,29 @@ export async function hybridSearchV2(
   }
   
   // Step 1: Start embedding generation in background (non-blocking)
-  let embedding: number[] | null = null
+  const embeddingState: EmbeddingState = { value: null }
+  let embeddingPromise: Promise<number[] | null> | null = null
   const normalizedQuery = query.toLowerCase().trim()
   const cachedEntry = embeddingCache.get(normalizedQuery)
   
   if (cachedEntry && Date.now() - cachedEntry.timestamp < EMBEDDING_CACHE_TTL) {
-    embedding = cachedEntry.embedding
+    embeddingState.value = cachedEntry.embedding
     console.log(`[Search V2] [${searchId}] Embedding: cached (budget: ${budget.getRemainingMs()}ms)`)
   } else if (budget.getRemainingMs() > SMS_EMBED_MIN_REMAINING_MS) {
     console.log(`[Search V2] [${searchId}] Starting embedding generation in background`)
-    getCachedEmbedding(query, budget)
-      .then(result => {
-        if (result) {
-          embedding = result
-        }
-        return result
-      })
-      .catch(err => {
-        console.error('[Search V2] Background embedding failed:', err?.message || err)
-      })
+    embeddingPromise = getCachedEmbedding(query, budget)
+    if (embeddingPromise) {
+      embeddingPromise
+        .then(result => {
+          if (result) {
+            embeddingState.value = result
+          }
+          return result
+        })
+        .catch(err => {
+          console.error('[Search V2] Background embedding failed:', err?.message || err)
+        })
+    }
   } else {
     console.log(`[Search V2] [${searchId}] Skipping embedding (insufficient budget: ${budget.getRemainingMs()}ms)`)
   }
@@ -405,7 +417,7 @@ export async function hybridSearchV2(
       break
     }
     
-    const wsResult = await searchWorkspace(query, workspaceId, embedding, budget)
+    const wsResult = await searchWorkspace(query, workspaceId, embeddingState, embeddingPromise, budget)
     workspaceResults.push(wsResult)
     
     // Early exit if we found a high-confidence result
