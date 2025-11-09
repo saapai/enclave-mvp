@@ -5,51 +5,73 @@ import { ENV } from './env'
 const OPENAI_API_KEY = ENV.OPENAI_API_KEY
 const EMBEDDING_MODEL = process.env.EMBEDDING_MODEL || 'text-embedding-3-small'
 const EMBEDDING_DIMENSIONS = Number(process.env.EMBEDDING_DIMENSIONS || '1536')
+const OPENAI_EMBED_TIMEOUT_MS = Number(process.env.OPENAI_EMBED_TIMEOUT_MS || '2000')
+const OPENAI_EMBED_ATTEMPTS = Number(process.env.OPENAI_EMBED_ATTEMPTS || '3')
 
-export async function embedText(text: string): Promise<number[] | null> {
+async function generateEmbedding(text: string): Promise<number[] | null> {
   if (!OPENAI_API_KEY) {
     console.error('OPENAI_API_KEY is not set')
     return null
   }
-  
-  const cleaned = (text || '').slice(0, 8000) // OpenAI has 8191 token limit
+
+  const cleaned = (text || '').slice(0, 8000)
   console.log(`Generating embedding for text: ${cleaned.slice(0, 100)}...`)
-  
-  try {
-    const res = await fetch('https://api.openai.com/v1/embeddings', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${OPENAI_API_KEY}`,
-      },
-      body: JSON.stringify({
-        model: EMBEDDING_MODEL,
-        input: cleaned,
-        dimensions: EMBEDDING_DIMENSIONS
+
+  for (let attempt = 1; attempt <= OPENAI_EMBED_ATTEMPTS; attempt++) {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), OPENAI_EMBED_TIMEOUT_MS)
+
+    try {
+      const res = await fetch('https://api.openai.com/v1/embeddings', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${OPENAI_API_KEY}`
+        },
+        body: JSON.stringify({
+          model: EMBEDDING_MODEL,
+          input: cleaned,
+          dimensions: EMBEDDING_DIMENSIONS
+        }),
+        signal: controller.signal
       })
-    })
-    
-    if (!res.ok) {
-      const errorText = await res.text()
-      console.error(`OpenAI embedding error (${res.status}):`, errorText)
-      return null
+
+      clearTimeout(timer)
+
+      if (!res.ok) {
+        const errorText = await res.text()
+        console.error(`OpenAI embedding error (${res.status}):`, errorText)
+        continue
+      }
+
+      const json = await res.json()
+      const embedding = json?.data?.[0]?.embedding as number[]
+
+      if (!embedding || embedding.length === 0) {
+        console.error('OpenAI returned empty embedding')
+        continue
+      }
+
+      console.log(`Generated embedding with ${embedding.length} dimensions using ${EMBEDDING_MODEL}`)
+      return embedding
+    } catch (err: any) {
+      clearTimeout(timer)
+      if (controller.signal.aborted) {
+        console.warn(`OpenAI embedding attempt ${attempt} timed out after ${OPENAI_EMBED_TIMEOUT_MS}ms`)
+      } else {
+        console.error(`OpenAI embedding exception (attempt ${attempt}):`, err)
+      }
+
+      // Backoff a bit before retrying
+      await new Promise(resolve => setTimeout(resolve, 200 * attempt))
     }
-    
-    const json = await res.json()
-    const embedding = json?.data?.[0]?.embedding as number[]
-    
-    if (!embedding || embedding.length === 0) {
-      console.error('OpenAI returned empty embedding')
-      return null
-    }
-    
-    console.log(`Generated embedding with ${embedding.length} dimensions using ${EMBEDDING_MODEL}`)
-    return embedding
-    
-  } catch (error) {
-    console.error('OpenAI embedding exception:', error)
-    return null
   }
+
+  return null
+}
+
+export async function embedText(text: string): Promise<number[] | null> {
+  return generateEmbedding(text)
 }
 
 export async function upsertResourceEmbedding(resourceId: string, text: string): Promise<boolean> {
@@ -59,11 +81,13 @@ export async function upsertResourceEmbedding(resourceId: string, text: string):
     return false
   }
   console.log('Upserting embedding for resource:', resourceId, 'with dimensions:', embedding.length)
+
   const client = supabaseAdmin || supabase
   if (!client) {
     console.error('No Supabase client available for embedding upsert')
     return false
   }
+
   const { error } = await client
     .from('resource_embedding')
     .upsert({ resource_id: resourceId, embedding, updated_at: new Date().toISOString() })
@@ -76,7 +100,6 @@ export async function upsertResourceEmbedding(resourceId: string, text: string):
 }
 
 export async function upsertResourceChunks(resourceId: string, text: string): Promise<void> {
-  // Simple greedy chunking ~1.5k chars per chunk, respecting paragraph breaks
   const MAX_CHARS = 1500
   const paragraphs = text.split(/\n\n+/)
   const chunks: string[] = []
@@ -106,13 +129,15 @@ export async function upsertResourceChunks(resourceId: string, text: string): Pr
     console.error('Failed to clear existing chunks:', err)
   }
 
-  // Insert chunks and embeddings (best-effort)
   for (let i = 0; i < chunks.length; i++) {
     const chunk = chunks[i]
     let embedding: number[] | null = null
     try {
       embedding = await embedText(chunk)
-    } catch { /* ignore */ }
+    } catch (err) {
+      console.error('Chunk embedding failed:', err)
+    }
+
     await client
       .from('resource_chunk')
       .insert({

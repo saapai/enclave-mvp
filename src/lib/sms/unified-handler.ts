@@ -17,11 +17,38 @@ import { checkActionQuery, saveAction, type ActionMemory } from './action-memory
 import { supabaseAdmin } from '@/lib/supabase'
 // Name declaration is handled inline
 
-const PENDING_CONTENT_QUERIES = new Map<string, { query: string; startedAt: number }>()
+const ACTION_MEMORY_TIMEOUT_MS = 3000
+const PENDING_QUERY_LIFETIME_MS = Number(process.env.PENDING_QUERY_LIFETIME_MS || '120000')
+const RECENT_QUERY_LIFETIME_MS = Number(process.env.RECENT_QUERY_LIFETIME_MS || '300000')
+
+interface PendingQueryEntry {
+  query: string
+  startedAt: number
+  expiresAt: number
+  status: 'pending' | 'completed' | 'failed'
+  response?: string
+  completedAt?: number
+}
+
+const PENDING_CONTENT_QUERIES = new Map<string, PendingQueryEntry>()
+const RECENT_CONTENT_QUERIES = new Map<string, { query: string; response: string; completedAt: number }>()
+
+function cleanupQueryTracking(phoneNumber: string) {
+  const now = Date.now()
+  const pending = PENDING_CONTENT_QUERIES.get(phoneNumber)
+  if (pending && pending.expiresAt <= now) {
+    PENDING_CONTENT_QUERIES.delete(phoneNumber)
+  }
+
+  const recent = RECENT_CONTENT_QUERIES.get(phoneNumber)
+  if (recent && now - recent.completedAt > RECENT_QUERY_LIFETIME_MS) {
+    RECENT_CONTENT_QUERIES.delete(phoneNumber)
+  }
+}
 
 function isStatusFollowUp(text: string): boolean {
   const lower = text.trim().toLowerCase()
-  if (!lower || lower.length > 80) return false
+  if (!lower || lower.length > 160) return false
   const patterns = [
     /^(what('?|\s)is|where('?|\s)is|how('?|\s)is|any)  *.*(answer|update|status)/,
     /^(answer|respond|status|update)  */,
@@ -78,7 +105,27 @@ async function withTimeout<T>(
   }
 }
 
-const ACTION_MEMORY_TIMEOUT_MS = 3000
+const STATUS_KEYWORDS = [
+  /(what('?|\s)is|where('?|\s)is|how('?|\s)is|any|got|have)  *.*(answer|update|status|results|info)/i,
+  /^(answer|status|update|respond|reply)  */,
+  /(still|ever)  *.*(waiting|searching|looking|working)/i,
+  /(is it|did it|has it)  *.*(finish|done|complete|find)/i
+]
+
+function isStatusFollowUp(text: string): boolean {
+  const lower = text.trim().toLowerCase()
+  if (!lower || lower.length > 160) return false
+  return STATUS_KEYWORDS.some(regex => regex.test(lower))
+}
+
+const QUESTION_PREFIX = /^(when|what|who|where|why|how|which|is|are|was|were|do|does|did|will|would|should|can|could|answer|tell me)  *./
+
+function isLikelyQuestion(text: string): boolean {
+  const normalized = text.trim().toLowerCase()
+  if (!normalized) return false
+  if (normalized.includes('?')) return true
+  return QUESTION_PREFIX.test(normalized)
+}
 
 function queueActionMemorySave(
   phoneNumber: string,
@@ -120,6 +167,8 @@ export async function handleSMSMessage(
   prefetchedHistory?: ConversationMessage[]
 ): Promise<HandlerResult> {
   console.log(`[UnifiedHandler] Processing message from ${phoneNumber}: "${messageText}"`)
+
+  cleanupQueryTracking(phoneNumber)
 
   // Load conversation history (timeout to avoid hanging on Supabase)
   console.log(`[UnifiedHandler] About to load history with timeout wrapper`)
@@ -181,12 +230,31 @@ export async function handleSMSMessage(
   }
 
   const pendingQuery = PENDING_CONTENT_QUERIES.get(phoneNumber)
-  if (pendingQuery && isStatusFollowUp(messageText)) {
-    const elapsed = Date.now() - pendingQuery.startedAt
-    if (elapsed < 600000) { // 10 minutes window
-      console.log(`[UnifiedHandler] Detected status follow-up for pending query: "${pendingQuery.query}"`)
+  const recentQuery = RECENT_CONTENT_QUERIES.get(phoneNumber)
+
+  if (isStatusFollowUp(messageText)) {
+    if (pendingQuery && pendingQuery.status === 'pending') {
+      const elapsed = Date.now() - pendingQuery.startedAt
+      if (elapsed < PENDING_QUERY_LIFETIME_MS) {
+        console.log(`[UnifiedHandler] Detected status follow-up for pending query: "${pendingQuery.query}"`)
+        return {
+          response: `Still working on "${pendingQuery.query}" — I'll text you as soon as I have an update.`,
+          shouldSaveHistory: true,
+          metadata: {
+            intent: 'follow_up_query'
+          }
+        }
+      }
+    }
+
+    if (recentQuery && Date.now() - recentQuery.completedAt < RECENT_QUERY_LIFETIME_MS) {
+      console.log(`[UnifiedHandler] Detected status follow-up for recent query: "${recentQuery.query}"`)
+      const summary = recentQuery.response.length > 320
+        ? `${recentQuery.response.slice(0, 320)}...`
+        : recentQuery.response
       return {
-        response: `Still working on "${pendingQuery.query}" — I'll text you as soon as I have an update.`,
+        response: `Earlier you asked "${recentQuery.query}". Here's what I found:
+${summary}`,
         shouldSaveHistory: true,
         metadata: {
           intent: 'follow_up_query'
@@ -194,7 +262,7 @@ export async function handleSMSMessage(
       }
     }
   }
-  
+
   console.log(`[UnifiedHandler] Welcome flow check done, proceeding to intent classification`)
 
   // Classify intent FIRST using LLM (it will detect follow-ups)
@@ -294,77 +362,19 @@ export async function handleSMSMessage(
     console.log(`[UnifiedHandler] No blocking conditions found, continuing with normal query flow`)
   }
 
-  // Handle simple questions based on LLM classification
-  // Use LLM to generate appropriate response based on the question
-  if (intent.type === 'simple_question') {
-    try {
-      // Use LLM to answer simple questions contextually
-      const { ENV } = await import('@/lib/env')
-      const aiResponse = await fetch('https://api.mistral.ai/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${ENV.MISTRAL_API_KEY}`
-        },
-        body: JSON.stringify({
-          model: 'mistral-small-latest',
-          messages: [
-            {
-              role: 'system',
-              content: `You are Jarvis, an SMS bot powered by Enclave. Answer the user's simple question directly and conversationally.
-
-Enclave System Reference:
-- Name: Enclave
-- Type: Multi-modal organizational AI assistant platform
-- Purpose: Unify organization's communications and knowledge across SMS, Slack, Google Calendar, Docs
-- Primary developer: Saathvik Pai
-- Core team: The Inquiyr development team
-- Built as part of the Inquiyr ecosystem
-- Technical stack: Next.js, TypeScript, Supabase, Twilio, Mistral AI
-- Capabilities: Knowledge retrieval, SMS messaging, announcements, polls, alerts, search
-- Target users: Student organizations, professional fraternities, small teams, clubs
-
-Context from conversation:
-${history.slice(-5).map(m => `${m.role === 'user' ? 'User' : 'Bot'}: ${m.text}`).join('\n')}
-
-Rules:
-- If they ask about your name, say "i'm jarvis! nice to meet you"
-- If they ask how you are, say "i'm doing great! ready to help with whatever you need"
-- If they mention they've already met you, acknowledge it naturally
-- Use emojis sparingly (0 or 1) and only if it fits the vibe
-- Keep responses brief (1-2 sentences max) and friendly`
-            },
-            {
-              role: 'user',
-              content: messageText
-            }
-          ],
-          temperature: 0.7,
-          max_tokens: 100
-        })
-      })
-      
-      if (aiResponse.ok) {
-        const aiData = await aiResponse.json()
-        const response = aiData.choices?.[0]?.message?.content || ''
-        if (response.trim().length > 0) {
-          const limitedResponse = limitEmojis(response.trim(), 1)
-          return {
-            response: limitedResponse,
-            shouldSaveHistory: true,
-            metadata: { intent: 'simple_question' }
-          }
-        }
-      }
-    } catch (err) {
-      console.error('[UnifiedHandler] Simple question LLM failed:', err)
+  if (intent.type === 'follow_up_query') {
+    console.log('[UnifiedHandler] Follow-up detected but not a status check, treating as content query')
+    intent = {
+      ...intent,
+      type: 'content_query'
     }
-    
-    // Fallback response (no emojis)
-    return {
-      response: "i'm jarvis, part of enclave! how can i help?",
-      shouldSaveHistory: true,
-      metadata: { intent: 'simple_question' }
+  }
+
+  if (intent.type === 'simple_question') {
+    console.log('[UnifiedHandler] Simple question detected, routing to content query handler')
+    intent = {
+      ...intent,
+      type: 'content_query'
     }
   }
 
@@ -402,6 +412,10 @@ Rules:
       return handleSmalltalk(messageText, history)
 
     default:
+      if (isLikelyQuestion(messageText)) {
+        console.log('[UnifiedHandler] Default branch detected question, routing to content query handler')
+        return await handleQuery(phoneNumber, messageText, 'content_query', history)
+      }
       return {
         response: "i didn't quite get that. try asking a question, or say 'send a message' to create an announcement.",
         shouldSaveHistory: true,
@@ -1094,7 +1108,14 @@ async function handleQuery(
   intentType: IntentType,
   prefetchedHistory?: ConversationMessage[]
 ): Promise<HandlerResult> {
-  PENDING_CONTENT_QUERIES.set(phoneNumber, { query: messageText, startedAt: Date.now() })
+  const startedAt = Date.now()
+  const pendingEntry: PendingQueryEntry = {
+    query: messageText,
+    startedAt,
+    expiresAt: startedAt + PENDING_QUERY_LIFETIME_MS,
+    status: 'pending'
+  }
+  PENDING_CONTENT_QUERIES.set(phoneNumber, pendingEntry)
 
   console.log(`[UnifiedHandler] Saving query to action memory: "${messageText}"`)
   queueActionMemorySave(
@@ -1109,7 +1130,7 @@ async function handleQuery(
     },
     'saveAction (initial)'
   )
-
+  
   let finalResult: HandlerResult
 
   try {
@@ -1221,7 +1242,24 @@ async function handleQuery(
     }
     return finalResult
   } finally {
-    PENDING_CONTENT_QUERIES.delete(phoneNumber)
+    const entry = PENDING_CONTENT_QUERIES.get(phoneNumber)
+    if (entry) {
+      const now = Date.now()
+      if (finalResult) {
+        entry.status = 'completed'
+        entry.response = finalResult.response
+        entry.completedAt = now
+        entry.expiresAt = now + PENDING_QUERY_LIFETIME_MS
+        RECENT_CONTENT_QUERIES.set(phoneNumber, {
+          query: entry.query,
+          response: finalResult.response,
+          completedAt: now
+        })
+      } else {
+        entry.status = 'failed'
+        entry.expiresAt = now + PENDING_QUERY_LIFETIME_MS
+      }
+    }
   }
 }
 

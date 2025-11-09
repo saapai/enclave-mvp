@@ -14,7 +14,7 @@ async function reembedAllResources() {
   while (true) {
     const { data, error } = await supabaseAdmin
       .from('resource')
-      .select('id, body, content')
+      .select('id, body')
       .order('created_at', { ascending: true })
       .range(offset, offset + PAGE_SIZE - 1)
 
@@ -28,8 +28,8 @@ async function reembedAllResources() {
       break
     }
 
-    for (const resource of data as Array<{ id: string; body?: string | null; content?: string | null }>) {
-      const text = resource.body || resource.content || ''
+    for (const resource of data as Array<{ id: string; body?: string | null }>) {
+      const text = resource.body || ''
       if (!text.trim()) {
         console.log(`Skipping resource ${resource.id} (no text available)`)
         continue
