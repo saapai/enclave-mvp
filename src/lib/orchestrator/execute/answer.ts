@@ -145,21 +145,81 @@ async function composeDirectResponse(
   }
   
   try {
+    const keywordSet = Array.from(
+      new Set(
+        query
+          .toLowerCase()
+          .split(/[^a-z0-9]+/)
+          .filter((token) => token.length >= 3)
+      )
+    )
+
+    const textFieldOrder = [
+      'highlight',
+      'snippet',
+      'body',
+      'content',
+      'chunk_body',
+      'chunk_text',
+      'text',
+      'summary',
+      'description',
+      'notes'
+    ] as const
+
+    const extractSnippet = (result: SearchResult): string => {
+      const collected: string[] = []
+
+      for (const field of textFieldOrder) {
+        const value = (result as Record<string, unknown>)[field]
+        if (typeof value === 'string' && value.trim().length > 0) {
+          collected.push(value.trim())
+        }
+      }
+
+      if (collected.length === 0) {
+        return ''
+      }
+
+      const combined = collected.join('\n').replace(/\s+/g, ' ').trim()
+      if (!combined) return ''
+
+      // Try to find a sentence or clause containing the keywords
+      const candidateSegments = combined.split(/(?<=[\.!?\n])\s+/)
+      for (const segment of candidateSegments) {
+        const lower = segment.toLowerCase()
+        if (keywordSet.some((keyword) => lower.includes(keyword))) {
+          return segment.trim()
+        }
+      }
+
+      // Fallback to first 320 characters if no keyword match
+      return combined.slice(0, 320).trim()
+    }
+
     const contextBlocks = results.map((result, index) => {
-      const snippet = (result.body || '').trim()
-      const trimmedSnippet = snippet.length > 700 ? `${snippet.slice(0, 700)}...` : snippet
-      const safeSnippet = trimmedSnippet && trimmedSnippet.length > 0 ? trimmedSnippet : '[No body text available]'
-      const metadataLines = [
-        `Result ${index + 1}: ${result.title || 'Untitled resource'}`,
-        result.score !== undefined ? `Score: ${result.score.toFixed(3)}` : undefined,
-        result.source ? `Source: ${result.source}` : undefined
-      ].filter(Boolean)
-      return `${metadataLines.join(' | ')}
-${safeSnippet}`
+      const snippet = extractSnippet(result)
+      const safeSnippet = snippet.length > 0 ? snippet : '[No relevant excerpt found in this result]'
+
+      const metadataParts: string[] = []
+      metadataParts.push(`Result ${index + 1}: ${result.title || 'Untitled resource'}`)
+      if (typeof result.score === 'number') {
+        metadataParts.push(`Score: ${result.score.toFixed(3)}`)
+      }
+      if (typeof result.source === 'string') {
+        metadataParts.push(`Source: ${result.source}`)
+      }
+      if (typeof result.path === 'string') {
+        metadataParts.push(`Path: ${result.path}`)
+      } else if (typeof result.url === 'string') {
+        metadataParts.push(`URL: ${result.url}`)
+      }
+
+      return `${metadataParts.join(' | ')}\n${safeSnippet}`
     })
     
     const combinedContext = contextBlocks.join('\n\n')
-    const maxContextLength = 2000
+    const maxContextLength = 2500
     const truncatedContext = combinedContext.length > maxContextLength
       ? combinedContext.substring(0, maxContextLength) + '...'
       : combinedContext
