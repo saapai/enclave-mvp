@@ -156,7 +156,7 @@ async function composeDirectResponse(
 
     type GenericRecord = Record<string, unknown>
 
-    const textFieldOrder: Array<keyof GenericRecord> = [
+    const textFieldOrder: string[] = [
       'highlight',
       'snippet',
       'body',
@@ -188,7 +188,6 @@ async function composeDirectResponse(
     const extractSnippet = (result: SearchResult): string => {
       const candidateTexts: string[] = []
 
-      // Prioritise known fields first
       for (const field of textFieldOrder) {
         const value = (result as GenericRecord)[field as string]
         if (value) {
@@ -196,7 +195,6 @@ async function composeDirectResponse(
         }
       }
 
-      // Include other string fields if not already captured
       for (const [key, value] of Object.entries(result as GenericRecord)) {
         if (textFieldOrder.includes(key)) continue
         candidateTexts.push(...collectStringValues(value))
@@ -210,25 +208,64 @@ async function composeDirectResponse(
         return ''
       }
 
-      const chooseSegment = (text: string): string => {
-        const segments = text.split(/(?<=[\.!?\n])\s+/)
-        for (const segment of segments) {
-          const lower = segment.toLowerCase()
-          if (keywordSet.some((keyword) => lower.includes(keyword))) {
-            return segment.trim()
+      type SegmentScore = {
+        text: string
+        hits: number
+        length: number
+      }
+
+      const scoreSegment = (segmentText: string): SegmentScore | null => {
+        const trimmed = segmentText.trim()
+        if (!trimmed) return null
+        const lower = trimmed.toLowerCase()
+        const hits = keywordSet.reduce((acc, keyword) => (lower.includes(keyword) ? acc + 1 : acc), 0)
+        return {
+          text: trimmed,
+          hits,
+          length: trimmed.length
+        }
+      }
+
+      const segments: SegmentScore[] = []
+      for (const candidate of normalizedCandidates) {
+        const parts = candidate.split(/(?<=[\.\!\?\n])\s+/)
+        if (parts.length === 0) {
+          const scored = scoreSegment(candidate.slice(0, 320))
+          if (scored) segments.push(scored)
+          continue
+        }
+        for (const part of parts) {
+          const scored = scoreSegment(part)
+          if (scored) segments.push(scored)
+        }
+      }
+
+      if (segments.length === 0) {
+        return normalizedCandidates[0].slice(0, 320)
+      }
+
+      segments.sort((a, b) => {
+        if (b.hits !== a.hits) return b.hits - a.hits
+        return b.length - a.length
+      })
+
+      const primary = segments[0]
+      if (!primary) {
+        return normalizedCandidates[0].slice(0, 320)
+      }
+
+      let snippet = primary.text
+      if (snippet.length < 220) {
+        for (const segment of segments.slice(1)) {
+          if (segment.text === primary.text) continue
+          snippet += ` ${segment.text}`
+          if (snippet.length >= 220 || segment.hits > 0) {
+            break
           }
         }
-        return text.slice(0, 320).trim()
       }
 
-      for (const candidate of normalizedCandidates) {
-        const chosen = chooseSegment(candidate)
-        if (chosen) {
-          return chosen
-        }
-      }
-
-      return normalizedCandidates[0].slice(0, 320)
+      return snippet.slice(0, 450)
     }
 
     const contextBlocks = results.map((result, index) => {

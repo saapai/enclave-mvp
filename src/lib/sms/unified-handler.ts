@@ -94,10 +94,10 @@ async function withTimeout<T>(
 }
 
 const STATUS_KEYWORDS = [
-  /(what('?|\s)is|where('?|\s)is|how('?|\s)is|any|got|have)  *.*(answer|update|status|results|info)/i,
-  /^(answer|status|update|respond|reply)  */,
-  /(still|ever)  *.*(waiting|searching|looking|working)/i,
-  /(is it|did it|has it)  *.*(finish|done|complete|find)/i
+  /(what(?:'s|\s+is)|where(?:'s|\s+is)|how(?:'s|\s+is)|any|got|have)\s+.*\b(answer|update|status|results|info)\b/i,
+  /^(answer|status|update|respond|reply)(\b|\s)/i,
+  /(still|ever)\s+.*\b(waiting|searching|looking|working)\b/i,
+  /(is it|did it|has it)\s+.*\b(finish|done|complete|find)\b/i
 ]
 
 function isStatusFollowUp(text: string): boolean {
