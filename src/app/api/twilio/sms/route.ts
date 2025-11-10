@@ -802,10 +802,9 @@ export async function POST(request: NextRequest) {
         const now = Date.now()
         if (existing && now - existing < CONTENT_DEDUP_WINDOW_MS) {
           console.log(`[Twilio SMS] Duplicate content query detected within window (${dedupeKey}), returning ack only`)
-          return new NextResponse(
-            `<?xml version="1.0" encoding="UTF-8"?><Response><Message>Looking that up...</Message></Response>`,
-            { headers: { 'Content-Type': 'application/xml' } }
-          )
+          return new NextResponse('<?xml version="1.0" encoding="UTF-8"?><Response/>', {
+            headers: { 'Content-Type': 'application/xml' }
+          })
         }
         INFLIGHT_CONTENT.set(dedupeKey, now)
         setTimeout(() => INFLIGHT_CONTENT.delete(dedupeKey), CONTENT_DEDUP_WINDOW_MS)
@@ -816,10 +815,9 @@ export async function POST(request: NextRequest) {
         console.log(`[Twilio SMS] [${traceId}] Content query detected, processing asynchronously`)
         
         // Return immediate acknowledgment
-        const ackResponse = new NextResponse(
-          `<?xml version="1.0" encoding="UTF-8"?><Response><Message>Looking that up...</Message></Response>`,
-          { headers: { 'Content-Type': 'application/xml' } }
-        )
+        const ackResponse = new NextResponse('<?xml version="1.0" encoding="UTF-8"?><Response/>', {
+          headers: { 'Content-Type': 'application/xml' }
+        })
         
         // Process query asynchronously (don't await)
         console.log(`[Twilio SMS] [${traceId}] Starting async handler for content query: "${body.substring(0, 50)}"`)
