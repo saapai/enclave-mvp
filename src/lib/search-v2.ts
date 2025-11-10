@@ -291,15 +291,14 @@ async function searchLexicalFallback(
   const primaryToken = tokens[0]
   
   try {
-    // FAST QUERY: No joins, just basic resource data
+    // FAST QUERY: Select only needed columns, no body scan
     const { data, error } = await client
       .from('resource')
-      .select('*')
+      .select('id,space_id,type,title,body,url,created_by,created_at,updated_at')
       .eq('space_id', spaceId)
       .or(`title.ilike.%${primaryToken}%,body.ilike.%${primaryToken}%`)
       .order('updated_at', { ascending: false })
-      .limit(limit * 2) // Get more results to filter
-      .range(offset, offset + (limit * 2) - 1)
+      .limit(limit * 2)
 
     if (error) {
       console.error('[Search V2] Lexical fallback failed:', error)
