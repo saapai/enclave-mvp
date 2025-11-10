@@ -22,31 +22,47 @@ export interface ActionMemory {
 }
 
 /**
- * Save an action to memory
+ * Save an action to memory (fire-and-forget, non-blocking)
  */
-export async function saveAction(
+export function saveAction(
   phoneNumber: string,
   action: Omit<ActionMemory, 'timestamp'>
-): Promise<void> {
-  try {
-    console.log(`[ActionMemory] Saving action for ${phoneNumber}: ${action.type}`)
-    const { error } = await supabaseAdmin
-      .from('sms_action_memory')
-      .insert({
-        phone: phoneNumber,
-        action_type: action.type,
-        action_details: action.details,
-        created_at: new Date().toISOString()
+): void {
+  // Fire-and-forget: don't await, don't block
+  const savePromise = (async () => {
+    try {
+      console.log(`[ActionMemory] Saving action for ${phoneNumber}: ${action.type}`)
+      const { error } = await supabaseAdmin
+        .from('sms_action_memory')
+        .insert({
+          phone: phoneNumber,
+          action_type: action.type,
+          action_details: action.details,
+          created_at: new Date().toISOString()
+        })
+      
+      if (error) {
+        console.error('[ActionMemory] Failed to save action:', {
+          message: error.message,
+          details: error.details || '',
+          hint: error.hint || '',
+          code: error.code || ''
+        })
+      } else {
+        console.log('[ActionMemory] Action saved successfully')
+      }
+    } catch (err: any) {
+      console.error('[ActionMemory] Failed to save action:', {
+        message: err?.message || 'Unknown error',
+        details: err?.toString() || ''
       })
-    
-    if (error) {
-      console.error('[ActionMemory] Failed to save action:', error)
-    } else {
-      console.log('[ActionMemory] Action saved successfully')
     }
-  } catch (err) {
-    console.error('[ActionMemory] Failed to save action:', err)
-  }
+  })()
+  
+  // Catch any unhandled rejections to prevent process crashes
+  savePromise.catch(() => {
+    // Already logged above, just prevent unhandled rejection
+  })
 }
 
 /**

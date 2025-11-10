@@ -24,6 +24,24 @@ export const supabaseAdmin = typeof window === 'undefined' ? (() => {
       auth: {
         autoRefreshToken: false,
         persistSession: false
+      },
+      db: {
+        schema: 'public'
+      },
+      global: {
+        headers: {
+          'Connection': 'keep-alive'
+        },
+        fetch: (url, init) => {
+          // Add aggressive timeout to prevent hangs
+          const controller = new AbortController()
+          const timeoutId = setTimeout(() => controller.abort(), 5000) // 5s max for any DB query
+          
+          return fetch(url, {
+            ...init,
+            signal: controller.signal
+          }).finally(() => clearTimeout(timeoutId))
+        }
       }
     }
   )
