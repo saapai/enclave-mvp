@@ -560,8 +560,9 @@ function extractEventFields(result: SearchResult, query: string): EventFields {
   }
 
   if (!fields.overrideTitle) {
-    const rebuiltTitle = queryTokens.length > 0 ? queryTokens.join(' ') : query
-    fields.overrideTitle = toTitleCase(rebuiltTitle)
+    // Extract the event name from the query (remove "when is", "what is", etc.)
+    const cleanedQuery = query.replace(/^(when|what|where|how)\s+(is|are|was|were)\s+/i, '').trim()
+    fields.overrideTitle = toTitleCase(cleanedQuery)
   }
 
   return fields

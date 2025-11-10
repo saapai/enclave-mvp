@@ -277,43 +277,42 @@ async function searchLexicalFallback(
 
   const simplified = query.toLowerCase().replace(/[^\w\s]/g, ' ').trim()
   const tokens = simplified.split(/\s+/).filter(t => t.length > 2)
+  
+  // Use simple ilike search only (no similarity operator to avoid PostgREST syntax errors)
   const ilikePattern = tokens.length > 0 ? `%${tokens.join('%')}%` : `%${simplified}%`
 
-  let builder = client
-    .from('resource')
-    .select(
-      `
+  try {
+    const { data, error } = await client
+      .from('resource')
+      .select(`
         *,
         tags:resource_tag(
           tag:tag(*)
         ),
         event_meta(*)
-      `
-    )
-    .eq('space_id', spaceId)
-    .order('updated_at', { ascending: false })
-    .limit(limit)
-    .range(offset, offset + limit - 1)
+      `)
+      .eq('space_id', spaceId)
+      .or(`title.ilike.${ilikePattern},body.ilike.${ilikePattern}`)
+      .order('updated_at', { ascending: false })
+      .limit(limit)
+      .range(offset, offset + limit - 1)
 
-  if (simplified.length > 0) {
-    builder = builder.or(
-      `title.ilike.${ilikePattern},body.ilike.${ilikePattern},title.similarity.${simplified},body.similarity.${simplified}`
-    )
-  }
+    if (error) {
+      console.error('[Search V2] Lexical fallback failed:', error)
+      return []
+    }
 
-  const { data, error } = await builder
-  if (error) {
-    console.error('[Search V2] Lexical fallback failed:', error)
+    return (data || []).map((resource: Record<string, unknown>) => ({
+      ...resource,
+      tags: (resource.tags as Array<{ tag: Record<string, unknown> }>)?.map(rt => rt.tag).filter(Boolean) || [],
+      rank: 0.5,
+      score: 0.5,
+      source: 'lexical'
+    })) as SearchResult[]
+  } catch (err) {
+    console.error('[Search V2] Lexical fallback exception:', err)
     return []
   }
-
-  return (data || []).map((resource: Record<string, unknown>) => ({
-    ...resource,
-    tags: (resource.tags as Array<{ tag: Record<string, unknown> }>)?.map(rt => rt.tag).filter(Boolean) || [],
-    rank: typeof (resource as any).rank === 'number' ? (resource as any).rank : 0.5,
-    score: typeof (resource as any).score === 'number' ? (resource as any).score : 0.5,
-    source: 'fts_fallback'
-  })) as SearchResult[]
 }
 
 async function searchFTS(
@@ -323,73 +322,9 @@ async function searchFTS(
   limit: number = 10,
   abortSignal?: AbortSignal
 ): Promise<SearchResult[]> {
-  const client = supabaseAdmin || supabase
-  if (!client) {
-    console.error('[Search V2 FTS] No Supabase client available')
-    return []
-  }
-  
-  const timeoutMs = Math.min(SMS_FTS_TIMEOUT_MS, budget.getRemainingMs())
-  if (timeoutMs < 100) {
-    console.log('[Search V2 FTS] Insufficient budget, skipping')
-    return []
-  }
-  
-  console.log(`[Search V2 FTS] Searching "${query}" in space ${spaceId.substring(0, 8)}... (timeout: ${timeoutMs}ms)`)
-  
-  const scoped = createScopedController(abortSignal)
-  const controller = scoped.controller
-  const hardTimeout = Math.min(timeoutMs, SMS_FTS_HARD_TIMEOUT_MS)
-  const timeoutId = setTimeout(() => controller.abort(), hardTimeout)
-  
-  try {
-    if (controller.signal.aborted) {
-      console.warn('[Search V2 FTS] Skipping due to aborted signal before start')
-      return []
-    }
-    const { data, error } = await client
-      .rpc('search_resources_fts', {
-        search_query: query,
-        target_space_id: spaceId,
-        limit_count: limit,
-        offset_count: 0
-      })
-      .abortSignal(controller.signal)
-    
-    clearTimeout(timeoutId)
-    scoped.dispose()
-    
-    if (error) {
-      console.error('[Search V2 FTS] RPC error:', error.message)
-      return []
-    }
-    
-    const results = (data || []).map((hit: any) => ({
-      ...hit,
-      tags: [],
-      score: Math.min(1.0, (hit.rank || 0) * 10 + 0.3),
-      source: 'fts'
-    } as SearchResult))
-    
-    console.log(`[Search V2 FTS] Found ${results.length} results, top score: ${results[0]?.score?.toFixed(3) || 'N/A'}`)
-    return results
-    
-  } catch (err: any) {
-    clearTimeout(timeoutId)
-    scoped.dispose()
-    if (err?.name === 'AbortError') {
-      console.warn('[Search V2 FTS] Hard timeout reached, falling back to simple search')
-      try {
-        const fallback = await searchLexicalFallback(query, spaceId, limit)
-        return fallback
-      } catch (fallbackErr) {
-        console.error('[Search V2 FTS] Fallback search failed:', fallbackErr)
-      }
-    } else {
-      console.error('[Search V2 FTS] Error:', err?.message || err)
-    }
-    return []
-  }
+  // BYPASS FTS RPC entirely due to hanging issues - go straight to lexical
+  console.log(`[Search V2 FTS] Using lexical search for "${query}" in space ${spaceId.substring(0, 8)}...`)
+  return searchLexicalFallback(query, spaceId, limit)
 }
 
 // ============================================================================
@@ -628,7 +563,7 @@ export async function hybridSearchV2(
   
   const queryTokens = new Set(normalize(query).split(' '))
   
-  // Step 1: Start embedding generation in background (non-blocking)
+  // Step 1: DISABLE embedding generation for SMS - use pre-computed only
   const embeddingState: EmbeddingState = { value: null }
   let embeddingPromise: Promise<number[] | null> | null = null
   const normalizedQuery = query.toLowerCase().trim()
@@ -637,21 +572,8 @@ export async function hybridSearchV2(
   if (cachedEntry && Date.now() - cachedEntry.timestamp < EMBEDDING_CACHE_TTL) {
     embeddingState.value = cachedEntry.embedding
     console.log(`[Search V2] [${searchId}] Embedding: cached (budget: ${budget.getRemainingMs()}ms)`)
-  } else if (budget.getRemainingMs() > SMS_EMBED_MIN_REMAINING_MS && !abortSignal?.aborted) {
-    console.log(`[Search V2] [${searchId}] Starting embedding generation in background`)
-    embeddingPromise = getCachedEmbedding(query, budget)
-      .then(result => {
-        if (result) {
-          embeddingState.value = result
-        }
-        return result
-      })
-      .catch(err => {
-        console.error('[Search V2] Background embedding failed:', err?.message || err)
-        return null
-      })
   } else {
-    console.log(`[Search V2] [${searchId}] Skipping embedding (insufficient budget: ${budget.getRemainingMs()}ms or aborted)`)
+    console.log(`[Search V2] [${searchId}] Skipping live embedding generation (use pre-computed only)`)
   }
   
   // Step 2: Search workspaces sequentially (FTS first, then vector if embedding ready)
