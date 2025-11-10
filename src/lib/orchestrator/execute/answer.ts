@@ -120,11 +120,15 @@ export async function executeAnswer(
       console.log(`[Execute Answer] [${traceId}] Top result: "${searchResults[0].title}" (score: ${searchResults[0].score?.toFixed(3)})`)
     }
 
-    const structuredAnswer = selectEventAnswer(searchResults, query, traceId)
-    if (structuredAnswer) {
-      clearTimeout(deadlineTimer)
-      return {
-        messages: [structuredAnswer]
+    // Only use structured answer for "when/where" questions, not "what" questions
+    const isWhenWhereQuery = /^(when|where)\s+(is|are|was|were)/i.test(query.trim())
+    if (isWhenWhereQuery) {
+      const structuredAnswer = selectEventAnswer(searchResults, query, traceId)
+      if (structuredAnswer) {
+        clearTimeout(deadlineTimer)
+        return {
+          messages: [structuredAnswer]
+        }
       }
     }
 
