@@ -50,7 +50,6 @@ interface WorkspaceSearchResult {
   ftsMs: number
   vectorMs: number
   topScore: number
-  preferredHit?: boolean
 }
 
 interface EmbeddingState {
@@ -319,8 +318,7 @@ async function searchWorkspace(
   embeddingState: EmbeddingState,
   embeddingPromise: Promise<number[] | null> | null,
   budget: SearchBudget,
-  abortSignal: AbortSignal | undefined,
-  preferredSpaces: Set<string>
+  abortSignal?: AbortSignal
 ): Promise<WorkspaceSearchResult> {
   const wsStart = Date.now()
   console.log(`[Search V2] Searching workspace ${workspaceId.substring(0, 8)}... (budget: ${budget.getRemainingMs()}ms)`)
@@ -337,15 +335,14 @@ async function searchWorkspace(
       topScore: 0
     }
   }
-  const ftsResults = await searchFTS(query, workspaceId, budget, 5)
+  const ftsResults = await searchFTS(query, workspaceId, budget, 8)
   const ftsMs = Date.now() - ftsStart
   
   // Check if FTS gave us a high-confidence result
   const topFtsScore = ftsResults[0]?.score || 0
-  const isPreferredWorkspace = preferredSpaces.has(workspaceId)
   const highConfidence = topFtsScore >= 0.85
-  if (highConfidence && !abortSignal?.aborted) {
-    console.log(`[Search V2] High-confidence FTS result (${topFtsScore.toFixed(3)}), skipping vector enrichment`)
+  if (highConfidence) {
+    console.log(`[Search V2] High-confidence FTS result (${topFtsScore.toFixed(3)}) in ${workspaceId.substring(0, 8)}`)
   }
   
   // Step 2: Vector search (if we have embedding and budget)
@@ -370,12 +367,12 @@ async function searchWorkspace(
     }
   }
   
-  if (!highConfidence && embedding !== null && budget.getRemainingMs() > (SMS_VECTOR_TIMEOUT_MS + 100) && !abortSignal?.aborted) {
+  if (embedding !== null && budget.getRemainingMs() > (SMS_VECTOR_TIMEOUT_MS + 100) && !abortSignal?.aborted) {
     const vectorStart = Date.now()
     vectorResults = await searchVector(embedding, workspaceId, budget, 5, abortSignal)
     vectorMs = Date.now() - vectorStart
   } else {
-    console.log('[Search V2] Skipping vector search (no embedding, insufficient budget, or high-confidence FTS)')
+    console.log('[Search V2] Skipping vector search (no embedding or insufficient budget)')
   }
   
   // Merge and deduplicate results
@@ -403,8 +400,7 @@ async function searchWorkspace(
     results: deduped,
     ftsMs,
     vectorMs,
-    topScore,
-    preferredHit: isPreferredWorkspace && highConfidence
+    topScore
   }
 }
 
@@ -420,15 +416,13 @@ export async function hybridSearchV2(
     highConfidenceThreshold?: number
     abortSignal?: AbortSignal
     traceId?: string
-    preferredSpaces?: string[]
   } = {}
 ): Promise<SearchResult[]> {
   const {
     budgetMs = SMS_SEARCH_BUDGET_MS,
     highConfidenceThreshold = 0.75,
     abortSignal,
-    traceId,
-    preferredSpaces
+    traceId
   } = options
   
   const budget = createBudget(budgetMs)
@@ -449,7 +443,6 @@ export async function hybridSearchV2(
     return []
   }
   
-  const preferredSet = new Set(preferredSpaces && preferredSpaces.length > 0 ? preferredSpaces : [workspaceIds[0]])
   const queryTokens = new Set(normalize(query).split(' '))
   
   // Step 1: Start embedding generation in background (non-blocking)
@@ -487,12 +480,12 @@ export async function hybridSearchV2(
       break
     }
     
-    const wsResult = await searchWorkspace(query, workspaceId, embeddingState, embeddingPromise, budget, abortSignal, preferredSet)
+    const wsResult = await searchWorkspace(query, workspaceId, embeddingState, embeddingPromise, budget, abortSignal)
     workspaceResults.push(wsResult)
     
     // Early exit if we found a high-confidence result
-    if (wsResult.preferredHit && wsResult.topScore >= highConfidenceThreshold) {
-      console.log(`[Search V2] [${searchId}] Preferred high-confidence result found (${wsResult.topScore.toFixed(3)}), stopping search`)
+    if (wsResult.topScore >= highConfidenceThreshold) {
+      console.log(`[Search V2] [${searchId}] High-confidence result found (${wsResult.topScore.toFixed(3)}), stopping workspace iteration`)
       break
     }
   }
@@ -513,8 +506,8 @@ export async function hybridSearchV2(
     }
   }
   
-  // Sort by score
-  deduped.sort((a, b) => computeWeight(b, preferredSet, queryTokens) - computeWeight(a, preferredSet, queryTokens))
+  // Sort by weighted score
+  deduped.sort((a, b) => computeWeight(b, queryTokens) - computeWeight(a, queryTokens))
   
   const totalMs = Date.now() - budget.startTime
   console.log(`[Search V2] [${searchId}] Complete in ${totalMs}ms`)
@@ -530,11 +523,11 @@ export async function hybridSearchV2(
 
 export { getCachedEmbedding, isEmbeddingEnabled }
 
-function computeWeight(result: SearchResult, preferredSet: Set<string>, queryTokens: Set<string>): number {
+function computeWeight(result: SearchResult, queryTokens: Set<string>): number {
   let weight = typeof result.score === 'number' ? result.score : 0
-  const spaceId = (result as any).space_id as string | undefined
-  if (spaceId && preferredSet.has(spaceId)) {
-    weight += 0.25
+  const source = ((result as any)?.source || '').toString().toLowerCase()
+  if (source.includes('resource') || source.includes('card')) {
+    weight += 0.2
   }
   const title = (result.title || '').toLowerCase()
   for (const token of queryTokens) {
@@ -542,7 +535,14 @@ function computeWeight(result: SearchResult, preferredSet: Set<string>, queryTok
       weight += 0.05
     }
   }
-  if (title.includes('summons') || title.includes('meeting') || title.includes('big little')) {
+  const text = `${title} ${(result as any)?.subtitle || ''}`.toLowerCase()
+  if (/every\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)/i.test(text)) {
+    weight += 0.1
+  }
+  if (/(am|pm)/i.test(text)) {
+    weight += 0.05
+  }
+  if (title.includes('summons') || title.includes('meeting') || title.includes('big little') || title.includes('futsal')) {
     weight += 0.05
   }
   return weight

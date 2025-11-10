@@ -9,7 +9,6 @@ import { hybridSearchV2 } from '@/lib/search-v2'
 import { getWorkspaceIds, rankWorkspaceIds } from '@/lib/workspace'
 import { generateTraceId } from '@/lib/utils'
 import { ENV } from '@/lib/env'
-import { resolveFaqAlias, fetchFaqAnswer } from '@/lib/faq'
 
 // SearchResult type
 type SearchResult = Awaited<ReturnType<typeof hybridSearchV2>>[number]
@@ -32,8 +31,7 @@ export async function executeAnswer(
   console.log(`[Execute Answer] [${traceId}] Frame user ID:`, frame.user.id)
   const query = frame.text
   const normalizedQuery = query.toLowerCase().trim()
-  const faqEntry = resolveFaqAlias(normalizedQuery)
-  const explicitDeadlineMs = faqEntry ? 1500 : Number(process.env.SMS_EXECUTE_DEADLINE_MS || '4000')
+  const explicitDeadlineMs = Number(process.env.SMS_EXECUTE_DEADLINE_MS || '4000')
   const abortController = new AbortController()
   const deadlineTimer = setTimeout(() => {
     console.warn(`[Execute Answer] [${traceId}] Deadline reached, aborting search pipeline`)
@@ -41,16 +39,6 @@ export async function executeAnswer(
   }, explicitDeadlineMs)
   
   try {
-    if (faqEntry) {
-      const faqStart = Date.now()
-      const direct = await fetchFaqAnswer(faqEntry)
-      if (direct) {
-        console.log(`[Execute Answer] [${traceId}] FAQ hit resolved in ${Date.now() - faqStart}ms`)
-        return { messages: [direct] }
-      }
-      console.log(`[Execute Answer] [${traceId}] FAQ entry matched but no direct answer, falling back to search`)
-    }
-
     // Step 1: Get workspace IDs (with 500ms timeout via new workspace.ts)
     const primaryWorkspaceId = ENV.PRIMARY_WORKSPACE_ID?.trim()
     let spaceIds: string[]
@@ -122,8 +110,7 @@ export async function executeAnswer(
       budgetMs: searchBudget,
       highConfidenceThreshold: 0.75,
       abortSignal: abortController.signal,
-      traceId,
-      preferredSpaces: finalWorkspaceIds
+      traceId
     })
     
     const searchDuration = Date.now() - searchStart
@@ -132,7 +119,15 @@ export async function executeAnswer(
     if (searchResults.length > 0) {
       console.log(`[Execute Answer] [${traceId}] Top result: "${searchResults[0].title}" (score: ${searchResults[0].score?.toFixed(3)})`)
     }
-    
+
+    const structuredAnswer = selectEventAnswer(searchResults, query, traceId)
+    if (structuredAnswer) {
+      clearTimeout(deadlineTimer)
+      return {
+        messages: [structuredAnswer]
+      }
+    }
+
     // Step 3: If we have good results, compose response directly
     if (searchResults.length > 0 && searchResults[0].score && searchResults[0].score >= 0.60) {
       console.log(`[Execute Answer] [${traceId}] Good results found, composing response directly`)
@@ -143,11 +138,8 @@ export async function executeAnswer(
     // Step 4: If no good results, return helpful message
     if (searchResults.length === 0) {
       console.log(`[Execute Answer] [${traceId}] No results found`)
-      const fallbackMessage = faqEntry
-        ? 'Still digging up the exact details. I\'ll update you shortly.'
-        : `I couldn't find anything about "${query}" in your workspaces. Try rephrasing or check if the document is uploaded.`
       return {
-        messages: [fallbackMessage]
+        messages: [`I couldn't find anything about "${query}" in your workspaces. Try rephrasing or check if the document is uploaded.`]
       }
     }
     
@@ -405,4 +397,129 @@ async function composeDirectResponse(
       messages: ["I found some information but couldn't process it properly. Please try again."]
     }
   }
+}
+
+interface EventFields {
+  title?: string
+  date?: string
+  weeklyRule?: string
+  time?: string
+  location?: string
+  context?: string
+}
+
+function selectEventAnswer(results: SearchResult[], query: string, traceId: string): string | null {
+  for (const result of results.slice(0, 10)) {
+    const fields = extractEventFields(result)
+    if (isAnswerable(fields)) {
+      const message = formatEventAnswer(fields, query)
+      console.log(`[Execute Answer] [${traceId}] Structured answer from result`, {
+        resultTitle: result.title,
+        date: fields.date,
+        weeklyRule: fields.weeklyRule,
+        time: fields.time,
+        location: fields.location
+      })
+      return message
+    }
+  }
+  return null
+}
+
+function extractEventFields(result: SearchResult): EventFields {
+  const fields: EventFields = {}
+  const textParts: string[] = []
+  const title = (result as any)?.title as string | undefined
+  if (title) {
+    fields.title = title
+    textParts.push(title)
+  }
+  const possibleFields = ['subtitle', 'summary', 'content', 'body', 'description', 'preview', 'snippet', 'text']
+  for (const key of possibleFields) {
+    const value = (result as any)?.[key]
+    if (typeof value === 'string') {
+      textParts.push(value)
+    }
+  }
+  const combined = textParts.join(' ').replace(/\s+/g, ' ').trim()
+  fields.context = combined
+
+  const dateRegex = /(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)(\s+\d{1,2}(st|nd|rd|th)?)/i
+  const weeklyRegex = /\b(every|each)\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday|week|weekday|weekend)s?\b/i
+  const timeRegex = /\b\d{1,2}(:\d{2})?\s?(am|pm)\b/i
+  const locationRegex = /\b(?:at|@)\s+([^\.,;]+)/i
+
+  const dateMatch = combined.match(dateRegex)
+  const weeklyMatch = combined.match(weeklyRegex)
+  const timeMatch = combined.match(timeRegex)
+  const locationMatch = combined.match(locationRegex)
+
+  if (dateMatch) {
+    fields.date = dateMatch[0].replace(/\s+/g, ' ').trim()
+  }
+  if (weeklyMatch) {
+    fields.weeklyRule = weeklyMatch[0].replace(/\s+/g, ' ').trim()
+  }
+  if (timeMatch) {
+    fields.time = timeMatch[0].toUpperCase()
+  }
+  if (locationMatch) {
+    const location = locationMatch[1].trim()
+    if (location.length > 0) {
+      fields.location = location
+    }
+  } else {
+    const venueKeywords = ['kelton', 'levering', 'sac', 'apartment', 'terrace', 'lounge']
+    for (const keyword of venueKeywords) {
+      const match = combined.match(new RegExp(`([^.]*${keyword}[^.]*)`, 'i'))
+      if (match) {
+        fields.location = match[0].trim()
+        break
+      }
+    }
+  }
+
+  return fields
+}
+
+function isAnswerable(fields: EventFields): boolean {
+  return Boolean(fields.date || fields.weeklyRule)
+}
+
+function formatEventAnswer(fields: EventFields, query: string): string {
+  const name = fields.title || query
+  const segments: string[] = []
+
+  if (fields.weeklyRule) {
+    let clause = `${name} happens ${fields.weeklyRule}`
+    if (fields.time) {
+      clause += ` at ${fields.time}`
+    }
+    segments.push(clause + '.')
+  } else if (fields.date) {
+    let clause = `${name} is on ${fields.date}`
+    if (fields.time) {
+      clause += ` at ${fields.time}`
+    }
+    segments.push(clause + '.')
+  }
+
+  if (fields.location) {
+    const locationSentence = fields.location.endsWith('.') ? fields.location : `${fields.location}.`
+    segments.push(locationSentence)
+  }
+
+  if (fields.context) {
+    segments.push(truncateAdditionalContext(fields.context, segments.join(' ')))
+  }
+
+  return segments.filter(Boolean).join(' ')
+}
+
+function truncateAdditionalContext(context: string, already: string): string {
+  const cleaned = context.replace(/\s+/g, ' ').trim()
+  if (cleaned.length <= 0) return ''
+  const maxLen = 360 - already.length
+  if (maxLen <= 60) return ''
+  return cleaned.length > maxLen ? cleaned.slice(0, maxLen).trim() + '...' : cleaned
 }
