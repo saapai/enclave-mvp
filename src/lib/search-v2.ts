@@ -17,13 +17,13 @@ import type { SearchResult } from './search'
 // CONFIGURATION
 // ============================================================================
 
-const SMS_SEARCH_BUDGET_MS = Number(process.env.SMS_SEARCH_BUDGET_MS || '12000') // 12s total budget
-const SMS_FTS_TIMEOUT_MS = Number(process.env.SMS_FTS_TIMEOUT_MS || '2500') // 2.5s per FTS
-const SMS_EMBED_TIMEOUT_MS = Number(process.env.SMS_EMBED_TIMEOUT_MS || '4000') // 4s for embedding
-const SMS_VECTOR_TIMEOUT_MS = Number(process.env.SMS_VECTOR_TIMEOUT_MS || '2500') // 2.5s per vector
-const SMS_EMBED_MIN_REMAINING_MS = Number(process.env.SMS_EMBED_MIN_REMAINING_MS || '5000') // Need 5s left to embed
-const SMS_FTS_HARD_TIMEOUT_MS = Number(process.env.SMS_FTS_HARD_TIMEOUT_MS || '2400')
-const SMS_VECTOR_HARD_TIMEOUT_MS = Number(process.env.SMS_VECTOR_HARD_TIMEOUT_MS || '2400')
+const SMS_SEARCH_BUDGET_MS = Number(process.env.SMS_SEARCH_BUDGET_MS || '20000') // 20s total budget (was 12s)
+const SMS_FTS_TIMEOUT_MS = Number(process.env.SMS_FTS_TIMEOUT_MS || '4000') // 4s per FTS (was 2.5s)
+const SMS_EMBED_TIMEOUT_MS = Number(process.env.SMS_EMBED_TIMEOUT_MS || '8000') // 8s for embedding (was 4s)
+const SMS_VECTOR_TIMEOUT_MS = Number(process.env.SMS_VECTOR_TIMEOUT_MS || '4000') // 4s per vector (was 2.5s)
+const SMS_EMBED_MIN_REMAINING_MS = Number(process.env.SMS_EMBED_MIN_REMAINING_MS || '4000') // Need 4s left to embed (was 5s)
+const SMS_FTS_HARD_TIMEOUT_MS = Number(process.env.SMS_FTS_HARD_TIMEOUT_MS || '3900')
+const SMS_VECTOR_HARD_TIMEOUT_MS = Number(process.env.SMS_VECTOR_HARD_TIMEOUT_MS || '3900')
 
 // Circuit breaker: if embedding fails 3 times in 5 min, disable for next queries
 const embeddingFailures: number[] = []
@@ -421,7 +421,7 @@ async function searchWorkspace(
     const remaining = budget.getRemainingMs()
     const waitBudget = Math.max(0, remaining - (SMS_VECTOR_TIMEOUT_MS + 100))
     if (waitBudget > 0) {
-      const waitMs = Math.min(500, waitBudget)
+      const waitMs = Math.min(1500, waitBudget)
       console.log(`[Search V2] Waiting up to ${waitMs}ms for embedding before vector search`)
       embedding = await Promise.race([
         embeddingPromise,
