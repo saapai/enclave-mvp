@@ -120,28 +120,9 @@ function queueActionMemorySave(
   action: Omit<ActionMemory, 'timestamp'>,
   label: string
 ) {
-  const start = Date.now()
-  let timeoutFired = false
-
-  const timeoutId = setTimeout(() => {
-    timeoutFired = true
-    console.error(`[UnifiedHandler] ${label} still pending after ${ACTION_MEMORY_TIMEOUT_MS}ms`)
-  }, ACTION_MEMORY_TIMEOUT_MS)
-
+  // saveAction is now fire-and-forget (returns void), so just call it
+  // The timeout warning is no longer needed since it's non-blocking
   saveAction(phoneNumber, action)
-    .then(() => {
-      clearTimeout(timeoutId)
-      const duration = Date.now() - start
-      if (timeoutFired) {
-        console.log(`[UnifiedHandler] ${label} completed after timeout in ${duration}ms`)
-      } else {
-        console.log(`[UnifiedHandler] ${label} completed in ${duration}ms`)
-      }
-    })
-    .catch((err) => {
-      clearTimeout(timeoutId)
-      console.error(`[UnifiedHandler] ${label} failed:`, err)
-    })
 }
 
 /**
