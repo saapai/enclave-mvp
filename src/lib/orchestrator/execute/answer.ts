@@ -606,21 +606,8 @@ function formatEventAnswer(fields: EventFields, query: string): string {
     segments.push(locationSentence)
   }
 
-  // Remove context if we already have date/time/location (avoid repetition)
-  const hasEnoughInfo = (fields.date || fields.weeklyRule) && (fields.time || fields.location)
-  if (fields.context && !hasEnoughInfo) {
-    // Remove the event name from context to avoid repetition
-    let cleanContext = fields.context
-    if (fields.title) {
-      // Remove all occurrences of the title from context
-      const titlePattern = new RegExp(fields.title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi')
-      cleanContext = cleanContext.replace(titlePattern, '').trim()
-    }
-    cleanContext = cleanContext.replace(/^[.\s]+|[.\s]+$/g, '') // Remove leading/trailing dots and spaces
-    if (cleanContext.length > 20) { // Only add if there's meaningful content left
-      segments.push(truncateAdditionalContext(cleanContext, segments.join(' ')))
-    }
-  }
+  // NEVER add context - it causes repetition. We have date/time/location already.
+  // If user wants more details, they can ask "what is X?"
 
   return dedupeSentences(segments.filter(Boolean).join(' '))
 }

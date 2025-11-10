@@ -33,9 +33,9 @@ export const supabaseAdmin = typeof window === 'undefined' ? (() => {
           'Connection': 'keep-alive'
         },
         fetch: (url, init) => {
-          // Add aggressive timeout to prevent hangs
+          // Add timeout to prevent hangs (15s to allow for lexical search)
           const controller = new AbortController()
-          const timeoutId = setTimeout(() => controller.abort(), 5000) // 5s max for any DB query
+          const timeoutId = setTimeout(() => controller.abort(), 15000) // 15s max for any DB query
           
           return fetch(url, {
             ...init,

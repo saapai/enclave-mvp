@@ -276,7 +276,7 @@ async function searchLexicalFallback(
   }
 
   // Extract meaningful keywords from query (remove stop words like "when", "is", "what", etc.)
-  const stopWords = new Set(['when', 'is', 'are', 'was', 'were', 'what', 'where', 'who', 'how', 'the', 'a', 'an'])
+  const stopWords = new Set(['when', 'is', 'are', 'was', 'were', 'what', 'where', 'who', 'how', 'which', 'the', 'a', 'an', 'do', 'does', 'did'])
   const simplified = query.toLowerCase().replace(/[^\w\s]/g, ' ').trim()
   const tokens = simplified.split(/\s+/)
     .filter(t => t.length >= 2 && !stopWords.has(t)) // Keep 2+ char tokens, exclude stop words
