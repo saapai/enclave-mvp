@@ -955,9 +955,11 @@ export async function POST(request: NextRequest) {
               }
             }
           }
-        })().catch((err) => {
-          // Catch any unhandled errors from the IIFE to prevent process crashes
-          console.error(`[Twilio SMS] [${traceId}] Unhandled error in async query handler:`, err)
+        }
+        
+        // Start processing asynchronously (fire and forget)
+        processQuery(traceId, from, body).catch((err) => {
+          console.error(`[Twilio SMS] [${traceId}] Process query error:`, err)
         })
         
         return ackResponse
