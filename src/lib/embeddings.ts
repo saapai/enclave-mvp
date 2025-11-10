@@ -5,8 +5,9 @@ import { ENV } from './env'
 const OPENAI_API_KEY = ENV.OPENAI_API_KEY
 const EMBEDDING_MODEL = process.env.EMBEDDING_MODEL || 'text-embedding-3-small'
 const EMBEDDING_DIMENSIONS = Number(process.env.EMBEDDING_DIMENSIONS || '1536')
-const OPENAI_EMBED_TIMEOUT_MS = Number(process.env.OPENAI_EMBED_TIMEOUT_MS || '2000')
+const OPENAI_EMBED_TIMEOUT_MS = Number(process.env.OPENAI_EMBED_TIMEOUT_MS || '6000')
 const OPENAI_EMBED_ATTEMPTS = Number(process.env.OPENAI_EMBED_ATTEMPTS || '3')
+const OPENAI_EMBED_RETRY_DELAYS_MS = [300, 800]
 
 async function generateEmbedding(text: string): Promise<number[] | null> {
   if (!OPENAI_API_KEY) {
@@ -62,8 +63,10 @@ async function generateEmbedding(text: string): Promise<number[] | null> {
         console.error(`OpenAI embedding exception (attempt ${attempt}):`, err)
       }
 
-      // Backoff a bit before retrying
-      await new Promise(resolve => setTimeout(resolve, 200 * attempt))
+      const backoff = OPENAI_EMBED_RETRY_DELAYS_MS[attempt - 1]
+      if (backoff) {
+        await new Promise(resolve => setTimeout(resolve, backoff))
+      }
     }
   }
 
