@@ -526,103 +526,35 @@ export async function searchResources(
   // TODO: Implement proper tag filtering
 
   if (query.trim()) {
-    // Use Postgres full-text search function for ranked results
-    // Use admin client and filter by userId manually since auth.uid() doesn't work with Clerk
+    // Use Postgres full-text search function for ranked results (websearch style)
     console.log(`[FTS Search] Query: "${query}", Space: ${spaceId}, User: ${userId}`)
-    
-    // First, check what resources exist in the database
-    if (process.env.SEARCH_DEBUG === 'true') {
-      const { data: allResources, error: checkError } = await dbClient
-        .from('resource')
-        .select('id, title, body, created_by, source, type')
-        .eq('space_id', spaceId)
-        .limit(200)
-      
-      if (checkError) {
-        console.error('[FTS Search] Resource inventory check failed:', checkError)
-      } else {
-        console.log(`[FTS Search] Total resources in DB: ${allResources?.length || 0}`)
-        if (allResources && allResources.length > 0) {
-          console.log(`[FTS Search] Resources by source:`, allResources.reduce((acc: any, r: any) => {
-            acc[r.source] = (acc[r.source] || 0) + 1
-            return acc
-          }, {}))
-          const userResources = allResources.filter((r: any) => r.created_by === userId)
-          console.log(`[FTS Search] User's resources: ${userResources.length}`)
-          if (userResources.length > 0) {
-            console.log(`[FTS Search] User resource titles:`, userResources.map((r: any) => r.title))
-          }
-        }
-      }
-    }
-    
-    console.log(`[FTS Search] Calling RPC with query: "${query}"`)
-    
-    // For default workspace (personal), filter by user to ensure privacy
-    // For custom workspaces, allow searching all resources in that workspace
-    const DEFAULT_SPACE_ID = '00000000-0000-0000-0000-000000000000'
-    const shouldFilterByUser = spaceId === DEFAULT_SPACE_ID
-    
-    // CRITICAL: Skip RPC entirely - it's hanging in Postgres
-    // Use direct ilike query instead
-    console.log(`[FTS Search] BYPASSING RPC - using direct ilike query`)
-    let hits: any[] | null = null
-    let rpcError: any = null
-    
-    try {
-      const ilikeStart = Date.now()
-      const ilikeResponse = await runWithAbort<{ data: any[] | null; error: any }>(
-        'fts_ilike_direct',
-        1500,
-        (signal) =>
-          (async () => {
-            const res = await (dbClient as any)
-              .from('resource')
-              .select('*')
-              .eq('space_id', spaceId)
-              .or(`title.ilike.%${query}%,body.ilike.%${query}%`)
-              .limit(limit)
-              .range(offset, offset + limit - 1)
-              .abortSignal(signal)
-            return res as { data: any[] | null; error: any }
-          })()
-      )
-      
-      const ilikeDuration = Date.now() - ilikeStart
-      if (!ilikeResponse) {
-        console.warn(`[FTS Search] Direct ilike timed out after ${ilikeDuration}ms`)
-        rpcError = new Error('timeout:fts_ilike_direct')
-      } else {
-        console.log(`[FTS Search] Direct ilike completed in ${ilikeDuration}ms, returned ${ilikeResponse.data?.length || 0} results`)
-        if (ilikeResponse.error) {
-          console.error('[FTS Search] Direct ilike error:', ilikeResponse.error)
-          rpcError = ilikeResponse.error
-        } else {
-          hits = (ilikeResponse.data || []).map((r: any) => ({ ...r, rank: 0.5 }))
-        }
-      }
-    } catch (err) {
-      console.error('[FTS Search] Direct ilike failed:', err)
-      rpcError = err
-    }
-    
-    // Direct ilike results already populated in hits variable above
-    
-    console.log(`[FTS Search] Query response:`, {
-      hitCount: hits?.length,
-      error: rpcError,
-      firstHit: hits?.[0] ? { id: hits[0].id, title: hits[0].title, rank: hits[0].rank } : null
+
+    const normalizedQuery = normalizeUserQuery(query)
+
+    const fallbackVariants = buildFallbackVariants(normalizedQuery)
+
+    const { data: rpcData, error: rpcError } = await (supabaseAdmin as any).rpc('search_resources_fts', {
+      search_query: normalizedQuery,
+      target_space_id: spaceId,
+      limit_count: limit,
+      offset_count: offset
     })
 
-    if (rpcError || !hits || hits.length === 0) {
-      if (rpcError) {
-        console.error('[FTS Search] Query error:', rpcError)
-      }
+    let hits: any[] = []
+
+    if (!rpcError && Array.isArray(rpcData) && rpcData.length > 0) {
+      hits = rpcData
+    } else {
+      console.error('[FTS Search] RPC failed or returned no rows:', rpcError)
+      hits = await runFallbackQueries(dbClient, spaceId, fallbackVariants, limit, offset)
+    }
+
+    if (!hits || hits.length === 0) {
       console.log('[FTS Search] No results found, returning empty')
       return []
     }
 
-    console.log(`[FTS Search] Raw hits: ${hits?.length || 0}`)
+    console.log(`[FTS Search] Raw hits: ${hits.length}`)
     if (hits && hits.length > 0) {
       console.log(`[FTS Search] First hit:`, { id: hits[0].id, title: hits[0].title, created_by: hits[0].created_by })
     }
@@ -775,4 +707,85 @@ export function calculateTypeIntentBoost(query: string, resourceType: string): n
   }
   
   return 0
+}
+
+function normalizeUserQuery(query: string): string {
+  return query
+    .replace(/[?\s]+/g, ' ')
+    .trim()
+}
+
+function buildFallbackVariants(query: string): string[] {
+  const stripped = query.toLowerCase()
+  const variants = new Set<string>([stripped])
+
+  if (/big little/.test(stripped)) {
+    variants.add('big little')
+    variants.add('"big/little"')
+    variants.add('"family reveal"')
+  }
+  if (/ae summons/.test(stripped)) {
+    variants.add('ae summons')
+    variants.add('alpha epsilon summons')
+  }
+  if (/futsal/.test(stripped)) {
+    variants.add('futsal')
+    variants.add('im futsal')
+  }
+  if (/active meeting/.test(stripped)) {
+    variants.add('active meeting')
+    variants.add('actives meeting')
+  }
+
+  return Array.from(variants)
+}
+
+async function runFallbackQueries(
+  client: typeof supabaseAdmin,
+  spaceId: string,
+  variants: string[],
+  limit: number,
+  offset: number
+): Promise<any[]> {
+  if (!client) {
+    console.error('[FTS Search] No Supabase client available for fallback search')
+    return []
+  }
+
+  console.log('[FTS Search] Running fallback lexical search variants:', variants)
+
+  for (const variant of variants) {
+    const { data, error } = await client
+      .from('resource')
+      .select('*')
+      .eq('space_id', spaceId)
+      .or(`title.ilike.%${variant}%,body.ilike.%${variant}%`)
+      .range(offset, offset + limit - 1)
+
+    if (error) {
+      console.error('[FTS Search] Fallback ilike error:', error)
+      continue
+    }
+
+    if (data && data.length > 0) {
+      return data.map((row: any) => ({ ...row, rank: 0.1 }))
+    }
+  }
+
+  // pg_trgm similarity fallback
+  const simple = variants[0]
+  const { data: trigramData, error: trigramError } = await client
+    .from('resource')
+    .select('*')
+    .eq('space_id', spaceId)
+    .gte('similarity(title, :variant)', 0.2 as any)
+    .limit(limit)
+    .maybeSingle()
+
+  if (trigramError) {
+    console.error('[FTS Search] Trigram fallback error:', trigramError)
+    return []
+  }
+
+  return trigramData ? [trigramData] : []
 }
