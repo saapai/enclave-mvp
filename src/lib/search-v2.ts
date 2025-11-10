@@ -62,6 +62,73 @@ interface AbortableController {
 }
 
 // ============================================================================
+// ENTITY EXTRACTION & RERANKING
+// ============================================================================
+
+// Canonical entities extracted from uploaded resource cards
+// These are common event/topic names that users query about
+const KNOWN_ENTITIES = [
+  'active meeting', 'actives meeting', 'active', 'actives',
+  'big little', 'big/little', 'bl', 'big little appreciation', 'bla',
+  'ae summons', 'alpha epsilon summons', 'ae', 'alpha epsilon',
+  'im futsal', 'intramural futsal', 'futsal',
+  'study hall', 'study session',
+  'gm', 'general meeting', 'chapter meeting',
+  'social', 'mixer', 'philanthropy'
+]
+
+/**
+ * Extract known entities from a query string
+ * Returns normalized entity strings that appear in the query
+ */
+function extractEntities(query: string): string[] {
+  const normalized = query.toLowerCase()
+    .replace(/[^\w\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+  
+  return KNOWN_ENTITIES.filter(entity => {
+    const entityNorm = entity.replace(/[^\w\s]/g, ' ').replace(/\s+/g, ' ')
+    return normalized.includes(entityNorm)
+  })
+}
+
+/**
+ * Rerank search results to prefer:
+ * 1. Exact entity match in title
+ * 2. Resource type priority (event > faq > doc > link)
+ * 3. Raw search score
+ */
+function rerankResults(results: SearchResult[], query: string): SearchResult[] {
+  const entities = extractEntities(query)
+  
+  return results.sort((a, b) => {
+    // 1. Exact entity match in title
+    const aTitle = (a.title || '').toLowerCase()
+    const bTitle = (b.title || '').toLowerCase()
+    const aMatch = entities.some(e => aTitle.includes(e))
+    const bMatch = entities.some(e => bTitle.includes(e))
+    if (aMatch && !bMatch) return -1
+    if (!aMatch && bMatch) return 1
+    
+    // 2. Type priority
+    const typePriority: Record<string, number> = {
+      event: 4,
+      faq: 3,
+      doc: 2,
+      form: 1,
+      link: 0
+    }
+    const aPri = typePriority[a.type] || 0
+    const bPri = typePriority[b.type] || 0
+    if (aPri !== bPri) return bPri - aPri
+    
+    // 3. Score
+    return (b.score || 0) - (a.score || 0)
+  })
+}
+
+// ============================================================================
 // UTILITIES
 // ============================================================================
 
@@ -338,11 +405,10 @@ async function searchWorkspace(
   const ftsResults = await searchFTS(query, workspaceId, budget, 8)
   const ftsMs = Date.now() - ftsStart
   
-  // Check if FTS gave us a high-confidence result
+  // Log top FTS score (no early-stop, we'll search all workspaces)
   const topFtsScore = ftsResults[0]?.score || 0
-  const highConfidence = topFtsScore >= 0.85
-  if (highConfidence) {
-    console.log(`[Search V2] High-confidence FTS result (${topFtsScore.toFixed(3)}) in ${workspaceId.substring(0, 8)}`)
+  if (topFtsScore > 0) {
+    console.log(`[Search V2] FTS top score: ${topFtsScore.toFixed(3)} in ${workspaceId.substring(0, 8)}`)
   }
   
   // Step 2: Vector search (if we have embedding and budget)
@@ -483,11 +549,8 @@ export async function hybridSearchV2(
     const wsResult = await searchWorkspace(query, workspaceId, embeddingState, embeddingPromise, budget, abortSignal)
     workspaceResults.push(wsResult)
     
-    // Early exit if we found a high-confidence result
-    if (wsResult.topScore >= highConfidenceThreshold) {
-      console.log(`[Search V2] [${searchId}] High-confidence result found (${wsResult.topScore.toFixed(3)}), stopping workspace iteration`)
-      break
-    }
+    // Continue searching all workspaces (no early exit)
+    // We'll rerank results globally after collecting from all sources
   }
   
   // Step 3: Aggregate and rank results
@@ -513,20 +576,30 @@ export async function hybridSearchV2(
       const score = typeof hit.score === 'number' ? hit.score.toFixed(3) : 'n/a'
       return `${hit.title || 'untitled'} [score=${score}, source=${source}, space=${spaceId?.substring(0, 8) || 'n/a'}]`
     })
-    console.log(`[Search V2] [${searchId}] Pre-weight top hits:`, preview)
+    console.log(`[Search V2] [${searchId}] Pre-rerank top hits:`, preview)
   } else {
     console.log(`[Search V2] [${searchId}] No hits returned across searched workspaces`)
   }
 
-  // Sort by weighted score
-  deduped.sort((a, b) => computeWeight(b, queryTokens) - computeWeight(a, queryTokens))
+  // Apply entity-based reranking (entity match > type priority > score)
+  const reranked = rerankResults(deduped, query)
+  
+  // Log extracted entities and reranking effect
+  const entities = extractEntities(query)
+  if (entities.length > 0) {
+    console.log(`[Search V2] [${searchId}] Extracted entities:`, entities)
+  }
+  if (reranked.length > 0 && reranked[0].id !== deduped[0]?.id) {
+    console.log(`[Search V2] [${searchId}] Reranking changed top result: "${deduped[0]?.title}" → "${reranked[0]?.title}"`)
+  }
   
   const totalMs = Date.now() - budget.startTime
   console.log(`[Search V2] [${searchId}] Complete in ${totalMs}ms`)
-  console.log(`[Search V2] [${searchId}] Results: ${deduped.length} (top score: ${deduped[0]?.score?.toFixed(3) || 'N/A'})`)
+  console.log(`[Search V2] [${searchId}] Results: ${reranked.length} (top score: ${reranked[0]?.score?.toFixed(3) || 'N/A'})`)
+  console.log(`[Search V2] [${searchId}] Top result: "${reranked[0]?.title}" (type: ${reranked[0]?.type})`)
   console.log(`[Search V2] [${searchId}] Workspaces searched: ${workspaceResults.length}/${workspaceIds.length}`)
   
-  return deduped.slice(0, 10) // Return top 10
+  return reranked.slice(0, 10) // Return top 10
 }
 
 // ============================================================================
