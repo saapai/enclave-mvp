@@ -350,15 +350,15 @@ async function composeDirectResponse(
         messages: [
           {
             role: 'system',
-            content: 'You are a helpful assistant answering questions for a sorority/fraternity operations team. Use ONLY the provided search results to answer. If any result mentions a date, time, or definition relevant to the question, surface it directly. If the context lacks the answer, say so explicitly and suggest the closest relevant details you do see.'
+            content: 'You are a helpful assistant answering questions for a sorority/fraternity operations team. Provide ONE concise, direct answer using ONLY the provided search results. Do NOT repeat information. If you find date, time, or location, state it once clearly. If the answer is not in the results, say so briefly.'
           },
           {
             role: 'user',
-            content: `Search Results:\n${truncatedContext}\n\nQuestion: ${query}\n\nRespond with the answer using the evidence above. Quote or reference the relevant result (e.g., "Result 1") when possible. If the answer truly is not present, state that clearly.`
+            content: `Search Results:\n${truncatedContext}\n\nQuestion: ${query}\n\nProvide a single, concise answer (2-3 sentences max). Do NOT repeat the same information multiple times. If you find the answer, state it once clearly. If not found, say "I couldn't find that information."`
           }
         ],
-        temperature: 0.2,
-        max_tokens: 220
+        temperature: 0.1,
+        max_tokens: 150
       })
     })
     
