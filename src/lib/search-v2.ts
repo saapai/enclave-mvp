@@ -17,13 +17,13 @@ import type { SearchResult } from './search'
 // CONFIGURATION
 // ============================================================================
 
-const SMS_SEARCH_BUDGET_MS = Number(process.env.SMS_SEARCH_BUDGET_MS || '8000') // 8s total (reduced now that OpenAI is fast)
-const SMS_FTS_TIMEOUT_MS = Number(process.env.SMS_FTS_TIMEOUT_MS || '800') // 800ms per FTS
-const SMS_EMBED_TIMEOUT_MS = Number(process.env.SMS_EMBED_TIMEOUT_MS || '2000') // 2s for embedding (OpenAI is fast ~200-500ms)
-const SMS_VECTOR_TIMEOUT_MS = Number(process.env.SMS_VECTOR_TIMEOUT_MS || '1200') // 1.2s per vector
-const SMS_EMBED_MIN_REMAINING_MS = Number(process.env.SMS_EMBED_MIN_REMAINING_MS || '2500') // Need 2.5s left to embed (slightly more than timeout)
-const SMS_FTS_HARD_TIMEOUT_MS = Number(process.env.SMS_FTS_HARD_TIMEOUT_MS || '350')
-const SMS_VECTOR_HARD_TIMEOUT_MS = Number(process.env.SMS_VECTOR_HARD_TIMEOUT_MS || '600')
+const SMS_SEARCH_BUDGET_MS = Number(process.env.SMS_SEARCH_BUDGET_MS || '12000') // 12s total budget
+const SMS_FTS_TIMEOUT_MS = Number(process.env.SMS_FTS_TIMEOUT_MS || '2500') // 2.5s per FTS
+const SMS_EMBED_TIMEOUT_MS = Number(process.env.SMS_EMBED_TIMEOUT_MS || '4000') // 4s for embedding
+const SMS_VECTOR_TIMEOUT_MS = Number(process.env.SMS_VECTOR_TIMEOUT_MS || '2500') // 2.5s per vector
+const SMS_EMBED_MIN_REMAINING_MS = Number(process.env.SMS_EMBED_MIN_REMAINING_MS || '5000') // Need 5s left to embed
+const SMS_FTS_HARD_TIMEOUT_MS = Number(process.env.SMS_FTS_HARD_TIMEOUT_MS || '2400')
+const SMS_VECTOR_HARD_TIMEOUT_MS = Number(process.env.SMS_VECTOR_HARD_TIMEOUT_MS || '2400')
 
 // Circuit breaker: if embedding fails 3 times in 5 min, disable for next queries
 const embeddingFailures: number[] = []
@@ -54,6 +54,11 @@ interface WorkspaceSearchResult {
 
 interface EmbeddingState {
   value: number[] | null
+}
+
+interface AbortableController {
+  controller: AbortController
+  dispose(): void
 }
 
 // ============================================================================
@@ -88,6 +93,26 @@ function isEmbeddingEnabled(): boolean {
 function recordEmbeddingFailure(): void {
   embeddingFailures.push(Date.now())
   console.log(`[Search V2] Recorded embedding failure (${embeddingFailures.length} recent failures)`)
+}
+
+function createScopedController(parent?: AbortSignal): AbortableController {
+  const controller = new AbortController()
+  const onAbort = () => controller.abort()
+  if (parent) {
+    if (parent.aborted) {
+      controller.abort()
+    } else {
+      parent.addEventListener('abort', onAbort)
+    }
+  }
+  return {
+    controller,
+    dispose() {
+      if (parent) {
+        parent.removeEventListener('abort', onAbort)
+      }
+    }
+  }
 }
 
 async function getCachedEmbedding(query: string, budget: SearchBudget): Promise<number[] | null> {
@@ -142,7 +167,8 @@ async function searchFTS(
   query: string,
   spaceId: string,
   budget: SearchBudget,
-  limit: number = 10
+  limit: number = 10,
+  abortSignal?: AbortSignal
 ): Promise<SearchResult[]> {
   const client = supabaseAdmin || supabase
   if (!client) {
@@ -158,11 +184,16 @@ async function searchFTS(
   
   console.log(`[Search V2 FTS] Searching "${query}" in space ${spaceId.substring(0, 8)}... (timeout: ${timeoutMs}ms)`)
   
-  const controller = new AbortController()
+  const scoped = createScopedController(abortSignal)
+  const controller = scoped.controller
   const hardTimeout = Math.min(timeoutMs, SMS_FTS_HARD_TIMEOUT_MS)
   const timeoutId = setTimeout(() => controller.abort(), hardTimeout)
   
   try {
+    if (controller.signal.aborted) {
+      console.warn('[Search V2 FTS] Skipping due to aborted signal before start')
+      return []
+    }
     const { data, error } = await client
       .rpc('search_resources_fts', {
         search_query: query,
@@ -173,6 +204,7 @@ async function searchFTS(
       .abortSignal(controller.signal)
     
     clearTimeout(timeoutId)
+    scoped.dispose()
     
     if (error) {
       console.error('[Search V2 FTS] RPC error:', error.message)
@@ -191,6 +223,7 @@ async function searchFTS(
     
   } catch (err: any) {
     clearTimeout(timeoutId)
+    scoped.dispose()
     if (err?.name === 'AbortError') {
       console.warn('[Search V2 FTS] Hard timeout reached, skipping workspace')
     } else {
@@ -208,7 +241,8 @@ async function searchVector(
   embedding: number[],
   spaceId: string,
   budget: SearchBudget,
-  limit: number = 10
+  limit: number = 10,
+  abortSignal?: AbortSignal
 ): Promise<SearchResult[]> {
   const client = supabaseAdmin || supabase
   if (!client) {
@@ -224,11 +258,16 @@ async function searchVector(
   
   console.log(`[Search V2 Vector] Searching space ${spaceId.substring(0, 8)}... (timeout: ${timeoutMs}ms)`)
   
-  const controller = new AbortController()
+  const scoped = createScopedController(abortSignal)
+  const controller = scoped.controller
   const hardTimeout = Math.min(timeoutMs, SMS_VECTOR_HARD_TIMEOUT_MS)
   const timeoutId = setTimeout(() => controller.abort(), hardTimeout)
   
   try {
+    if (controller.signal.aborted) {
+      console.warn('[Search V2 Vector] Skipping due to aborted signal before start')
+      return []
+    }
     const { data, error } = await client
       .rpc('search_resources_vector', {
         query_embedding: embedding,
@@ -240,6 +279,7 @@ async function searchVector(
       .abortSignal(controller.signal)
     
     clearTimeout(timeoutId)
+    scoped.dispose()
     
     if (error) {
       console.error('[Search V2 Vector] RPC error:', error.message)
@@ -258,6 +298,7 @@ async function searchVector(
     
   } catch (err: any) {
     clearTimeout(timeoutId)
+    scoped.dispose()
     if (err?.name === 'AbortError') {
       console.warn('[Search V2 Vector] Hard timeout reached, skipping workspace')
     } else {
@@ -276,15 +317,39 @@ async function searchWorkspace(
   workspaceId: string,
   embeddingState: EmbeddingState,
   embeddingPromise: Promise<number[] | null> | null,
-  budget: SearchBudget
+  budget: SearchBudget,
+  abortSignal?: AbortSignal
 ): Promise<WorkspaceSearchResult> {
   const wsStart = Date.now()
   console.log(`[Search V2] Searching workspace ${workspaceId.substring(0, 8)}... (budget: ${budget.getRemainingMs()}ms)`)
   
   // Step 1: FTS search
   const ftsStart = Date.now()
-  const ftsResults = await searchFTS(query, workspaceId, budget, 5)
+  if (abortSignal?.aborted) {
+    console.warn('[Search V2] Workspace search aborted before FTS')
+    return {
+      workspaceId,
+      results: [],
+      ftsMs: 0,
+      vectorMs: 0,
+      topScore: 0
+    }
+  }
+  const ftsResults = await searchFTS(query, workspaceId, budget, 5, abortSignal)
   const ftsMs = Date.now() - ftsStart
+  
+  // Check if FTS gave us a high-confidence result
+  const topFtsScore = ftsResults[0]?.score || 0
+  if (topFtsScore >= 0.85) {
+    console.log(`[Search V2] High-confidence FTS result (${topFtsScore.toFixed(3)}), skipping vector`)
+    return {
+      workspaceId,
+      results: ftsResults,
+      ftsMs,
+      vectorMs: 0,
+      topScore: topFtsScore
+    }
+  }
   
   // Step 2: Vector search (if we have embedding and budget)
   let vectorResults: SearchResult[] = []
@@ -308,9 +373,9 @@ async function searchWorkspace(
     }
   }
   
-  if (embedding !== null && budget.getRemainingMs() > (SMS_VECTOR_TIMEOUT_MS + 100)) {
+  if (embedding !== null && budget.getRemainingMs() > (SMS_VECTOR_TIMEOUT_MS + 100) && !abortSignal?.aborted) {
     const vectorStart = Date.now()
-    vectorResults = await searchVector(embedding, workspaceId, budget, 5)
+    vectorResults = await searchVector(embedding, workspaceId, budget, 5, abortSignal)
     vectorMs = Date.now() - vectorStart
   } else {
     console.log('[Search V2] Skipping vector search (no embedding or insufficient budget)')
@@ -355,15 +420,19 @@ export async function hybridSearchV2(
   options: {
     budgetMs?: number
     highConfidenceThreshold?: number
+    abortSignal?: AbortSignal
+    traceId?: string
   } = {}
 ): Promise<SearchResult[]> {
   const {
     budgetMs = SMS_SEARCH_BUDGET_MS,
-    highConfidenceThreshold = 0.75
+    highConfidenceThreshold = 0.75,
+    abortSignal,
+    traceId
   } = options
   
   const budget = createBudget(budgetMs)
-  const searchId = `search_${Date.now()}_${Math.random().toString(36).substring(7)}`
+  const searchId = traceId ? `${traceId}` : `search_${Date.now()}_${Math.random().toString(36).substring(7)}`
   
   console.log(`[Search V2] [${searchId}] Starting hybrid search`)
   console.log(`[Search V2] [${searchId}] Query: "${query}"`)
@@ -389,35 +458,33 @@ export async function hybridSearchV2(
   if (cachedEntry && Date.now() - cachedEntry.timestamp < EMBEDDING_CACHE_TTL) {
     embeddingState.value = cachedEntry.embedding
     console.log(`[Search V2] [${searchId}] Embedding: cached (budget: ${budget.getRemainingMs()}ms)`)
-  } else if (budget.getRemainingMs() > SMS_EMBED_MIN_REMAINING_MS) {
+  } else if (budget.getRemainingMs() > SMS_EMBED_MIN_REMAINING_MS && !abortSignal?.aborted) {
     console.log(`[Search V2] [${searchId}] Starting embedding generation in background`)
     embeddingPromise = getCachedEmbedding(query, budget)
-    if (embeddingPromise) {
-      embeddingPromise
-        .then(result => {
-          if (result) {
-            embeddingState.value = result
-          }
-          return result
-        })
-        .catch(err => {
-          console.error('[Search V2] Background embedding failed:', err?.message || err)
-        })
-    }
+      .then(result => {
+        if (result) {
+          embeddingState.value = result
+        }
+        return result
+      })
+      .catch(err => {
+        console.error('[Search V2] Background embedding failed:', err?.message || err)
+        return null
+      })
   } else {
-    console.log(`[Search V2] [${searchId}] Skipping embedding (insufficient budget: ${budget.getRemainingMs()}ms)`)
+    console.log(`[Search V2] [${searchId}] Skipping embedding (insufficient budget: ${budget.getRemainingMs()}ms or aborted)`)
   }
   
   // Step 2: Search workspaces sequentially (FTS first, then vector if embedding ready)
   const workspaceResults: WorkspaceSearchResult[] = []
   
   for (const workspaceId of workspaceIds) {
-    if (budget.getRemainingMs() < 500) {
+    if (budget.getRemainingMs() < 500 || abortSignal?.aborted) {
       console.log(`[Search V2] [${searchId}] Budget exhausted, stopping at ${workspaceResults.length}/${workspaceIds.length} workspaces`)
       break
     }
     
-    const wsResult = await searchWorkspace(query, workspaceId, embeddingState, embeddingPromise, budget)
+    const wsResult = await searchWorkspace(query, workspaceId, embeddingState, embeddingPromise, budget, abortSignal)
     workspaceResults.push(wsResult)
     
     // Early exit if we found a high-confidence result

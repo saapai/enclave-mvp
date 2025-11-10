@@ -792,6 +792,19 @@ export async function POST(request: NextRequest) {
       const needsAsyncProcessing = intent.type === 'content_query'
       
       if (needsAsyncProcessing) {
+        const dedupeKey = `${from}:${body.trim().toLowerCase()}`
+        const existing = INFLIGHT_CONTENT.get(dedupeKey)
+        const now = Date.now()
+        if (existing && now - existing < CONTENT_DEDUP_WINDOW_MS) {
+          console.log(`[Twilio SMS] Duplicate content query detected within window (${dedupeKey}), returning ack only`)
+          return new NextResponse(
+            `<?xml version="1.0" encoding="UTF-8"?><Response><Message>Looking that up...</Message></Response>`,
+            { headers: { 'Content-Type': 'application/xml' } }
+          )
+        }
+        INFLIGHT_CONTENT.set(dedupeKey, now)
+        setTimeout(() => INFLIGHT_CONTENT.delete(dedupeKey), CONTENT_DEDUP_WINDOW_MS)
+        
         // For content queries, return immediate acknowledgment and process asynchronously
         // This prevents Twilio timeout (10-15 second limit)
         const traceId = `sms_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`
@@ -880,6 +893,11 @@ export async function POST(request: NextRequest) {
             // Split long messages
             const messages = splitLongMessage(result.response, 1600)
             
+            console.log(`[Twilio SMS] OUTBOUND`, {
+              traceId,
+              count: messages.length,
+              preview: messages[0]?.slice(0, 40) || 'NO_MESSAGE'
+            })
             console.log(`[Twilio SMS] Sending ${messages.length} async message(s) to user at ${from}`)
             
             // Send via Twilio API

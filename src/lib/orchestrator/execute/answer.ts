@@ -6,10 +6,10 @@
 
 import { TurnFrame, ContextEnvelope } from '../types'
 import { hybridSearchV2 } from '@/lib/search-v2'
-import { planQuery, composeResponse, executePlan } from '@/lib/planner'
 import { getWorkspaceIds, rankWorkspaceIds } from '@/lib/workspace'
 import { generateTraceId } from '@/lib/utils'
 import { ENV } from '@/lib/env'
+import { resolveFaqAlias, fetchFaqAnswer } from '@/lib/faq'
 
 // SearchResult type
 type SearchResult = Awaited<ReturnType<typeof hybridSearchV2>>[number]
@@ -31,8 +31,26 @@ export async function executeAnswer(
   console.log(`[Execute Answer] [${traceId}] Starting executeAnswer`)
   console.log(`[Execute Answer] [${traceId}] Frame user ID:`, frame.user.id)
   const query = frame.text
+  const normalizedQuery = query.toLowerCase().trim()
+  const faqEntry = resolveFaqAlias(normalizedQuery)
+  const explicitDeadlineMs = faqEntry ? 1500 : Number(process.env.SMS_EXECUTE_DEADLINE_MS || '4000')
+  const abortController = new AbortController()
+  const deadlineTimer = setTimeout(() => {
+    console.warn(`[Execute Answer] [${traceId}] Deadline reached, aborting search pipeline`)
+    abortController.abort()
+  }, explicitDeadlineMs)
   
   try {
+    if (faqEntry) {
+      const faqStart = Date.now()
+      const direct = await fetchFaqAnswer(faqEntry)
+      if (direct) {
+        console.log(`[Execute Answer] [${traceId}] FAQ hit resolved in ${Date.now() - faqStart}ms`)
+        return { messages: [direct] }
+      }
+      console.log(`[Execute Answer] [${traceId}] FAQ entry matched but no direct answer, falling back to search`)
+    }
+
     // Step 1: Get workspace IDs (with 500ms timeout via new workspace.ts)
     const primaryWorkspaceId = ENV.PRIMARY_WORKSPACE_ID?.trim()
     let spaceIds: string[]
@@ -102,7 +120,9 @@ export async function executeAnswer(
     console.log(`[Execute Answer] [${traceId}] Starting hybrid search V2 (budget: ${searchBudget}ms)`)
     const searchResults = await hybridSearchV2(query, finalWorkspaceIds, {
       budgetMs: searchBudget,
-      highConfidenceThreshold: 0.75
+      highConfidenceThreshold: 0.75,
+      abortSignal: abortController.signal,
+      traceId
     })
     
     const searchDuration = Date.now() - searchStart
@@ -122,8 +142,11 @@ export async function executeAnswer(
     // Step 4: If no good results, return helpful message
     if (searchResults.length === 0) {
       console.log(`[Execute Answer] [${traceId}] No results found`)
+      const fallbackMessage = faqEntry
+        ? 'Still digging up the exact details. I\'ll update you shortly.'
+        : `I couldn't find anything about "${query}" in your workspaces. Try rephrasing or check if the document is uploaded.`
       return {
-        messages: [`I couldn't find anything about "${query}" in your workspaces. Try rephrasing or check if the document is uploaded.`]
+        messages: [fallbackMessage]
       }
     }
     
@@ -138,6 +161,7 @@ export async function executeAnswer(
       messages: ["Sorry, I ran into an issue searching for that. Please try again."]
     }
   } finally {
+    clearTimeout(deadlineTimer)
     const totalDuration = Date.now() - overallStart
     console.log(`[Execute Answer] [${traceId}] Completed in ${totalDuration}ms`)
   }
@@ -363,9 +387,10 @@ async function composeDirectResponse(
       }
     }
     
-    console.log(`[Execute Answer] [${traceId}] Composed response: "${answer.substring(0, 100)}..."`)
+    const trimmedAnswer = answer.length > 0 ? answer : 'I located context but could not format a response in time.'
+    console.log(`[Execute Answer] [${traceId}] Composed response: "${trimmedAnswer.substring(0, 100)}..."`)
     return {
-      messages: [answer]
+      messages: [trimmedAnswer]
     }
     
   } catch (err) {
