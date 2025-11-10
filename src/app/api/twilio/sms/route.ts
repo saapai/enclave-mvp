@@ -60,6 +60,11 @@ const USE_ORCHESTRATOR = true
 // Feature flag: Enable new planner-based flow
 const USE_PLANNER = true
 
+const TWILIO_RATE_LIMIT_DELAY = 200
+const MAX_MESSAGES_PER_BATCH = 5
+const CONTENT_DEDUP_WINDOW_MS = 2000
+const INFLIGHT_CONTENT: Map<string, number> = new Map()
+
 // Check if message is a send affirmation (but NOT if it's a poll response)
 const isSendAffirmation = (message: string, isPollResponseContext: boolean = false): boolean => {
   if (isPollResponseContext) return false // Never treat poll responses as send commands
