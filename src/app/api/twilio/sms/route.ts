@@ -823,33 +823,35 @@ export async function POST(request: NextRequest) {
         // Process query asynchronously (don't await)
         console.log(`[Twilio SMS] [${traceId}] Starting async handler for content query: "${body.substring(0, 50)}"`)
         
-        // Wrap in IIFE to ensure proper timer isolation per query
-        ;(async () => {
+        // Process asynchronously with isolated timers
+        // Create a closure to capture the traceId and ensure timer isolation
+        const processQuery = async (queryTraceId: string, queryFrom: string, queryBody: string) => {
           // WATCHDOG: 5s timeout to prevent silent hangs (Vercel Pro allows 60s)
           // Lexical search should complete in <1s, so 5s is generous
           let watchdogFired = false
+          let timeoutFired = false
+          
           const watchdog = setTimeout(async () => {
             watchdogFired = true
-            console.error(`[Twilio SMS] [${traceId}] WATCHDOG: content_query exceeded 5s, sending degraded reply`)
+            console.error(`[Twilio SMS] [${queryTraceId}] WATCHDOG: content_query exceeded 5s, sending degraded reply`)
             try {
-              await sendSms(from, "Still searching... this is taking longer than expected. I'll keep trying.", { retries: 1, retryDelay: 2000 })
-              console.log(`[Twilio SMS] [${traceId}] Watchdog message sent`)
+              await sendSms(queryFrom, "Still searching... this is taking longer than expected. I'll keep trying.", { retries: 1, retryDelay: 2000 })
+              console.log(`[Twilio SMS] [${queryTraceId}] Watchdog message sent`)
             } catch (err) {
-              console.error(`[Twilio SMS] [${traceId}] Failed to send watchdog message:`, err)
+              console.error(`[Twilio SMS] [${queryTraceId}] Failed to send watchdog message:`, err)
             }
           }, 5000) // 5 second watchdog (lexical search is fast, should complete in <1s)
             
           // Set a hard timeout before Vercel kills us (Pro = 60s)
-          let timeoutFired = false
           const asyncTimeout = setTimeout(async () => {
             timeoutFired = true
-            console.error(`[Twilio SMS] [${traceId}] Async handler timeout after 55s for query: "${body.substring(0, 50)}"`)
+            console.error(`[Twilio SMS] [${queryTraceId}] Async handler timeout after 55s for query: "${queryBody.substring(0, 50)}"`)
             if (!watchdogFired) {
               try {
-                await sendSms(from, "Sorry, that query took too long. Please try a simpler question.", { retries: 1, retryDelay: 2000 })
-                console.log(`[Twilio SMS] [${traceId}] Timeout message sent`)
+                await sendSms(queryFrom, "Sorry, that query took too long. Please try a simpler question.", { retries: 1, retryDelay: 2000 })
+                console.log(`[Twilio SMS] [${queryTraceId}] Timeout message sent`)
               } catch (err) {
-                console.error(`[Twilio SMS] [${traceId}] Failed to send timeout message:`, err)
+                console.error(`[Twilio SMS] [${queryTraceId}] Failed to send timeout message:`, err)
               }
             }
           }, 55000) // 55 second timeout (5s buffer before Vercel's 60s limit)
@@ -858,21 +860,21 @@ export async function POST(request: NextRequest) {
           // Pass the already-classified intent to avoid redundant LLM call
           const handlerStartTime = Date.now()
           try {
-            const result = await handleSMSMessage(phoneNumber, from, body, intent, history)
+            const result = await handleSMSMessage(phoneNumber, queryFrom, queryBody, intent, history)
             clearTimeout(watchdog)
             clearTimeout(asyncTimeout)
             const handlerDuration = Date.now() - handlerStartTime
-            console.log(`[Twilio SMS] [${traceId}] Async handler completed successfully in ${handlerDuration}ms`)
-            console.log(`[Twilio SMS] [${traceId}] Async handler returned: "${result?.response?.substring(0, 100) || 'NO RESPONSE'}..."`)
+            console.log(`[Twilio SMS] [${queryTraceId}] Async handler completed successfully in ${handlerDuration}ms`)
+            console.log(`[Twilio SMS] [${queryTraceId}] Async handler returned: "${result?.response?.substring(0, 100) || 'NO RESPONSE'}..."`)
             
             // If watchdog or timeout already fired, don't send another message
             if (timeoutFired) {
-              console.log(`[Twilio SMS] [${traceId}] Hard timeout already fired, skipping result send`)
+              console.log(`[Twilio SMS] [${queryTraceId}] Hard timeout already fired, skipping result send`)
               return
             }
             
             if (watchdogFired) {
-              console.log(`[Twilio SMS] [${traceId}] Watchdog message already sent; delivering final result update`)
+              console.log(`[Twilio SMS] [${queryTraceId}] Watchdog message already sent; delivering final result update`)
             }
             
             // Ensure we have a response
