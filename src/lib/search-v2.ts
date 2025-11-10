@@ -290,6 +290,8 @@ async function searchLexicalFallback(
   // This is much faster than multiple OR clauses
   const primaryToken = tokens[0]
   
+  const queryStart = Date.now()
+  
   try {
     // FAST QUERY: Select only needed columns, no body scan
     const { data, error } = await client
@@ -300,12 +302,15 @@ async function searchLexicalFallback(
       .order('updated_at', { ascending: false })
       .limit(limit * 2)
 
+    const durationMs = Date.now() - queryStart
+
     if (error) {
-      console.error('[Search V2] Lexical fallback failed:', error)
+      console.error('[Search V2] Lexical fallback failed:', error, `(duration: ${durationMs}ms)`)
       return []
     }
 
     if (!data || data.length === 0) {
+      console.log(`[Search V2] Lexical fallback returned no rows in ${durationMs}ms`)
       return []
     }
 
@@ -336,10 +341,16 @@ async function searchLexicalFallback(
 
     // Sort by score and return top results
     results.sort((a, b) => (b.score || 0) - (a.score || 0))
+    console.log(`[Search V2] Lexical fallback succeeded in ${durationMs}ms (rows: ${results.length})`)
     return results.slice(0, limit) as SearchResult[]
     
   } catch (err) {
-    console.error('[Search V2] Lexical fallback exception:', err)
+    const durationMs = Date.now() - queryStart
+    if ((err as any)?.name === 'AbortError') {
+      console.warn(`[Search V2] Lexical fallback aborted after ${durationMs}ms`)
+    } else {
+      console.error('[Search V2] Lexical fallback exception:', err, `(duration: ${durationMs}ms)`)
+    }
     return []
   }
 }
@@ -611,27 +622,42 @@ async function searchWorkspace(
   let vectorResults: SearchResult[] = []
   let vectorMs = 0
 
-  let embedding = embeddingState.value
+  let embeddingToUse = embeddingState.value
 
-  if (!embedding && embeddingPromise) {
+  if (!embeddingToUse && embeddingPromise) {
     const remaining = budget.getRemainingMs()
     const waitBudget = Math.max(0, remaining - (SMS_VECTOR_TIMEOUT_MS + 100))
     if (SMS_WAIT_FOR_EMBED_MS > 0 && waitBudget > 0) {
       const waitMs = Math.min(SMS_WAIT_FOR_EMBED_MS, waitBudget)
       console.log(`[Search V2] Waiting up to ${waitMs}ms for embedding before vector search`)
-      embedding = await Promise.race([
+      embeddingToUse = await Promise.race([
         embeddingPromise,
         new Promise<number[] | null>(resolve => setTimeout(() => resolve(null), waitMs))
       ])
-      if (embedding) {
-        embeddingState.value = embedding
+      if (embeddingToUse) {
+        embeddingState.value = embeddingToUse
+      }
+    }
+  }
+
+  if (!embeddingToUse && embeddingPromise) {
+    const finalWaitBudget = Math.max(0, budget.getRemainingMs() - (SMS_VECTOR_TIMEOUT_MS + 100))
+    const finalWaitMs = Math.min(2000, finalWaitBudget)
+    if (finalWaitMs > 0) {
+      console.log(`[Search V2] Final wait up to ${finalWaitMs}ms for embedding`)    
+      embeddingToUse = await Promise.race([
+        embeddingPromise,
+        new Promise<number[] | null>(resolve => setTimeout(() => resolve(null), finalWaitMs))
+      ])
+      if (embeddingToUse) {
+        embeddingState.value = embeddingToUse
       }
     }
   }
   
-  if (embedding !== null && budget.getRemainingMs() > (SMS_VECTOR_TIMEOUT_MS + 100) && !abortSignal?.aborted) {
+  if (embeddingToUse && budget.getRemainingMs() > (SMS_VECTOR_TIMEOUT_MS + 100) && !abortSignal?.aborted) {
     const vectorStart = Date.now()
-    vectorResults = await searchVector(embedding, workspaceId, budget, 5, abortSignal)
+    vectorResults = await searchVector(embeddingToUse, workspaceId, budget, 5, abortSignal)
     vectorMs = Date.now() - vectorStart
   } else {
     console.log('[Search V2] Skipping vector search (no embedding or insufficient budget)')
@@ -718,6 +744,10 @@ export async function hybridSearchV2(
     console.log(`[Search V2] [${searchId}] Embedding: cached (budget: ${budget.getRemainingMs()}ms)`)
   } else {
     console.log(`[Search V2] [${searchId}] No cached embedding available for this query`)
+    embeddingPromise = getCachedEmbedding(query, budget).catch(err => {
+      console.error('[Search V2] Embedding generation failed:', err)
+      return null
+    })
   }
   
   // Step 2: Search workspaces sequentially (FTS first, then vector if embedding ready)

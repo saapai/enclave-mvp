@@ -833,14 +833,14 @@ export async function POST(request: NextRequest) {
           
           const watchdog = setTimeout(async () => {
             watchdogFired = true
-            console.error(`[Twilio SMS] [${queryTraceId}] WATCHDOG: content_query exceeded 5s, sending degraded reply`)
+            console.error(`[Twilio SMS] [${queryTraceId}] WATCHDOG: content_query exceeded 15s, sending degraded reply`)
             try {
               await sendSms(queryFrom, "Still searching... this is taking longer than expected. I'll keep trying.", { retries: 1, retryDelay: 2000 })
               console.log(`[Twilio SMS] [${queryTraceId}] Watchdog message sent`)
             } catch (err) {
               console.error(`[Twilio SMS] [${queryTraceId}] Failed to send watchdog message:`, err)
             }
-          }, 5000) // 5 second watchdog (lexical search is fast, should complete in <1s)
+          }, 15000) // 15 second watchdog to allow slower searches
             
           // Set a hard timeout before Vercel kills us (Pro = 60s)
           const asyncTimeout = setTimeout(async () => {
