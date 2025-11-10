@@ -4,7 +4,8 @@ import { ENV } from './env'
 // Use OpenAI embeddings (much faster and more reliable than Mistral)
 const OPENAI_API_KEY = ENV.OPENAI_API_KEY
 const EMBEDDING_MODEL = process.env.EMBEDDING_MODEL || 'text-embedding-3-small'
-const EMBEDDING_DIMENSIONS = Number(process.env.EMBEDDING_DIMENSIONS || '1536')
+// IMPORTANT: Database expects 1024 dimensions (not 1536)
+const EMBEDDING_DIMENSIONS = Number(process.env.EMBEDDING_DIMENSIONS || '1024')
 const OPENAI_EMBED_TIMEOUT_MS = Number(process.env.OPENAI_EMBED_TIMEOUT_MS || '9000')
 const OPENAI_EMBED_ATTEMPTS = Number(process.env.OPENAI_EMBED_ATTEMPTS || '3')
 const OPENAI_EMBED_RETRY_DELAYS_MS = [300, 800]

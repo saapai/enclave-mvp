@@ -341,10 +341,10 @@ async function searchFTS(
 }
 
 // ============================================================================
-// VECTOR SEARCH
+// VECTOR SEARCH (CHUNK-BASED for better granularity)
 // ============================================================================
 
-async function searchVector(
+async function searchVectorChunks(
   embedding: number[],
   spaceId: string,
   budget: SearchBudget,
@@ -363,7 +363,7 @@ async function searchVector(
     return []
   }
   
-  console.log(`[Search V2 Vector] Searching space ${spaceId.substring(0, 8)}... (timeout: ${timeoutMs}ms)`)
+  console.log(`[Search V2 Vector] Searching chunks in space ${spaceId.substring(0, 8)}... (timeout: ${timeoutMs}ms)`)
   
   const scoped = createScopedController(abortSignal)
   const controller = scoped.controller
@@ -375,6 +375,115 @@ async function searchVector(
       console.warn('[Search V2 Vector] Skipping due to aborted signal before start')
       return []
     }
+    
+    // First, try chunk-based search for better granularity
+    const { data: chunkData, error: chunkError } = await client
+      .rpc('search_resource_chunks_vector', {
+        query_embedding: embedding,
+        target_space_id: spaceId,
+        limit_count: limit * 2, // Get more chunks, then dedupe by resource
+        offset_count: 0
+      })
+      .abortSignal(controller.signal)
+    
+    clearTimeout(timeoutId)
+    scoped.dispose()
+    
+    if (chunkError) {
+      console.error('[Search V2 Vector] Chunk RPC error:', chunkError.message)
+      // Fall back to resource-level search
+      return searchVectorResources(embedding, spaceId, budget, limit, abortSignal)
+    }
+    
+    if (!chunkData || chunkData.length === 0) {
+      console.log('[Search V2 Vector] No chunks found, trying resource-level search')
+      return searchVectorResources(embedding, spaceId, budget, limit, abortSignal)
+    }
+    
+    // Group chunks by resource_id and take the best score
+    const resourceScores = new Map<string, number>()
+    const resourceChunks = new Map<string, any[]>()
+    
+    for (const chunk of chunkData) {
+      const resourceId = chunk.resource_id
+      const score = chunk.score || 0
+      
+      if (!resourceScores.has(resourceId) || score > resourceScores.get(resourceId)!) {
+        resourceScores.set(resourceId, score)
+      }
+      
+      if (!resourceChunks.has(resourceId)) {
+        resourceChunks.set(resourceId, [])
+      }
+      resourceChunks.get(resourceId)!.push(chunk)
+    }
+    
+    // Fetch full resource data for top matches
+    const topResourceIds = Array.from(resourceScores.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, limit)
+      .map(([id]) => id)
+    
+    const { data: resources, error: resourceError } = await client
+      .from('resource')
+      .select(`
+        *,
+        tags:resource_tag(
+          tag:tag(*)
+        ),
+        event_meta(*)
+      `)
+      .in('id', topResourceIds)
+    
+    if (resourceError || !resources) {
+      console.error('[Search V2 Vector] Error fetching resources:', resourceError)
+      return []
+    }
+    
+    const results = resources.map((resource: any) => ({
+      ...resource,
+      tags: (resource.tags as Array<{ tag: Record<string, unknown> }>)?.map(rt => rt.tag).filter(Boolean) || [],
+      score: resourceScores.get(resource.id) || 0,
+      source: 'vector-chunk'
+    } as SearchResult))
+    
+    // Sort by score
+    results.sort((a, b) => (b.score || 0) - (a.score || 0))
+    
+    console.log(`[Search V2 Vector] Found ${results.length} resources from ${chunkData.length} chunks, top score: ${results[0]?.score?.toFixed(3) || 'N/A'}`)
+    return results
+    
+  } catch (err: any) {
+    clearTimeout(timeoutId)
+    scoped.dispose()
+    if (err?.name === 'AbortError') {
+      console.warn('[Search V2 Vector] Hard timeout reached, skipping workspace')
+    } else {
+      console.error('[Search V2 Vector] Error:', err?.message || err)
+    }
+    return []
+  }
+}
+
+// Fallback: resource-level vector search
+async function searchVectorResources(
+  embedding: number[],
+  spaceId: string,
+  budget: SearchBudget,
+  limit: number = 10,
+  abortSignal?: AbortSignal
+): Promise<SearchResult[]> {
+  const client = supabaseAdmin || supabase
+  if (!client) {
+    return []
+  }
+  
+  const scoped = createScopedController(abortSignal)
+  const controller = scoped.controller
+  const timeoutMs = Math.min(SMS_VECTOR_TIMEOUT_MS, budget.getRemainingMs())
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
+  
+  try {
     const { data, error } = await client
       .rpc('search_resources_vector', {
         query_embedding: embedding,
@@ -389,7 +498,7 @@ async function searchVector(
     scoped.dispose()
     
     if (error) {
-      console.error('[Search V2 Vector] RPC error:', error.message)
+      console.error('[Search V2 Vector] Resource RPC error:', error.message)
       return []
     }
     
@@ -400,19 +509,25 @@ async function searchVector(
       source: 'vector'
     } as SearchResult))
     
-    console.log(`[Search V2 Vector] Found ${results.length} results, top score: ${results[0]?.score?.toFixed(3) || 'N/A'}`)
+    console.log(`[Search V2 Vector] Found ${results.length} resources, top score: ${results[0]?.score?.toFixed(3) || 'N/A'}`)
     return results
     
   } catch (err: any) {
     clearTimeout(timeoutId)
     scoped.dispose()
-    if (err?.name === 'AbortError') {
-      console.warn('[Search V2 Vector] Hard timeout reached, skipping workspace')
-    } else {
-      console.error('[Search V2 Vector] Error:', err?.message || err)
-    }
     return []
   }
+}
+
+// Main vector search entry point (uses chunks for better granularity)
+async function searchVector(
+  embedding: number[],
+  spaceId: string,
+  budget: SearchBudget,
+  limit: number = 10,
+  abortSignal?: AbortSignal
+): Promise<SearchResult[]> {
+  return searchVectorChunks(embedding, spaceId, budget, limit, abortSignal)
 }
 
 // ============================================================================
