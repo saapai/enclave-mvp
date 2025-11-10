@@ -15,6 +15,7 @@ import { needsWelcome, getWelcomeMessage, handleNameInWelcome, initializeNewUser
 import { generateAnnouncement, formatAnnouncement, AnnouncementDraft } from './enhanced-announcement-generator'
 import { checkActionQuery, saveAction, type ActionMemory } from './action-memory'
 import { supabaseAdmin } from '@/lib/supabase'
+import type { HandleTurnResult } from '@/lib/orchestrator/handleTurn'
 // Name declaration is handled inline
 
 const ACTION_MEMORY_TIMEOUT_MS = 150
@@ -53,6 +54,7 @@ export interface HandlerResult {
     intent?: IntentType
     draftCreated?: boolean
     welcomeComplete?: boolean
+    resultCount?: number
   }
 }
 
@@ -1106,7 +1108,7 @@ async function handleQuery(
     // Use orchestrator for content query handling
     console.log(`[UnifiedHandler] Importing orchestrator...`)
     const importStartTime = Date.now()
-    const { handleTurn } = await import('@/lib/orchestrator/handleTurn')
+    const { handleTurn, type HandleTurnResult } = await import('@/lib/orchestrator/handleTurn')
     const importDuration = Date.now() - importStartTime
     console.log(`[UnifiedHandler] Orchestrator imported in ${importDuration}ms, calling handleTurn for query: "${messageText}"`)
     
@@ -1118,8 +1120,22 @@ async function handleQuery(
     })
     
     console.log('[UnifiedHandler] Racing orchestrator promise with timeout...')
-    const result = await Promise.race([orchestratorPromise, timeoutPromise])
-    finalResult = result as HandlerResult
+    const handleTurnResult = await Promise.race([orchestratorPromise, timeoutPromise]) as HandleTurnResult
+
+    const messages = (handleTurnResult.messages || []).filter(Boolean)
+    const responseText = messages.join('\n\n').trim()
+    const safeResponse = responseText.length > 0
+      ? responseText
+      : "Sorry, I couldn't find information about that."
+
+    finalResult = {
+      response: safeResponse,
+      shouldSaveHistory: true,
+      metadata: {
+        intent: intentType,
+        resultCount: messages.length
+      }
+    }
   } catch (err) {
     console.error(`[UnifiedHandler] Error during orchestrator call:`, err)
     finalResult = {
@@ -1129,17 +1145,39 @@ async function handleQuery(
         intent: 'error'
       }
     }
+
+    const failed = PENDING_CONTENT_QUERIES.get(phoneNumber)
+    if (failed) {
+      failed.status = 'failed'
+      failed.completedAt = Date.now()
+      PENDING_CONTENT_QUERIES.set(phoneNumber, failed)
+    }
   }
 
   if (finalResult) {
-    // If the orchestrator returned a result, save it to action memory
+    const completedAt = Date.now()
+    const pending = PENDING_CONTENT_QUERIES.get(phoneNumber)
+    if (pending) {
+      pending.status = 'completed'
+      pending.response = finalResult.response
+      pending.completedAt = completedAt
+      PENDING_CONTENT_QUERIES.set(phoneNumber, pending)
+    }
+    RECENT_CONTENT_QUERIES.set(phoneNumber, {
+      query: messageText,
+      response: finalResult.response,
+      completedAt
+    })
+
     queueActionMemorySave(
       phoneNumber,
       {
-        type: 'query_result',
+        type: 'query',
         details: {
           query: messageText,
-          queryResults: finalResult.metadata?.intent,
+          queryResults: typeof finalResult.metadata?.resultCount === 'number'
+            ? finalResult.metadata.resultCount
+            : undefined,
           queryAnswer: finalResult.response
         }
       },
