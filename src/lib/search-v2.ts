@@ -275,11 +275,24 @@ async function searchLexicalFallback(
     return []
   }
 
+  // Extract meaningful keywords from query (remove stop words like "when", "is", "what", etc.)
+  const stopWords = new Set(['when', 'is', 'are', 'was', 'were', 'what', 'where', 'who', 'how', 'the', 'a', 'an'])
   const simplified = query.toLowerCase().replace(/[^\w\s]/g, ' ').trim()
-  const tokens = simplified.split(/\s+/).filter(t => t.length > 2)
+  const tokens = simplified.split(/\s+/)
+    .filter(t => t.length >= 2 && !stopWords.has(t)) // Keep 2+ char tokens, exclude stop words
   
-  // Use simple ilike search only (no similarity operator to avoid PostgREST syntax errors)
-  const ilikePattern = tokens.length > 0 ? `%${tokens.join('%')}%` : `%${simplified}%`
+  if (tokens.length === 0) {
+    console.log('[Search V2] Lexical fallback: no meaningful tokens after filtering')
+    return []
+  }
+  
+  // Build multiple ilike patterns for OR matching
+  // Try each token individually to maximize recall
+  const orClauses: string[] = []
+  for (const token of tokens) {
+    orClauses.push(`title.ilike.%${token}%`)
+    orClauses.push(`body.ilike.%${token}%`)
+  }
 
   try {
     const { data, error } = await client
@@ -292,7 +305,7 @@ async function searchLexicalFallback(
         event_meta(*)
       `)
       .eq('space_id', spaceId)
-      .or(`title.ilike.${ilikePattern},body.ilike.${ilikePattern}`)
+      .or(orClauses.join(','))
       .order('updated_at', { ascending: false })
       .limit(limit)
       .range(offset, offset + limit - 1)
