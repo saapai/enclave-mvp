@@ -28,14 +28,31 @@ export async function GET(request: NextRequest) {
       const clerkUser = await client.users.getUser(userId!)
       const userEmail = clerkUser.emailAddresses[0]?.emailAddress
 
+      const dbClient = supabaseAdmin || supabase
+
       // Get all spaces the user belongs to
-      const { data: userSpaces } = await supabase
+      const { data: userSpaces } = await dbClient
         .from('app_user')
         .select('space_id')
         .eq('email', userEmail)
 
       const userSpaceIds = userSpaces?.map(u => u.space_id) || []
       spaceIds = [...new Set([...spaceIds, ...userSpaceIds])]
+
+      // Fallback: if user has no explicit workspace memberships, surface SEP spaces
+      const hasNonDefaultSpace = spaceIds.some(id => id && id !== DEFAULT_SPACE_ID)
+      if (!hasNonDefaultSpace) {
+        const { data: sepSpaces, error: sepError } = await dbClient
+          .from('space')
+          .select('id')
+          .ilike('name', '%SEP%')
+          .limit(10)
+
+        if (!sepError && sepSpaces && sepSpaces.length > 0) {
+          const sepIds = sepSpaces.map(space => space.id).filter(Boolean)
+          spaceIds = [...new Set([...spaceIds, ...sepIds])]
+        }
+      }
     } catch (error) {
       console.error('Failed to get user spaces for resources:', error)
       // Fall back to default space only

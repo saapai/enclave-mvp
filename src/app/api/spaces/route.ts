@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth, clerkClient } from '@clerk/nextjs/server'
-import { supabase } from '@/lib/supabase'
+import { supabase, supabaseAdmin } from '@/lib/supabase'
 
 // Get all spaces for the current user
 export async function GET(request: NextRequest) {
@@ -20,7 +20,9 @@ export async function GET(request: NextRequest) {
     }
 
     // Get all app_user entries for this email
-    const { data: appUsers, error: appUsersError } = await supabase
+    const dbClient = supabaseAdmin || supabase
+
+    const { data: appUsers, error: appUsersError } = await dbClient
       .from('app_user')
       .select('space_id')
       .eq('email', userEmail)
@@ -44,7 +46,7 @@ export async function GET(request: NextRequest) {
     }
 
     // Get spaces where user is a member
-    const { data: spaces, error } = await supabase
+    const { data: spacesData, error } = await dbClient
       .from('space')
       .select('*')
       .in('id', spaceIds)
@@ -55,7 +57,30 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Failed to fetch spaces' }, { status: 500 })
     }
 
-    return NextResponse.json({ spaces: spaces || [] })
+    let spaces = spacesData ?? []
+
+    // Fallback: if user has no named spaces (just default), surface SEP spaces so uploads continue to work
+    const hasNonDefaultSpace = (spaces || []).some(space => space.id !== DEFAULT_SPACE_ID)
+    if (!hasNonDefaultSpace) {
+      try {
+        const { data: sepSpaces, error: sepError } = await dbClient
+          .from('space')
+          .select('*')
+          .ilike('name', '%SEP%')
+          .limit(10)
+
+        if (!sepError && sepSpaces && sepSpaces.length > 0) {
+          const sepOnly = sepSpaces.filter(space => space.id && !spaceIds.includes(space.id))
+          if (sepOnly.length > 0) {
+            spaces = [...spaces, ...sepOnly]
+          }
+        }
+      } catch (sepErr) {
+        console.error('SEP fallback fetch error:', sepErr)
+      }
+    }
+
+    return NextResponse.json({ spaces })
   } catch (error) {
     console.error('Spaces API error:', error)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
@@ -90,7 +115,9 @@ export async function POST(request: NextRequest) {
     }
 
     // Create the space
-    const { data: space, error } = await supabase
+    const dbClient = supabaseAdmin || supabase
+
+    const { data: space, error } = await dbClient
       .from('space')
       .insert({
         name: name.trim(),
@@ -108,7 +135,7 @@ export async function POST(request: NextRequest) {
 
     // CRITICAL: Add the creator as an admin member of the space
     // Use upsert to handle case where user already exists
-    const { error: memberError } = await supabase
+    const { error: memberError } = await dbClient
       .from('app_user')
       .upsert({
         space_id: space.id,
