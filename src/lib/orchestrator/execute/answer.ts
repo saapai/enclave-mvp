@@ -120,37 +120,19 @@ export async function executeAnswer(
       console.log(`[Execute Answer] [${traceId}] Top result: "${searchResults[0].title}" (score: ${searchResults[0].score?.toFixed(3)})`)
     }
 
-    // Only use structured answer for "when/where" questions, not "what" questions
-    const isWhenWhereQuery = /^(when|where)\s+(is|are|was|were)/i.test(query.trim())
-    if (isWhenWhereQuery) {
-      const structuredAnswer = selectEventAnswer(searchResults, query, traceId)
-      if (structuredAnswer) {
-        clearTimeout(deadlineTimer)
-        return {
-          messages: [structuredAnswer]
-        }
-      }
-    }
-
-    // Step 3: If we have good results, compose response directly
-    if (searchResults.length > 0 && searchResults[0].score && searchResults[0].score >= 0.60) {
-      console.log(`[Execute Answer] [${traceId}] Good results found, composing response directly`)
+    // Always use LLM for all queries - no structured extraction
+    // This ensures consistent, high-quality responses
+    if (searchResults.length > 0) {
+      console.log(`[Execute Answer] [${traceId}] Composing LLM response from ${searchResults.length} results`)
       const topResults = searchResults.slice(0, 3)
       return await composeDirectResponse(query, topResults, traceId)
     }
     
-    // Step 4: If no good results, return helpful message
-    if (searchResults.length === 0) {
-      console.log(`[Execute Answer] [${traceId}] No results found`)
-      return {
-        messages: [`I couldn't find anything about "${query}" in your workspaces. Try rephrasing or check if the document is uploaded.`]
-      }
+    // No results found
+    console.log(`[Execute Answer] [${traceId}] No results found`)
+    return {
+      messages: [`I couldn't find anything about "${query}" in your workspaces. Try rephrasing or check if the document is uploaded.`]
     }
-    
-    // Step 5: Low-confidence results - try to compose something useful
-    console.log(`[Execute Answer] [${traceId}] Low-confidence results, attempting composition`)
-    const fallbackResults = searchResults.slice(0, 3)
-    return await composeDirectResponse(query, fallbackResults, traceId)
     
   } catch (error) {
     console.error(`[Execute Answer] [${traceId}] Error:`, error)
