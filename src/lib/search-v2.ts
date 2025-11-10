@@ -445,8 +445,24 @@ async function searchWorkspace(
       topScore: 0
     }
   }
-  const ftsQuery = expandFtsQuery(query)
-  const ftsResults = await searchFTS(ftsQuery, workspaceId, budget, 8)
+  let ftsResults = await searchFTS(query, workspaceId, budget, 8)
+  if (ftsResults.length === 0) {
+    const expanded = expandFtsQuery(query)
+    if (expanded !== query) {
+      console.log('[Search V2] FTS returned no results, retrying with expanded query')
+      ftsResults = await searchFTS(expanded, workspaceId, budget, 8)
+    }
+
+    if (ftsResults.length === 0) {
+      console.log('[Search V2] FTS still empty after expansion, using lexical fallback')
+      const fallbackResults = await searchResources(query, workspaceId, {}, { limit: 8 })
+      ftsResults = fallbackResults.map(result => ({
+        ...result,
+        source: (result as any).source || 'fts_fallback',
+        score: typeof result.score === 'number' ? result.score : 0.5
+      }))
+    }
+  }
   const ftsMs = Date.now() - ftsStart
 
   // Log top FTS score so we can observe confidence
