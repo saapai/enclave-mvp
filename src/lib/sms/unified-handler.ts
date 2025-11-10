@@ -1117,4 +1117,39 @@ async function handleQuery(
       setTimeout(() => reject(new Error('Orchestrator timeout after 60 seconds')), 60000)
     })
     
-    console.log(`
+    console.log('[UnifiedHandler] Racing orchestrator promise with timeout...')
+    const result = await Promise.race([orchestratorPromise, timeoutPromise])
+    finalResult = result as HandlerResult
+  } catch (err) {
+    console.error(`[UnifiedHandler] Error during orchestrator call:`, err)
+    finalResult = {
+      response: "sorry, I encountered an error while processing your request.",
+      shouldSaveHistory: true,
+      metadata: {
+        intent: 'error'
+      }
+    }
+  }
+
+  if (finalResult) {
+    // If the orchestrator returned a result, save it to action memory
+    queueActionMemorySave(
+      phoneNumber,
+      {
+        type: 'query_result',
+        details: {
+          query: messageText,
+          queryResults: finalResult.metadata?.intent,
+          queryAnswer: finalResult.response
+        }
+      },
+      'saveAction (query_result)'
+    )
+  }
+
+  return finalResult || {
+    response: "i didn't quite get that. try asking a question, or say 'send a message' to create an announcement.",
+    shouldSaveHistory: true,
+    metadata: { intent: intentType }
+  }
+}
