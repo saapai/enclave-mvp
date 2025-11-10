@@ -12,6 +12,7 @@
 import { supabase, supabaseAdmin } from './supabase'
 import { embedText } from './embeddings'
 import type { SearchResult } from './search'
+import { searchResources } from './search'
 
 // ============================================================================
 // CONFIGURATION
@@ -325,7 +326,16 @@ async function searchFTS(
     clearTimeout(timeoutId)
     scoped.dispose()
     if (err?.name === 'AbortError') {
-      console.warn('[Search V2 FTS] Hard timeout reached, skipping workspace')
+      console.warn('[Search V2 FTS] Hard timeout reached, falling back to simple search')
+      try {
+        const fallback = await searchResources(query, spaceId, {}, { limit }, undefined)
+        return fallback.map(hit => ({
+          ...hit,
+          source: 'fts_fallback'
+        } as SearchResult))
+      } catch (fallbackErr) {
+        console.error('[Search V2 FTS] Fallback search failed:', fallbackErr)
+      }
     } else {
       console.error('[Search V2 FTS] Error:', err?.message || err)
     }
