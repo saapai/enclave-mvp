@@ -12,7 +12,6 @@
 import { supabase, supabaseAdmin } from './supabase'
 import { embedText } from './embeddings'
 import type { SearchResult } from './search'
-import { searchResources } from './search'
 
 // ============================================================================
 // CONFIGURATION
@@ -264,6 +263,59 @@ async function getCachedEmbedding(query: string, budget: SearchBudget): Promise<
 // FTS SEARCH (using proper RPC)
 // ============================================================================
 
+async function searchLexicalFallback(
+  query: string,
+  spaceId: string,
+  limit: number,
+  offset: number = 0
+): Promise<SearchResult[]> {
+  const client = supabaseAdmin || supabase
+  if (!client) {
+    console.error('[Search V2] No Supabase client for lexical fallback')
+    return []
+  }
+
+  const simplified = query.toLowerCase().replace(/[^\w\s]/g, ' ').trim()
+  const tokens = simplified.split(/\s+/).filter(t => t.length > 2)
+  const ilikePattern = tokens.length > 0 ? `%${tokens.join('%')}%` : `%${simplified}%`
+
+  let builder = client
+    .from('resource')
+    .select(
+      `
+        *,
+        tags:resource_tag(
+          tag:tag(*)
+        ),
+        event_meta(*)
+      `
+    )
+    .eq('space_id', spaceId)
+    .order('updated_at', { ascending: false })
+    .limit(limit)
+    .range(offset, offset + limit - 1)
+
+  if (simplified.length > 0) {
+    builder = builder.or(
+      `title.ilike.${ilikePattern},body.ilike.${ilikePattern},title.similarity.${simplified},body.similarity.${simplified}`
+    )
+  }
+
+  const { data, error } = await builder
+  if (error) {
+    console.error('[Search V2] Lexical fallback failed:', error)
+    return []
+  }
+
+  return (data || []).map((resource: Record<string, unknown>) => ({
+    ...resource,
+    tags: (resource.tags as Array<{ tag: Record<string, unknown> }>)?.map(rt => rt.tag).filter(Boolean) || [],
+    rank: typeof (resource as any).rank === 'number' ? (resource as any).rank : 0.5,
+    score: typeof (resource as any).score === 'number' ? (resource as any).score : 0.5,
+    source: 'fts_fallback'
+  })) as SearchResult[]
+}
+
 async function searchFTS(
   query: string,
   spaceId: string,
@@ -328,11 +380,8 @@ async function searchFTS(
     if (err?.name === 'AbortError') {
       console.warn('[Search V2 FTS] Hard timeout reached, falling back to simple search')
       try {
-        const fallback = await searchResources(query, spaceId, {}, { limit }, undefined)
-        return fallback.map(hit => ({
-          ...hit,
-          source: 'fts_fallback'
-        } as SearchResult))
+        const fallback = await searchLexicalFallback(query, spaceId, limit)
+        return fallback
       } catch (fallbackErr) {
         console.error('[Search V2 FTS] Fallback search failed:', fallbackErr)
       }
@@ -455,12 +504,8 @@ async function searchWorkspace(
 
     if (ftsResults.length === 0) {
       console.log('[Search V2] FTS still empty after expansion, using lexical fallback')
-      const fallbackResults = await searchResources(query, workspaceId, {}, { limit: 8 })
-      ftsResults = fallbackResults.map(result => ({
-        ...result,
-        source: (result as any).source || 'fts_fallback',
-        score: typeof result.score === 'number' ? result.score : 0.5
-      }))
+      const fallbackResults = await searchLexicalFallback(query, workspaceId, 8)
+      ftsResults = fallbackResults
     }
   }
   const ftsMs = Date.now() - ftsStart
