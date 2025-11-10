@@ -17,20 +17,23 @@ import type { SearchResult } from './search'
 // CONFIGURATION
 // ============================================================================
 
-const SMS_SEARCH_BUDGET_MS = Number(process.env.SMS_SEARCH_BUDGET_MS || '20000') // 20s total budget (was 12s)
-const SMS_FTS_TIMEOUT_MS = Number(process.env.SMS_FTS_TIMEOUT_MS || '4000') // 4s per FTS (was 2.5s)
-const SMS_EMBED_TIMEOUT_MS = Number(process.env.SMS_EMBED_TIMEOUT_MS || '8000') // 8s for embedding (was 4s)
-const SMS_VECTOR_TIMEOUT_MS = Number(process.env.SMS_VECTOR_TIMEOUT_MS || '4000') // 4s per vector (was 2.5s)
-const SMS_EMBED_MIN_REMAINING_MS = Number(process.env.SMS_EMBED_MIN_REMAINING_MS || '4000') // Need 4s left to embed (was 5s)
+const SMS_SEARCH_BUDGET_MS = Number(process.env.SMS_SEARCH_BUDGET_MS || '10000') // 10s total budget
+const SMS_FTS_TIMEOUT_MS = Number(process.env.SMS_FTS_TIMEOUT_MS || '4000') // 4s per FTS
+const SMS_EMBED_TIMEOUT_MS = Number(process.env.SMS_EMBED_TIMEOUT_MS || '6000') // 6s for embedding
+const SMS_VECTOR_TIMEOUT_MS = Number(process.env.SMS_VECTOR_TIMEOUT_MS || '4000') // 4s per vector
+const SMS_EMBED_MIN_REMAINING_MS = Number(process.env.SMS_EMBED_MIN_REMAINING_MS || '3000') // Need 3s left to embed
 const SMS_FTS_HARD_TIMEOUT_MS = Number(process.env.SMS_FTS_HARD_TIMEOUT_MS || '3900')
 const SMS_VECTOR_HARD_TIMEOUT_MS = Number(process.env.SMS_VECTOR_HARD_TIMEOUT_MS || '3900')
-const SMS_FTS_CONFIDENCE_THRESHOLD = Number(process.env.SMS_FTS_CONFIDENCE_THRESHOLD || '0.65')
-const SMS_WAIT_FOR_EMBED_MS = Number(process.env.SMS_WAIT_FOR_EMBED_MS || '0')
+const SMS_FTS_CONFIDENCE_THRESHOLD = Number(process.env.SMS_FTS_CONFIDENCE_THRESHOLD || '0.95')
+const SMS_WAIT_FOR_EMBED_MS = Number(process.env.SMS_WAIT_FOR_EMBED_MS || '300')
+const EMBEDDING_RETRY_DELAYS_MS = [300, 800]
 
 // Circuit breaker: if embedding fails 3 times in 5 min, disable for next queries
 const embeddingFailures: number[] = []
-const CIRCUIT_BREAKER_WINDOW_MS = 300000 // 5 minutes
-const CIRCUIT_BREAKER_THRESHOLD = 3 // Increased from 2 to be more tolerant
+const CIRCUIT_BREAKER_WINDOW_MS = 30000 // 30 seconds
+const CIRCUIT_BREAKER_THRESHOLD = 3
+const CIRCUIT_BREAKER_COOLDOWN_MS = 30000
+let embeddingBreakerOpenUntil = 0
 
 // Embedding cache: reuse embeddings for same query
 const embeddingCache = new Map<string, { embedding: number[]; timestamp: number }>()
@@ -146,22 +149,26 @@ function createBudget(totalMs: number): SearchBudget {
 }
 
 function isEmbeddingEnabled(): boolean {
-  // Clean old failures
   const now = Date.now()
+  if (now < embeddingBreakerOpenUntil) {
+    return false
+  }
+
   const recentFailures = embeddingFailures.filter(t => now - t < CIRCUIT_BREAKER_WINDOW_MS)
   embeddingFailures.length = 0
   embeddingFailures.push(...recentFailures)
-  
-  const enabled = recentFailures.length < CIRCUIT_BREAKER_THRESHOLD
-  if (!enabled) {
-    console.log('[Search V2] Embedding circuit breaker OPEN (too many recent failures)')
-  }
-  return enabled
+  return recentFailures.length < CIRCUIT_BREAKER_THRESHOLD
 }
 
 function recordEmbeddingFailure(): void {
-  embeddingFailures.push(Date.now())
-  console.log(`[Search V2] Recorded embedding failure (${embeddingFailures.length} recent failures)`)
+  const now = Date.now()
+  embeddingFailures.push(now)
+  const recentFailures = embeddingFailures.filter(t => now - t < CIRCUIT_BREAKER_WINDOW_MS)
+  if (recentFailures.length >= CIRCUIT_BREAKER_THRESHOLD) {
+    embeddingBreakerOpenUntil = now + CIRCUIT_BREAKER_COOLDOWN_MS
+    console.warn('[Search V2] Embedding circuit breaker OPEN (temporarily disabling embeddings)')
+    embeddingFailures.length = 0
+  }
 }
 
 function createScopedController(parent?: AbortSignal): AbortableController {
@@ -184,6 +191,10 @@ function createScopedController(parent?: AbortSignal): AbortableController {
   }
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms))
+}
+
 async function getCachedEmbedding(query: string, budget: SearchBudget): Promise<number[] | null> {
   const normalizedQuery = query.toLowerCase().trim()
   const cached = embeddingCache.get(normalizedQuery)
@@ -200,32 +211,52 @@ async function getCachedEmbedding(query: string, budget: SearchBudget): Promise<
   }
   
   if (!isEmbeddingEnabled()) {
+    console.warn('[Search V2] Embeddings disabled by circuit breaker')
     return null
   }
   
   try {
-    console.log(`[Search V2] Generating embedding with ${SMS_EMBED_TIMEOUT_MS}ms timeout`)
-    const embedding = await Promise.race([
-      embedText(query),
-      new Promise<never>((_, reject) => 
-        setTimeout(() => reject(new Error('Embedding timeout')), SMS_EMBED_TIMEOUT_MS)
-      )
-    ])
-    
-    if (!embedding) {
-      console.error('[Search V2] Embedding generation returned null')
-      recordEmbeddingFailure()
-      return null
+    for (let attempt = 0; attempt <= EMBEDDING_RETRY_DELAYS_MS.length; attempt++) {
+      const attemptLabel = attempt + 1
+      console.log(`[Search V2] Generating embedding (attempt ${attemptLabel}) with ${SMS_EMBED_TIMEOUT_MS}ms timeout`)
+      try {
+        const embedding = await Promise.race([
+          embedText(query),
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error('Embedding timeout')), SMS_EMBED_TIMEOUT_MS)
+          )
+        ])
+
+        if (!embedding) {
+          console.error('[Search V2] Embedding generation returned null')
+          recordEmbeddingFailure()
+          return null
+        }
+
+        embeddingBreakerOpenUntil = 0
+        embeddingFailures.length = 0
+
+        console.log(`[Search V2] Embedding generated (${embedding.length} dims)`)
+        embeddingCache.set(normalizedQuery, { embedding, timestamp: Date.now() })
+        return embedding
+      } catch (err: any) {
+        recordEmbeddingFailure()
+        console.error(`[Search V2] Embedding attempt ${attemptLabel} failed:`, err?.message || err)
+        const backoff = EMBEDDING_RETRY_DELAYS_MS[attempt]
+        if (backoff) {
+          await sleep(backoff)
+          continue
+        }
+        return null
+      }
     }
-    
-    console.log(`[Search V2] Embedding generated (${embedding.length} dims)`)
-    embeddingCache.set(normalizedQuery, { embedding, timestamp: Date.now() })
-    return embedding
   } catch (err: any) {
-    console.error('[Search V2] Embedding failed:', err.message)
+    console.error('[Search V2] Embedding failed unexpectedly:', err?.message || err)
     recordEmbeddingFailure()
     return null
   }
+
+  return null
 }
 
 // ============================================================================
@@ -404,10 +435,11 @@ async function searchWorkspace(
       topScore: 0
     }
   }
-  const ftsResults = await searchFTS(query, workspaceId, budget, 8)
+  const ftsQuery = expandFtsQuery(query)
+  const ftsResults = await searchFTS(ftsQuery, workspaceId, budget, 8)
   const ftsMs = Date.now() - ftsStart
 
-  // Log top FTS score (no early-stop, we'll search all workspaces)
+  // Log top FTS score so we can observe confidence
   const topFtsScore = ftsResults[0]?.score || 0
   if (topFtsScore > 0) {
     console.log(`[Search V2] FTS top score: ${topFtsScore.toFixed(3)} in ${workspaceId.substring(0, 8)}`)
@@ -653,5 +685,22 @@ function normalize(text: string): string {
     .replace(/[^a-z0-9\s]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()
+}
+
+const FTS_SYNONYMS: Array<{ match: RegExp; expansions: string[] }> = [
+  {
+    match: /\bbig\s+little\b/i,
+    expansions: ['"big/little"', '"big & little"', '"family reveal"']
+  }
+]
+
+function expandFtsQuery(query: string): string {
+  let expanded = query
+  for (const { match, expansions } of FTS_SYNONYMS) {
+    if (match.test(query)) {
+      expanded += ' ' + expansions.join(' ')
+    }
+  }
+  return expanded
 }
 

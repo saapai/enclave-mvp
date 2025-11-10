@@ -17,7 +17,7 @@ import { checkActionQuery, saveAction, type ActionMemory } from './action-memory
 import { supabaseAdmin } from '@/lib/supabase'
 // Name declaration is handled inline
 
-const ACTION_MEMORY_TIMEOUT_MS = 3000
+const ACTION_MEMORY_TIMEOUT_MS = 150
 const PENDING_QUERY_LIFETIME_MS = Number(process.env.PENDING_QUERY_LIFETIME_MS || '120000')
 const RECENT_QUERY_LIFETIME_MS = Number(process.env.RECENT_QUERY_LIFETIME_MS || '300000')
 
@@ -1119,7 +1119,7 @@ async function handleQuery(
     'saveAction (initial)'
   )
   
-  let finalResult: HandlerResult
+  let finalResult: HandlerResult | null = null
 
   try {
     // Use orchestrator for content query handling

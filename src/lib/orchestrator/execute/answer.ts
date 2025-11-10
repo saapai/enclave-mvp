@@ -31,7 +31,7 @@ export async function executeAnswer(
   console.log(`[Execute Answer] [${traceId}] Frame user ID:`, frame.user.id)
   const query = frame.text
   const normalizedQuery = query.toLowerCase().trim()
-  const explicitDeadlineMs = Number(process.env.SMS_EXECUTE_DEADLINE_MS || '4000')
+  const explicitDeadlineMs = Number(process.env.SMS_EXECUTE_DEADLINE_MS || '10000')
   const abortController = new AbortController()
   const deadlineTimer = setTimeout(() => {
     console.warn(`[Execute Answer] [${traceId}] Deadline reached, aborting search pipeline`)
@@ -103,7 +103,7 @@ export async function executeAnswer(
     
     // Step 2: Hybrid search (V2 - sequential, budget-aware)
     const searchStart = Date.now()
-    const searchBudget = 8000 // 8s budget for search (OpenAI embeddings are fast ~200-500ms)
+    const searchBudget = Math.max(3000, explicitDeadlineMs - 2000)
     
     console.log(`[Execute Answer] [${traceId}] Starting hybrid search V2 (budget: ${searchBudget}ms)`)
     const searchResults = await hybridSearchV2(query, finalWorkspaceIds, {
