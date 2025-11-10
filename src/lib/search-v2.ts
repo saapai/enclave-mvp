@@ -291,15 +291,10 @@ async function searchLexicalFallback(
   const primaryToken = tokens[0]
   
   try {
+    // FAST QUERY: No joins, just basic resource data
     const { data, error } = await client
       .from('resource')
-      .select(`
-        *,
-        tags:resource_tag(
-          tag:tag(*)
-        ),
-        event_meta(*)
-      `)
+      .select('*')
       .eq('space_id', spaceId)
       .or(`title.ilike.%${primaryToken}%,body.ilike.%${primaryToken}%`)
       .order('updated_at', { ascending: false })
@@ -333,7 +328,7 @@ async function searchLexicalFallback(
       
       return {
         ...resource,
-        tags: (resource.tags as Array<{ tag: Record<string, unknown> }>)?.map(rt => rt.tag).filter(Boolean) || [],
+        tags: [], // Skip tags for speed
         rank: score,
         score: score,
         source: 'lexical'
