@@ -833,14 +833,14 @@ export async function POST(request: NextRequest) {
           
           const watchdog = setTimeout(async () => {
             watchdogFired = true
-            console.error(`[Twilio SMS] [${queryTraceId}] WATCHDOG: content_query exceeded 15s, sending degraded reply`)
+            console.error(`[Twilio SMS] [${queryTraceId}] WATCHDOG: content_query exceeded 25s, sending degraded reply`)
             try {
               await sendSms(queryFrom, "Still searching... this is taking longer than expected. I'll keep trying.", { retries: 1, retryDelay: 2000 })
               console.log(`[Twilio SMS] [${queryTraceId}] Watchdog message sent`)
             } catch (err) {
               console.error(`[Twilio SMS] [${queryTraceId}] Failed to send watchdog message:`, err)
             }
-          }, 15000) // 15 second watchdog to allow slower searches
+          }, 25000) // 25 second watchdog to allow slower searches
             
           // Set a hard timeout before Vercel kills us (Pro = 60s)
           const asyncTimeout = setTimeout(async () => {
@@ -939,8 +939,8 @@ export async function POST(request: NextRequest) {
           } catch (err) {
             clearTimeout(watchdog)
             clearTimeout(asyncTimeout)
-            console.error(`[Twilio SMS] [${traceId}] Async handler error:`, err)
-            console.error(`[Twilio SMS] [${traceId}] Error stack:`, err instanceof Error ? err.stack : 'No stack trace')
+            console.error(`[Twilio SMS] [${queryTraceId}] Async handler error:`, err)
+            console.error(`[Twilio SMS] [${queryTraceId}] Error stack:`, err instanceof Error ? err.stack : 'No stack trace')
             // Send error message to user (only if watchdog hasn't already sent something)
             if (!watchdogFired) {
               try {
