@@ -563,7 +563,7 @@ export async function hybridSearchV2(
   
   const queryTokens = new Set(normalize(query).split(' '))
   
-  // Step 1: DISABLE embedding generation for SMS - use pre-computed only
+  // Step 1: Use cached embeddings only for search (don't block on generation)
   const embeddingState: EmbeddingState = { value: null }
   let embeddingPromise: Promise<number[] | null> | null = null
   const normalizedQuery = query.toLowerCase().trim()
@@ -573,7 +573,7 @@ export async function hybridSearchV2(
     embeddingState.value = cachedEntry.embedding
     console.log(`[Search V2] [${searchId}] Embedding: cached (budget: ${budget.getRemainingMs()}ms)`)
   } else {
-    console.log(`[Search V2] [${searchId}] Skipping live embedding generation (use pre-computed only)`)
+    console.log(`[Search V2] [${searchId}] No cached embedding available for this query`)
   }
   
   // Step 2: Search workspaces sequentially (FTS first, then vector if embedding ready)
