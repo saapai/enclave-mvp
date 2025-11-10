@@ -794,7 +794,8 @@ export async function POST(request: NextRequest) {
       const intent = await classifyIntent(body, history)
       
       // Only content_query needs async processing (simple_question and follow_up_query are fast)
-      const needsAsyncProcessing = intent.type === 'content_query'
+      // Both content_query and follow_up_query need async processing
+      const needsAsyncProcessing = intent.type === 'content_query' || intent.type === 'follow_up_query'
       
       if (needsAsyncProcessing) {
         const dedupeKey = `${from}:${body.trim().toLowerCase()}`
