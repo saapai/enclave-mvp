@@ -37,6 +37,9 @@ export const ENV = {
   // Airtable field names (configurable - must match your Airtable table exactly)
   AIRTABLE_PHONE_FIELD: process.env.AIRTABLE_PHONE_FIELD || 'phone number',
   AIRTABLE_PERSON_FIELD: process.env.AIRTABLE_PERSON_FIELD || 'Person',
+
+  // Workspace overrides
+  PRIMARY_WORKSPACE_ID: process.env.PRIMARY_WORKSPACE_ID || ''
 }
 
 

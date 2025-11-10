@@ -34,17 +34,24 @@ export async function executeAnswer(
   
   try {
     // Step 1: Get workspace IDs (with 500ms timeout via new workspace.ts)
-    const workspaceStart = Date.now()
-    console.log(`[Execute Answer] [${traceId}] About to call getWorkspaceIds`)
-    const spaceIds = await getWorkspaceIds({
-      phoneNumber: frame.user.id,
-      includeSepFallback: true,
-      includePhoneLookup: false
-    })
-    
-    const workspaceDuration = Date.now() - workspaceStart
-    console.log(`[Execute Answer] [${traceId}] Retrieved ${spaceIds.length} workspace ids in ${workspaceDuration}ms`)
-    console.log(`[Execute Answer] [${traceId}] Workspace IDs:`, spaceIds)
+    const primaryWorkspaceId = ENV.PRIMARY_WORKSPACE_ID?.trim()
+    let spaceIds: string[]
+
+    if (primaryWorkspaceId) {
+      console.log(`[Execute Answer] [${traceId}] Using PRIMARY_WORKSPACE_ID override: ${primaryWorkspaceId}`)
+      spaceIds = [primaryWorkspaceId]
+    } else {
+      const workspaceStart = Date.now()
+      console.log(`[Execute Answer] [${traceId}] About to call getWorkspaceIds`)
+      spaceIds = await getWorkspaceIds({
+        phoneNumber: frame.user.id,
+        includeSepFallback: true,
+        includePhoneLookup: false
+      })
+      const workspaceDuration = Date.now() - workspaceStart
+      console.log(`[Execute Answer] [${traceId}] Retrieved ${spaceIds.length} workspace ids in ${workspaceDuration}ms`)
+      console.log(`[Execute Answer] [${traceId}] Workspace IDs:`, spaceIds)
+    }
     
     // Filter out default workspace
     const DEFAULT_SPACE_ID = '00000000-0000-0000-0000-000000000000'
@@ -52,25 +59,33 @@ export async function executeAnswer(
     
     // Prioritize SEP workspace if env var is set
     const SEP_SPACE_ID = process.env.SEP_SPACE_ID
-    const prioritizedSpaces = SEP_SPACE_ID && realSpaces.includes(SEP_SPACE_ID)
-      ? [SEP_SPACE_ID, ...realSpaces.filter(id => id !== SEP_SPACE_ID)]
-      : realSpaces
+    const prioritizedSpaces = primaryWorkspaceId
+      ? realSpaces
+      : SEP_SPACE_ID && realSpaces.includes(SEP_SPACE_ID)
+        ? [SEP_SPACE_ID, ...realSpaces.filter(id => id !== SEP_SPACE_ID)]
+        : realSpaces
     
     // Hard cap at 4 workspaces for SMS (all 4 UCLA SEP workspaces)
-    const workspaceIds = prioritizedSpaces.slice(0, 4)
+    const workspaceIds = primaryWorkspaceId
+      ? prioritizedSpaces
+      : prioritizedSpaces.slice(0, 4)
     
     let orderedWorkspaceIds = workspaceIds
-    try {
-      const ranked = await rankWorkspaceIds(workspaceIds)
-      if (ranked.length === workspaceIds.length) {
-        orderedWorkspaceIds = ranked
+    if (!primaryWorkspaceId) {
+      try {
+        const ranked = await rankWorkspaceIds(workspaceIds)
+        if (ranked.length === workspaceIds.length) {
+          orderedWorkspaceIds = ranked
+        }
+      } catch (err) {
+        console.error(`[Execute Answer] [${traceId}] Failed to rank workspaces:`, err)
       }
-    } catch (err) {
-      console.error(`[Execute Answer] [${traceId}] Failed to rank workspaces:`, err)
     }
     
     console.log(`[Execute Answer] [${traceId}] Filtered workspaces: ${spaceIds.length} -> ${workspaceIds.length}`)
     console.log(`[Execute Answer] [${traceId}] Search order: ${orderedWorkspaceIds.join(', ')}`)
+    
+    const finalWorkspaceIds = orderedWorkspaceIds
     
     // Early exit if no real workspaces
     if (workspaceIds.length === 0) {
@@ -85,7 +100,7 @@ export async function executeAnswer(
     const searchBudget = 8000 // 8s budget for search (OpenAI embeddings are fast ~200-500ms)
     
     console.log(`[Execute Answer] [${traceId}] Starting hybrid search V2 (budget: ${searchBudget}ms)`)
-    const searchResults = await hybridSearchV2(query, orderedWorkspaceIds, {
+    const searchResults = await hybridSearchV2(query, finalWorkspaceIds, {
       budgetMs: searchBudget,
       highConfidenceThreshold: 0.75
     })
