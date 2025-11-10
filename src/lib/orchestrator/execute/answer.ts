@@ -409,10 +409,20 @@ interface EventFields {
 }
 
 function selectEventAnswer(results: SearchResult[], query: string, traceId: string): string | null {
+  const normalizedQuery = query.toLowerCase()
+  let fallbackAnswer: string | null = null
+
   for (const result of results.slice(0, 10)) {
     const fields = extractEventFields(result)
-    if (isAnswerable(fields)) {
-      const message = formatEventAnswer(fields, query)
+    if (!isAnswerable(fields)) {
+      continue
+    }
+
+    const titleMatch = fields.title?.toLowerCase().includes(normalizedQuery) ?? false
+    const contextMatch = fields.context?.toLowerCase().includes(normalizedQuery) ?? false
+    const message = formatEventAnswer(fields, query)
+
+    if (titleMatch || contextMatch) {
       console.log(`[Execute Answer] [${traceId}] Structured answer from result`, {
         resultTitle: result.title,
         date: fields.date,
@@ -422,7 +432,17 @@ function selectEventAnswer(results: SearchResult[], query: string, traceId: stri
       })
       return message
     }
+
+    if (!fallbackAnswer) {
+      fallbackAnswer = message
+    }
   }
+
+  if (fallbackAnswer) {
+    console.log(`[Execute Answer] [${traceId}] Using fallback structured answer (no direct match)`)
+    return fallbackAnswer
+  }
+
   if (results.length > 0) {
     console.log(`[Execute Answer] [${traceId}] Structured extraction missed; showing top candidates`,
       results.slice(0, 5).map((hit) => ({
@@ -493,7 +513,13 @@ function extractEventFields(result: SearchResult): EventFields {
 }
 
 function isAnswerable(fields: EventFields): boolean {
-  return Boolean(fields.date || fields.weeklyRule)
+  if (fields.date || fields.weeklyRule) {
+    return true
+  }
+  if (fields.time && (fields.location || fields.context)) {
+    return true
+  }
+  return false
 }
 
 function formatEventAnswer(fields: EventFields, query: string): string {
@@ -512,6 +538,8 @@ function formatEventAnswer(fields: EventFields, query: string): string {
       clause += ` at ${fields.time}`
     }
     segments.push(clause + '.')
+  } else if (fields.time) {
+    segments.push(`${name} is at ${fields.time}.`)
   }
 
   if (fields.location) {
