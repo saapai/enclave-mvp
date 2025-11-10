@@ -401,6 +401,7 @@ async function composeDirectResponse(
 
 interface EventFields {
   title?: string
+  overrideTitle?: string
   date?: string
   weeklyRule?: string
   time?: string
@@ -413,7 +414,7 @@ function selectEventAnswer(results: SearchResult[], query: string, traceId: stri
   let fallbackAnswer: string | null = null
 
   for (const result of results.slice(0, 10)) {
-    const fields = extractEventFields(result)
+    const fields = extractEventFields(result, query)
     if (!isAnswerable(fields)) {
       continue
     }
@@ -456,7 +457,7 @@ function selectEventAnswer(results: SearchResult[], query: string, traceId: stri
   return null
 }
 
-function extractEventFields(result: SearchResult): EventFields {
+function extractEventFields(result: SearchResult, query: string): EventFields {
   const fields: EventFields = {}
   const textParts: string[] = []
   const title = (result as any)?.title as string | undefined
@@ -471,18 +472,63 @@ function extractEventFields(result: SearchResult): EventFields {
       textParts.push(value)
     }
   }
+
   const combined = textParts.join(' ').replace(/\s+/g, ' ').trim()
-  fields.context = combined
+  const normalizedCombined = combined.toLowerCase()
+  const queryTokens = Array.from(
+    new Set(
+      query
+        .toLowerCase()
+        .split(/[^a-z0-9&/]+/)
+        .filter(token => token.length >= 3)
+    )
+  )
+  const augmentedTokens = Array.from(
+    new Set([
+      ...queryTokens,
+      ...queryTokens.map(token => token.replace(/&/g, 'and')),
+      ...queryTokens.map(token => token.replace(/\//g, ' '))
+    ])
+  ).filter(Boolean)
+
+  let focusStart = 0
+  let focusEnd = Math.min(combined.length, 400)
+  let bestIdx = Number.POSITIVE_INFINITY
+  for (const token of augmentedTokens) {
+    const idx = normalizedCombined.indexOf(token)
+    if (idx >= 0 && idx < bestIdx) {
+      bestIdx = idx
+    }
+  }
+
+  if (bestIdx !== Number.POSITIVE_INFINITY) {
+    focusStart = Math.max(0, bestIdx - 180)
+    focusEnd = Math.min(combined.length, bestIdx + 260)
+
+    while (focusStart > 0 && !/[.\n]/.test(combined[focusStart - 1])) {
+      focusStart--
+    }
+    while (focusEnd < combined.length && !/[.\n]/.test(combined[focusEnd])) {
+      focusEnd++
+    }
+  }
+
+  const focused = combined.slice(focusStart, focusEnd).trim()
+  fields.context = focused.length > 0 ? focused : combined.slice(0, 360)
+
+  const searchRegion = fields.context || combined
 
   const dateRegex = /(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)(\s+\d{1,2}(st|nd|rd|th)?)/i
   const weeklyRegex = /\b(every|each)\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday|week|weekday|weekend)s?\b/i
   const timeRegex = /\b\d{1,2}(:\d{2})?\s?(am|pm)\b/i
-  const locationRegex = /\b(?:at|@)\s+([^\.,;]+)/i
+  const tbdTimeRegex = /\btime\b[^.]*\bTBD\b/i
+  const locationRegex = /\b(?:at|@)\s+([^.,;]+)/i
+  const tbdLocationRegex = /\blocation\b[^.]*\bTBD\b/i
 
-  const dateMatch = combined.match(dateRegex)
-  const weeklyMatch = combined.match(weeklyRegex)
-  const timeMatch = combined.match(timeRegex)
-  const locationMatch = combined.match(locationRegex)
+  const dateMatch = searchRegion.match(dateRegex)
+  const weeklyMatch = searchRegion.match(weeklyRegex)
+  const timeMatch = searchRegion.match(timeRegex)
+  const locationMatch = searchRegion.match(locationRegex)
 
   if (dateMatch) {
     fields.date = dateMatch[0].replace(/\s+/g, ' ').trim()
@@ -492,21 +538,30 @@ function extractEventFields(result: SearchResult): EventFields {
   }
   if (timeMatch) {
     fields.time = timeMatch[0].toUpperCase()
+  } else if (tbdTimeRegex.test(searchRegion)) {
+    fields.time = 'TBD'
   }
   if (locationMatch) {
     const location = locationMatch[1].trim()
     if (location.length > 0) {
       fields.location = location
     }
+  } else if (tbdLocationRegex.test(searchRegion)) {
+    fields.location = 'Location TBD'
   } else {
-    const venueKeywords = ['kelton', 'levering', 'sac', 'apartment', 'terrace', 'lounge']
+    const venueKeywords = ['kelton', 'levering', 'sac', 'apartment', 'terrace', 'lounge', 'hall', 'center']
     for (const keyword of venueKeywords) {
-      const match = combined.match(new RegExp(`([^.]*${keyword}[^.]*)`, 'i'))
+      const match = searchRegion.match(new RegExp(`([^.]*${keyword}[^.]*)`, 'i'))
       if (match) {
         fields.location = match[0].trim()
         break
       }
     }
+  }
+
+  if (!fields.overrideTitle) {
+    const rebuiltTitle = queryTokens.length > 0 ? queryTokens.join(' ') : query
+    fields.overrideTitle = toTitleCase(rebuiltTitle)
   }
 
   return fields
@@ -523,7 +578,9 @@ function isAnswerable(fields: EventFields): boolean {
 }
 
 function formatEventAnswer(fields: EventFields, query: string): string {
-  const name = fields.title || query
+  const name = (fields.overrideTitle && fields.overrideTitle.trim().length > 0)
+    ? fields.overrideTitle
+    : fields.title || toTitleCase(query)
   const segments: string[] = []
 
   if (fields.weeklyRule) {
@@ -543,7 +600,8 @@ function formatEventAnswer(fields: EventFields, query: string): string {
   }
 
   if (fields.location) {
-    const locationSentence = fields.location.endsWith('.') ? fields.location : `${fields.location}.`
+    const cleanLocation = cleanupSentence(fields.location)
+    const locationSentence = cleanLocation.endsWith('.') ? cleanLocation : `${cleanLocation}.`
     segments.push(locationSentence)
   }
 
@@ -551,7 +609,7 @@ function formatEventAnswer(fields: EventFields, query: string): string {
     segments.push(truncateAdditionalContext(fields.context, segments.join(' ')))
   }
 
-  return segments.filter(Boolean).join(' ')
+  return dedupeSentences(segments.filter(Boolean).join(' '))
 }
 
 function truncateAdditionalContext(context: string, already: string): string {
@@ -560,4 +618,33 @@ function truncateAdditionalContext(context: string, already: string): string {
   const maxLen = 360 - already.length
   if (maxLen <= 60) return ''
   return cleaned.length > maxLen ? cleaned.slice(0, maxLen).trim() + '...' : cleaned
+}
+
+function cleanupSentence(text: string): string {
+  return text.replace(/\s+/g, ' ').replace(/\.+$/g, '').trim()
+}
+
+function dedupeSentences(text: string): string {
+  const seen = new Set<string>()
+  const sentences = text
+    .split(/(?<=[.?!])\s+/)
+    .map(sentence => sentence.trim())
+    .filter(sentence => sentence.length > 0)
+
+  const unique: string[] = []
+  for (const sentence of sentences) {
+    const normalized = sentence.toLowerCase()
+    if (seen.has(normalized)) continue
+    seen.add(normalized)
+    unique.push(sentence)
+  }
+  return unique.join(' ')
+}
+
+function toTitleCase(text: string): string {
+  return text
+    .split(/\s+/)
+    .map(part => part.length === 0 ? '' : part[0].toUpperCase() + part.slice(1))
+    .join(' ')
+    .trim()
 }
