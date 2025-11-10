@@ -122,7 +122,8 @@ export async function executeAnswer(
       budgetMs: searchBudget,
       highConfidenceThreshold: 0.75,
       abortSignal: abortController.signal,
-      traceId
+      traceId,
+      preferredSpaces: finalWorkspaceIds
     })
     
     const searchDuration = Date.now() - searchStart
@@ -387,7 +388,12 @@ async function composeDirectResponse(
       }
     }
     
-    const trimmedAnswer = answer.length > 0 ? answer : 'I located context but could not format a response in time.'
+    let trimmedAnswer = answer.length > 0 ? answer : 'I located context but could not format a response in time.'
+    const needsTemporalPrecision = /\bwhen\b|date|time/.test(query.toLowerCase())
+    const hasTemporalPrecision = /(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|\b\d{1,2}(st|nd|rd|th)?\b|\b\d{1,2}:\d{2}\b|\b(am|pm)\b)/i.test(trimmedAnswer)
+    if (needsTemporalPrecision && !hasTemporalPrecision) {
+      trimmedAnswer += '\n\nI didn\'t see a specific date or time in the docs—double-check with exec before announcing.'
+    }
     console.log(`[Execute Answer] [${traceId}] Composed response: "${trimmedAnswer.substring(0, 100)}..."`)
     return {
       messages: [trimmedAnswer]
