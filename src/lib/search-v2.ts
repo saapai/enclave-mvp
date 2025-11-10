@@ -505,7 +505,19 @@ export async function hybridSearchV2(
       deduped.push(result)
     }
   }
-  
+
+  if (deduped.length > 0) {
+    const preview = deduped.slice(0, 5).map((hit) => {
+      const spaceId = (hit as any)?.space_id as string | undefined
+      const source = ((hit as any)?.source || 'unknown').toString().toLowerCase()
+      const score = typeof hit.score === 'number' ? hit.score.toFixed(3) : 'n/a'
+      return `${hit.title || 'untitled'} [score=${score}, source=${source}, space=${spaceId?.substring(0, 8) || 'n/a'}]`
+    })
+    console.log(`[Search V2] [${searchId}] Pre-weight top hits:`, preview)
+  } else {
+    console.log(`[Search V2] [${searchId}] No hits returned across searched workspaces`)
+  }
+
   // Sort by weighted score
   deduped.sort((a, b) => computeWeight(b, queryTokens) - computeWeight(a, queryTokens))
   

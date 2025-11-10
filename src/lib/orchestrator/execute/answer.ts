@@ -423,6 +423,16 @@ function selectEventAnswer(results: SearchResult[], query: string, traceId: stri
       return message
     }
   }
+  if (results.length > 0) {
+    console.log(`[Execute Answer] [${traceId}] Structured extraction missed; showing top candidates`,
+      results.slice(0, 5).map((hit) => ({
+        title: hit.title,
+        score: hit.score,
+        source: (hit as any)?.source,
+        hasDate: /\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|\d{1,2}(st|nd|rd|th)?)\b/i.test(`${hit.title} ${(hit as any)?.body || ''}`)
+      }))
+    )
+  }
   return null
 }
 
