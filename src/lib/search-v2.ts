@@ -275,25 +275,21 @@ async function searchLexicalFallback(
     return []
   }
 
-  // Extract meaningful keywords from query (remove stop words like "when", "is", "what", etc.)
+  // Extract meaningful keywords from query (remove stop words)
   const stopWords = new Set(['when', 'is', 'are', 'was', 'were', 'what', 'where', 'who', 'how', 'which', 'the', 'a', 'an', 'do', 'does', 'did'])
   const simplified = query.toLowerCase().replace(/[^\w\s]/g, ' ').trim()
   const tokens = simplified.split(/\s+/)
-    .filter(t => t.length >= 2 && !stopWords.has(t)) // Keep 2+ char tokens, exclude stop words
+    .filter(t => t.length >= 2 && !stopWords.has(t))
   
   if (tokens.length === 0) {
     console.log('[Search V2] Lexical fallback: no meaningful tokens after filtering')
     return []
   }
   
-  // Build multiple ilike patterns for OR matching
-  // Try each token individually to maximize recall
-  const orClauses: string[] = []
-  for (const token of tokens) {
-    orClauses.push(`title.ilike.%${token}%`)
-    orClauses.push(`body.ilike.%${token}%`)
-  }
-
+  // Use the FIRST token only for fast search (avoid OR explosion)
+  // This is much faster than multiple OR clauses
+  const primaryToken = tokens[0]
+  
   try {
     const { data, error } = await client
       .from('resource')
@@ -305,23 +301,49 @@ async function searchLexicalFallback(
         event_meta(*)
       `)
       .eq('space_id', spaceId)
-      .or(orClauses.join(','))
+      .or(`title.ilike.%${primaryToken}%,body.ilike.%${primaryToken}%`)
       .order('updated_at', { ascending: false })
-      .limit(limit)
-      .range(offset, offset + limit - 1)
+      .limit(limit * 2) // Get more results to filter
+      .range(offset, offset + (limit * 2) - 1)
 
     if (error) {
       console.error('[Search V2] Lexical fallback failed:', error)
       return []
     }
 
-    return (data || []).map((resource: Record<string, unknown>) => ({
-      ...resource,
-      tags: (resource.tags as Array<{ tag: Record<string, unknown> }>)?.map(rt => rt.tag).filter(Boolean) || [],
-      rank: 0.5,
-      score: 0.5,
-      source: 'lexical'
-    })) as SearchResult[]
+    if (!data || data.length === 0) {
+      return []
+    }
+
+    // Post-filter: prefer results that match multiple tokens
+    const results = data.map((resource: Record<string, unknown>) => {
+      const titleLower = (resource.title as string || '').toLowerCase()
+      const bodyLower = (resource.body as string || '').toLowerCase()
+      
+      // Count how many tokens match
+      let matchCount = 0
+      for (const token of tokens) {
+        if (titleLower.includes(token) || bodyLower.includes(token)) {
+          matchCount++
+        }
+      }
+      
+      // Boost score based on match count
+      const score = 0.3 + (matchCount / tokens.length) * 0.7
+      
+      return {
+        ...resource,
+        tags: (resource.tags as Array<{ tag: Record<string, unknown> }>)?.map(rt => rt.tag).filter(Boolean) || [],
+        rank: score,
+        score: score,
+        source: 'lexical'
+      }
+    })
+
+    // Sort by score and return top results
+    results.sort((a, b) => (b.score || 0) - (a.score || 0))
+    return results.slice(0, limit) as SearchResult[]
+    
   } catch (err) {
     console.error('[Search V2] Lexical fallback exception:', err)
     return []
