@@ -37,6 +37,7 @@ let embeddingBreakerOpenUntil = 0
 
 // Embedding cache: reuse embeddings for same query
 const embeddingCache = new Map<string, { embedding: number[]; timestamp: number }>()
+const queryEmbeddingCache = new Map<string, { query: string; embedding: number[]; completedAt: number }>()
 const EMBEDDING_CACHE_TTL = 180000 // 3 minutes
 
 // ============================================================================
@@ -668,17 +669,9 @@ async function searchWorkspace(
   }
 
   if (!embeddingToUse && embeddingPromise) {
-    const finalWaitBudget = Math.max(0, budget.getRemainingMs() - (SMS_VECTOR_TIMEOUT_MS + 100))
-    const finalWaitMs = Math.min(2000, finalWaitBudget)
-    if (finalWaitMs > 0) {
-      console.log(`[Search V2] Final wait up to ${finalWaitMs}ms for embedding`)    
-      embeddingToUse = await Promise.race([
-        embeddingPromise,
-        new Promise<number[] | null>(resolve => setTimeout(() => resolve(null), finalWaitMs))
-      ])
-      if (embeddingToUse) {
-        embeddingState.value = embeddingToUse
-      }
+    embeddingToUse = await embeddingPromise
+    if (embeddingToUse) {
+      embeddingState.value = embeddingToUse
     }
   }
   
@@ -764,14 +757,25 @@ export async function hybridSearchV2(
   const embeddingState: EmbeddingState = { value: null }
   let embeddingPromise: Promise<number[] | null> | null = null
   const normalizedQuery = query.toLowerCase().trim()
+  const recentEmbeddingEntry = queryEmbeddingCache.get(normalizedQuery)
+
   const cachedEntry = embeddingCache.get(normalizedQuery)
   
-  if (cachedEntry && Date.now() - cachedEntry.timestamp < EMBEDDING_CACHE_TTL) {
+  if (recentEmbeddingEntry && Date.now() - recentEmbeddingEntry.completedAt < EMBEDDING_CACHE_TTL) {
+    embeddingState.value = recentEmbeddingEntry.embedding
+    console.log(`[Search V2] [${searchId}] Embedding: recent cache hit (budget: ${budget.getRemainingMs()}ms)`)
+  } else if (cachedEntry && Date.now() - cachedEntry.timestamp < EMBEDDING_CACHE_TTL) {
     embeddingState.value = cachedEntry.embedding
     console.log(`[Search V2] [${searchId}] Embedding: cached (budget: ${budget.getRemainingMs()}ms)`)
   } else {
     console.log(`[Search V2] [${searchId}] No cached embedding available for this query`)
-    embeddingPromise = getCachedEmbedding(query, budget).catch(err => {
+    embeddingPromise = getCachedEmbedding(query, budget).then(embedding => {
+      if (embedding) {
+        embeddingCache.set(normalizedQuery, { embedding, timestamp: Date.now() })
+        queryEmbeddingCache.set(normalizedQuery, { query, embedding, completedAt: Date.now() })
+      }
+      return embedding
+    }).catch(err => {
       console.error('[Search V2] Embedding generation failed:', err)
       return null
     })
@@ -833,6 +837,14 @@ export async function hybridSearchV2(
     console.log(`[Search V2] [${searchId}] Reranking changed top result: "${deduped[0]?.title}" → "${reranked[0]?.title}"`)
   }
   
+  if (embeddingState.value) {
+    queryEmbeddingCache.set(normalizedQuery, {
+      query,
+      embedding: embeddingState.value,
+      completedAt: Date.now()
+    })
+  }
+
   const totalMs = Date.now() - budget.startTime
   console.log(`[Search V2] [${searchId}] Complete in ${totalMs}ms`)
   console.log(`[Search V2] [${searchId}] Results: ${reranked.length} (top score: ${reranked[0]?.score?.toFixed(3) || 'N/A'})`)
