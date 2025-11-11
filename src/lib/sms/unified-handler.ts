@@ -1108,7 +1108,7 @@ async function handleQuery(
     // Use orchestrator for content query handling
     console.log(`[UnifiedHandler] Importing orchestrator...`)
     const importStartTime = Date.now()
-    const { handleTurn, type HandleTurnResult } = await import('@/lib/orchestrator/handleTurn')
+    const { handleTurn } = await import('@/lib/orchestrator/handleTurn')
     const importDuration = Date.now() - importStartTime
     console.log(`[UnifiedHandler] Orchestrator imported in ${importDuration}ms, calling handleTurn for query: "${messageText}"`)
     
