@@ -259,6 +259,29 @@ async function getCachedEmbedding(query: string, budget: SearchBudget): Promise<
   return null
 }
 
+function isAbortError(err: any): boolean {
+  if (!err) return false
+  return err.name === 'AbortError' || err.message === 'This operation was aborted'
+}
+
+async function runWithRetry<T>(label: string, attempts: number, operation: () => Promise<T>, delayMs: number = 250): Promise<T> {
+  let lastError: any
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      return await operation()
+    } catch (err) {
+      lastError = err
+      const abort = isAbortError(err)
+      console.warn(`[Search V2] ${label} attempt ${attempt} failed${abort ? ' (aborted)' : ''}:`, err?.message || err)
+      if (attempt === attempts || abort) {
+        break
+      }
+      await sleep(delayMs * attempt)
+    }
+  }
+  throw lastError
+}
+
 // ============================================================================
 // FTS SEARCH (using proper RPC)
 // ============================================================================
@@ -294,13 +317,17 @@ async function searchLexicalFallback(
   
   try {
     // FAST QUERY: Select only needed columns, no body scan
-    const { data, error } = await client
-      .from('resource')
-      .select('id,space_id,type,title,body,url,created_by,created_at,updated_at')
-      .eq('space_id', spaceId)
-      .or(`title.ilike.%${primaryToken}%,body.ilike.%${primaryToken}%`)
-      .order('updated_at', { ascending: false })
-      .limit(limit * 2)
+    const { data, error } = await runWithRetry(
+      'Lexical fallback',
+      3,
+      () => client
+        .from('resource')
+        .select('id,space_id,type,title,body,url,created_by,created_at,updated_at')
+        .eq('space_id', spaceId)
+        .or(`title.ilike.%${primaryToken}%,body.ilike.%${primaryToken}%`)
+        .order('updated_at', { ascending: false })
+        .limit(limit * 2)
+    )
 
     const durationMs = Date.now() - queryStart
 
@@ -346,7 +373,7 @@ async function searchLexicalFallback(
     
   } catch (err) {
     const durationMs = Date.now() - queryStart
-    if ((err as any)?.name === 'AbortError') {
+    if (isAbortError(err)) {
       console.warn(`[Search V2] Lexical fallback aborted after ${durationMs}ms`)
     } else {
       console.error('[Search V2] Lexical fallback exception:', err, `(duration: ${durationMs}ms)`)
