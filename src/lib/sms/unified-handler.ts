@@ -16,6 +16,7 @@ import { generateAnnouncement, formatAnnouncement, AnnouncementDraft } from './e
 import { checkActionQuery, saveAction, type ActionMemory } from './action-memory'
 import { supabaseAdmin } from '@/lib/supabase'
 import type { HandleTurnResult } from '@/lib/orchestrator/handleTurn'
+import { splitLongMessage } from '@/lib/text/limits'
 // Name declaration is handled inline
 
 const ACTION_MEMORY_TIMEOUT_MS = 150
