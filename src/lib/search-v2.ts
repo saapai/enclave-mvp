@@ -411,59 +411,78 @@ async function searchFTS(
     return []
   }
 
-  const scoped = createScopedController(abortSignal)
-  const controller = scoped.controller
   const remainingBudget = budget.getRemainingMs()
   const attemptTimeout = Math.max(500, Math.min(SMS_FTS_TIMEOUT_MS, remainingBudget - 100))
   const hardTimeout = Math.min(attemptTimeout, SMS_FTS_HARD_TIMEOUT_MS)
-  const timeoutId = setTimeout(() => controller.abort(), hardTimeout)
 
   console.log(`[Search V2 FTS] RPC start for "${query}" (space ${spaceId.substring(0, 8)}, timeout ${hardTimeout}ms)`)
 
-  try {
-    const { data, error } = await client
-      .rpc('search_resources_fts', {
-        search_query: query,
-        target_space_id: spaceId,
-        limit_count: limit,
-        offset_count: 0
-      })
-      .abortSignal(controller.signal)
+  let fallbackTimer: NodeJS.Timeout | null = null
 
-    clearTimeout(timeoutId)
-    scoped.dispose()
+  const fallbackPromise = new Promise<{ type: 'fallback'; results: SearchResult[] }>((resolve) => {
+    fallbackTimer = setTimeout(() => {
+      console.warn(`[Search V2 FTS] Timed out after ${hardTimeout}ms, switching to lexical fallback`)
+      searchLexicalFallback(query, spaceId, limit, budget, abortSignal)
+        .then((results) => resolve({ type: 'fallback', results }))
+        .catch((err) => {
+          console.error('[Search V2 FTS] Lexical fallback after timeout failed:', err)
+          resolve({ type: 'fallback', results: [] })
+        })
+    }, hardTimeout)
+  })
 
-    if (error) {
-      console.error('[Search V2 FTS] RPC error:', error.message || error)
-      return searchLexicalFallback(query, spaceId, limit, budget, abortSignal)
-    }
+  const ftsPromise = Promise.resolve(
+    client.rpc('search_resources_fts', {
+      search_query: query,
+      target_space_id: spaceId,
+      limit_count: limit,
+      offset_count: 0
+    })
+  )
+    .then(({ data, error }) => ({ type: 'fts', data, error }))
+    .catch((err: unknown) => {
+      console.error('[Search V2 FTS] RPC exception:', err)
+      return { type: 'fts-error', error: err }
+    })
 
-    if (!data || data.length === 0) {
-      console.log('[Search V2 FTS] No rows returned, falling back to lexical search')
-      return searchLexicalFallback(query, spaceId, limit, budget, abortSignal)
-    }
+  const winner = await Promise.race([ftsPromise, fallbackPromise])
+  if (fallbackTimer) {
+    clearTimeout(fallbackTimer)
+    fallbackTimer = null
+  }
 
-    const results = data.map((row: any) => ({
-      ...row,
-      tags: [],
-      score: typeof row.rank === 'number' ? row.rank : 0,
-      source: 'fts'
-    } as SearchResult))
+  if ((winner as any)?.type === 'fallback') {
+    const fallbackResults = (winner as any).results as SearchResult[]
+    return fallbackResults
+  }
 
-    console.log(`[Search V2 FTS] Returned ${results.length} rows (top score: ${results[0]?.score?.toFixed(3) || 'N/A'})`)
-    return results
+  const typed = winner as { type: 'fts'; data: any[] | null; error: any } | { type: 'fts-error'; error: any }
 
-  } catch (err) {
-    clearTimeout(timeoutId)
-    scoped.dispose()
-
-    if (isAbortError(err)) {
-      console.warn('[Search V2 FTS] Aborted due to timeout, switching to lexical fallback')
-    } else {
-      console.error('[Search V2 FTS] Exception:', err)
-    }
+  if (typed.type === 'fts-error') {
     return searchLexicalFallback(query, spaceId, limit, budget, abortSignal)
   }
+
+  const { data, error } = typed
+
+  if (error) {
+    console.error('[Search V2 FTS] RPC error:', error.message || error)
+    return searchLexicalFallback(query, spaceId, limit, budget, abortSignal)
+  }
+
+  if (!data || data.length === 0) {
+    console.log('[Search V2 FTS] No rows returned, falling back to lexical search')
+    return searchLexicalFallback(query, spaceId, limit, budget, abortSignal)
+  }
+
+  const results = data.map((row: any) => ({
+    ...row,
+    tags: [],
+    score: typeof row.rank === 'number' ? row.rank : 0,
+    source: 'fts'
+  } as SearchResult))
+
+  console.log(`[Search V2 FTS] Returned ${results.length} rows (top score: ${results[0]?.score?.toFixed(3) || 'N/A'})`)
+  return results
 }
 
 // ============================================================================
