@@ -75,6 +75,52 @@ interface AbortableController {
   dispose(): void
 }
 
+class DeadlineError extends Error {
+  constructor(label: string) {
+    super(`${label} deadline reached`)
+    this.name = 'TimeoutError'
+  }
+}
+
+async function runWithDeadline<T>(
+  label: string,
+  maxDurationMs: number,
+  budget: SearchBudget,
+  parentSignal: AbortSignal | undefined,
+  fn: (signal: AbortSignal, timeoutMs: number) => Promise<T>,
+  options: { allowParentAbort?: boolean } = {}
+): Promise<T | null> {
+  const remaining = budget.getRemainingMs()
+  const timeoutMs = Math.max(0, Math.min(maxDurationMs, remaining))
+  if (timeoutMs < 60) {
+    console.log(`[Search V2] ${label} skipped due to insufficient budget (${remaining}ms left)`)
+    return null
+  }
+
+  const allowParentAbort = options.allowParentAbort ?? true
+  const scoped = createScopedController(allowParentAbort ? parentSignal : undefined)
+  const controller = scoped.controller
+  let timeoutTriggered = false
+  const timeoutId = setTimeout(() => {
+    timeoutTriggered = true
+    controller.abort()
+  }, timeoutMs)
+
+  try {
+    const result = await fn(controller.signal, timeoutMs)
+    return result
+  } catch (err) {
+    if (timeoutTriggered) {
+      console.warn(`[Search V2] ${label} timed out after ${timeoutMs}ms`)
+      throw new DeadlineError(label)
+    }
+    throw err
+  } finally {
+    clearTimeout(timeoutId)
+    scoped.dispose()
+  }
+}
+
 // ============================================================================
 // ENTITY EXTRACTION & RERANKING
 // ============================================================================
@@ -317,69 +363,32 @@ async function getCachedEmbedding(query: string, cacheKey: string, budget: Searc
   }
   
   try {
-    for (let attempt = 0; attempt <= EMBEDDING_RETRY_DELAYS_MS.length; attempt++) {
-      const attemptLabel = attempt + 1
-      const remaining = budget.getRemainingMs()
-      if (remaining < SMS_EMBED_MIN_REMAINING_MS) {
-        console.log('[Search V2] Embedding attempt skipped due to budget exhaustion')
-        return null
-      }
-      const timeout = Math.min(SMS_EMBED_TIMEOUT_MS, remaining)
-      console.log(`[Search V2] Generating embedding (attempt ${attemptLabel}) with ${timeout}ms timeout`)
-      let abortListener: (() => void) | null = null
-      try {
-        const timeoutPromise = new Promise<number[] | null>((_, reject) =>
-          setTimeout(() => reject(new Error('Embedding timeout')), timeout)
-        )
-        const abortPromise = abortSignal
-          ? new Promise<number[] | null>((_, reject) => {
-              abortListener = () => {
-                const error = new Error('Embedding aborted')
-                ;(error as any).name = 'AbortError'
-                reject(error)
-              }
-              abortSignal.addEventListener('abort', abortListener!, { once: true })
-            })
-          : null
-        const sources: Array<Promise<number[] | null>> = [embedText(query), timeoutPromise]
-        if (abortPromise) sources.push(abortPromise)
-        const embedding = await Promise.race(sources)
+    const embedding = await runWithDeadline(
+      'embedding',
+      SMS_EMBED_TIMEOUT_MS,
+      budget,
+      abortSignal,
+      (signal, timeoutMs) => embedText(query, { signal, timeoutMs })
+    )
 
-        if (abortListener && abortSignal) {
-          abortSignal.removeEventListener('abort', abortListener)
-        }
-
-        if (!embedding) {
-          console.error('[Search V2] Embedding generation returned null')
-          recordEmbeddingFailure()
-          return null
-        }
-
-        embeddingBreakerOpenUntil = 0
-        embeddingFailures.length = 0
-
-        console.log(`[Search V2] Embedding generated (${embedding.length} dims)`)
-        embeddingCache.set(cacheKey, { embedding, timestamp: Date.now() })
-        queryEmbeddingCache.set(cacheKey, { query, embedding, completedAt: Date.now() })
-        return embedding
-      } catch (err: any) {
-        if (abortListener && abortSignal) {
-          abortSignal.removeEventListener('abort', abortListener)
-        }
-        if (err instanceof Error && err.name === 'AbortError') {
-          throw err
-        }
-        recordEmbeddingFailure()
-        console.error(`[Search V2] Embedding attempt ${attemptLabel} failed:`, err?.message || err)
-        const backoff = EMBEDDING_RETRY_DELAYS_MS[attempt]
-        if (backoff) {
-          await sleep(backoff)
-          continue
-        }
-        return null
-      }
+    if (!embedding) {
+      console.warn('[Search V2] Embedding skipped due to exhausted budget')
+      return null
     }
+
+    embeddingBreakerOpenUntil = 0
+    embeddingFailures.length = 0
+
+    console.log(`[Search V2] Embedding generated (${embedding.length} dims)`)
+    embeddingCache.set(cacheKey, { embedding, timestamp: Date.now() })
+    queryEmbeddingCache.set(cacheKey, { query, embedding, completedAt: Date.now() })
+    return embedding
   } catch (err: any) {
+    if (err instanceof DeadlineError) {
+      console.warn('[Search V2] Embedding timed out; continuing without semantic search')
+      recordEmbeddingFailure()
+      return null
+    }
     if (err instanceof Error && err.name === 'AbortError') {
       throw err
     }
@@ -387,8 +396,6 @@ async function getCachedEmbedding(query: string, cacheKey: string, budget: Searc
     recordEmbeddingFailure()
     return null
   }
-
-  return null
 }
 
 function isAbortError(err: any): boolean {
@@ -441,25 +448,29 @@ async function searchLexicalFallback(
     }
 
     const attemptStart = Date.now()
-    const scoped = createScopedController(abortSignal)
-    const controller = scoped.controller
-    const remainingBudget = budget ? budget.getRemainingMs() : SMS_FTS_TIMEOUT_MS + 250
-    const attemptTimeout = Math.max(250, Math.min(SMS_FTS_TIMEOUT_MS, remainingBudget - 100))
-    const hardTimeout = Math.min(attemptTimeout, SMS_FTS_HARD_TIMEOUT_MS)
-    const timeoutId = setTimeout(() => controller.abort(), hardTimeout)
-
     try {
-      const { data, error } = await client
-        .from('resource')
-        .select('id,space_id,type,title,body,url,created_by,created_at,updated_at')
-        .eq('space_id', spaceId)
-        .or(`title.ilike.%${escapedToken}%,body.ilike.%${escapedToken}%`)
-        .order('updated_at', { ascending: false })
-        .limit(limit * 2)
-        .abortSignal(controller.signal)
+      const response = await runWithDeadline(
+        `lex-${attempt}`,
+        SMS_FTS_TIMEOUT_MS,
+        budget ?? createBudget(SMS_FTS_TIMEOUT_MS),
+        abortSignal,
+        async (signal) =>
+          (client as any)
+            .from('resource')
+            .select('id,space_id,type,title,body,url,created_by,created_at,updated_at')
+            .eq('space_id', spaceId)
+            .or(`title.ilike.%${escapedToken}%,body.ilike.%${escapedToken}%`)
+            .order('updated_at', { ascending: false })
+            .limit(limit * 2)
+            .abortSignal(signal)
+      )
 
-      clearTimeout(timeoutId)
-      scoped.dispose()
+      if (!response) {
+        console.warn('[Search V2] Lexical fallback skipped due to budget exhaustion')
+        return []
+      }
+
+      const { data, error } = response
 
       const durationMs = Date.now() - attemptStart
 
@@ -503,15 +514,17 @@ async function searchLexicalFallback(
       })
 
       // Sort by score and return top results
-      results.sort((a, b) => (b.score || 0) - (a.score || 0))
+      results.sort((a: SearchResult, b: SearchResult) => (b.score || 0) - (a.score || 0))
       console.log(`[Search V2] Lexical fallback succeeded in ${durationMs}ms (rows: ${results.length})`)
       return results.slice(0, limit) as SearchResult[]
 
     } catch (err) {
-      clearTimeout(timeoutId)
-      scoped.dispose()
-
       const durationMs = Date.now() - attemptStart
+
+      if (err instanceof DeadlineError) {
+        console.warn(`[Search V2] Lexical fallback timed out on attempt ${attempt} after ${durationMs}ms`)
+        continue
+      }
 
       if (isAbortError(err)) {
         console.warn(`[Search V2] Lexical fallback aborted on attempt ${attempt} after ${durationMs}ms`)
@@ -556,35 +569,31 @@ async function searchFTS(
 
   console.log(`[Search V2 FTS] RPC start for "${query}" (space ${spaceId.substring(0, 8)}, timeout ${hardTimeout}ms)`)
 
-  const requestScoped = createScopedController(abortSignal)
-  const requestController = requestScoped.controller
-  const timeoutId = setTimeout(() => requestController.abort(), hardTimeout)
-
-  let timedOut = false
-  const timeoutHandle = setTimeout(() => {
-    timedOut = true
-    console.warn(`[Search V2 FTS] Timeout after ${hardTimeout}ms, aborting RPC`)
-    requestController.abort()
-  }, hardTimeout)
-
   try {
-    const response = await Promise.resolve(
-      (client as any)
-        .rpc('search_resources_fts', {
-          search_query: query,
-          target_space_id: spaceId,
-          limit_count: limit,
-          offset_count: 0
-        })
-        .abortSignal(requestController.signal)
+    const response = await runWithDeadline(
+      'fts',
+      hardTimeout,
+      budget,
+      abortSignal,
+      async (signal) =>
+        Promise.resolve(
+          (client as any)
+            .rpc('search_resources_fts', {
+              search_query: query,
+              target_space_id: spaceId,
+              limit_count: limit,
+              offset_count: 0
+            })
+            .abortSignal(signal)
+        )
     )
 
-    clearTimeout(timeoutHandle)
-    clearTimeout(timeoutId)
-    requestScoped.dispose()
+    if (!response) {
+      console.warn('[Search V2 FTS] Skipped due to exhausted budget, using lexical fallback')
+      return searchLexicalFallback(query, spaceId, limit, budget, abortSignal)
+    }
 
-    const data = response?.data as any[] | null
-    const error = response?.error as any
+    const { data, error } = response
 
     if (error) {
       console.error('[Search V2 FTS] RPC error:', error.message || error)
@@ -606,12 +615,13 @@ async function searchFTS(
     console.log(`[Search V2 FTS] Returned ${results.length} rows (top score: ${results[0]?.score?.toFixed(3) || 'N/A'})`)
     return results
   } catch (err: unknown) {
-    clearTimeout(timeoutHandle)
-    clearTimeout(timeoutId)
-    requestScoped.dispose()
+    if (err instanceof DeadlineError) {
+      console.warn('[Search V2 FTS] Deadline reached, running lexical fallback')
+      return searchLexicalFallback(query, spaceId, limit, budget, abortSignal)
+    }
 
-    if ((err instanceof Error && err.name === 'AbortError') || timedOut) {
-      console.warn('[Search V2 FTS] Aborted or timed out, running lexical fallback separately')
+    if (isAbortError(err)) {
+      console.warn('[Search V2 FTS] Aborted by parent signal, running lexical fallback')
       return searchLexicalFallback(query, spaceId, limit, budget, abortSignal)
     }
 

@@ -10,7 +10,10 @@ const OPENAI_EMBED_TIMEOUT_MS = Number(process.env.OPENAI_EMBED_TIMEOUT_MS || '9
 const OPENAI_EMBED_ATTEMPTS = Number(process.env.OPENAI_EMBED_ATTEMPTS || '3')
 const OPENAI_EMBED_RETRY_DELAYS_MS = [300, 800]
 
-async function generateEmbedding(text: string): Promise<number[] | null> {
+async function generateEmbedding(
+  text: string,
+  options: { signal?: AbortSignal; timeoutMs?: number } = {}
+): Promise<number[] | null> {
   if (!OPENAI_API_KEY) {
     console.error('OPENAI_API_KEY is not set')
     return null
@@ -19,9 +22,19 @@ async function generateEmbedding(text: string): Promise<number[] | null> {
   const cleaned = (text || '').slice(0, 8000)
   console.log(`Generating embedding for text: ${cleaned.slice(0, 100)}...`)
 
+  const timeoutBudget = options.timeoutMs ?? OPENAI_EMBED_TIMEOUT_MS
+
   for (let attempt = 1; attempt <= OPENAI_EMBED_ATTEMPTS; attempt++) {
     const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), OPENAI_EMBED_TIMEOUT_MS)
+    const onAbort = () => controller.abort()
+    if (options.signal) {
+      if (options.signal.aborted) {
+        controller.abort()
+      } else {
+        options.signal.addEventListener('abort', onAbort, { once: true })
+      }
+    }
+    const timer = setTimeout(() => controller.abort(), timeoutBudget)
 
     try {
       const res = await fetch('https://api.openai.com/v1/embeddings', {
@@ -39,6 +52,9 @@ async function generateEmbedding(text: string): Promise<number[] | null> {
       })
 
       clearTimeout(timer)
+      if (options.signal) {
+        options.signal.removeEventListener('abort', onAbort)
+      }
 
       if (!res.ok) {
         const errorText = await res.text()
@@ -58,8 +74,11 @@ async function generateEmbedding(text: string): Promise<number[] | null> {
       return embedding
     } catch (err: any) {
       clearTimeout(timer)
+      if (options.signal) {
+        options.signal.removeEventListener('abort', onAbort)
+      }
       if (controller.signal.aborted) {
-        console.warn(`OpenAI embedding attempt ${attempt} timed out after ${OPENAI_EMBED_TIMEOUT_MS}ms`)
+        console.warn(`OpenAI embedding attempt ${attempt} timed out after ${timeoutBudget}ms`)
       } else {
         console.error(`OpenAI embedding exception (attempt ${attempt}):`, err)
       }
@@ -74,8 +93,11 @@ async function generateEmbedding(text: string): Promise<number[] | null> {
   return null
 }
 
-export async function embedText(text: string): Promise<number[] | null> {
-  return generateEmbedding(text)
+export async function embedText(
+  text: string,
+  options: { signal?: AbortSignal; timeoutMs?: number } = {}
+): Promise<number[] | null> {
+  return generateEmbedding(text, options)
 }
 
 export async function upsertResourceEmbedding(resourceId: string, text: string): Promise<boolean> {
