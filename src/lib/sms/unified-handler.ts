@@ -35,6 +35,25 @@ interface PendingQueryEntry {
 const PENDING_CONTENT_QUERIES = new Map<string, PendingQueryEntry>()
 const RECENT_CONTENT_QUERIES = new Map<string, { query: string; response: string; completedAt: number }>()
 
+class TurnAbortedError extends Error {
+  constructor(stage?: string) {
+    super(`Turn aborted${stage ? ` during ${stage}` : ''}`)
+    this.name = 'TurnAbortedError'
+  }
+}
+
+function throwIfAborted(signal?: AbortSignal, stage?: string): void {
+  if (!signal) return
+  if (signal.aborted) {
+    throw new TurnAbortedError(stage)
+  }
+}
+
+function isTurnAbortedError(err: unknown): boolean {
+  if (!err) return false
+  return err instanceof TurnAbortedError || (err instanceof DOMException && err.name === 'AbortError') || (err instanceof Error && err.name === 'AbortError')
+}
+
 function cleanupQueryTracking(phoneNumber: string) {
   const now = Date.now()
   const pending = PENDING_CONTENT_QUERIES.get(phoneNumber)
@@ -75,9 +94,16 @@ async function withTimeout<T>(
   promise: Promise<T>,
   ms: number,
   label: string,
-  fallback: T
+  fallback: T,
+  signal?: AbortSignal
 ): Promise<T> {
+  if (signal?.aborted) {
+    throw new TurnAbortedError(label)
+  }
+
   let timeoutId: NodeJS.Timeout | null = null
+  let abortListener: (() => void) | null = null
+
   try {
     const timeoutPromise = new Promise<T>((resolve) => {
       timeoutId = setTimeout(() => {
@@ -86,13 +112,28 @@ async function withTimeout<T>(
       }, ms)
     })
 
-    const result = await Promise.race([promise, timeoutPromise])
+    const sources: Promise<T>[] = [promise, timeoutPromise]
+
+    if (signal) {
+      const abortPromise = new Promise<T>((_, reject) => {
+        abortListener = () => reject(new TurnAbortedError(label))
+        signal.addEventListener('abort', abortListener!, { once: true })
+      })
+      sources.push(abortPromise)
+    }
+
+    const result = await Promise.race(sources)
     if (timeoutId) clearTimeout(timeoutId)
+    if (signal && abortListener) {
+      signal.removeEventListener('abort', abortListener)
+    }
     return result
   } catch (err) {
-    console.error(`[UnifiedHandler] ${label} threw an error:`, err)
     if (timeoutId) clearTimeout(timeoutId)
-    return fallback
+    if (signal && abortListener) {
+      signal.removeEventListener('abort', abortListener)
+    }
+    throw err
   }
 }
 
@@ -136,11 +177,16 @@ export async function handleSMSMessage(
   fullPhoneNumber: string, // E.164 format
   messageText: string,
   preClassifiedIntent?: ClassifiedIntent, // Optional: skip classification if already done
-  prefetchedHistory?: ConversationMessage[]
+  prefetchedHistory?: ConversationMessage[],
+  options: { abortSignal?: AbortSignal; turnId?: number } = {}
 ): Promise<HandlerResult> {
-  console.log(`[UnifiedHandler] Processing message from ${phoneNumber}: "${messageText}"`)
+  const signal = options.abortSignal
+  const turnId = options.turnId
+  throwIfAborted(signal, 'handleSMSMessage:start')
+  console.log(`[UnifiedHandler] Processing message from ${phoneNumber}: "${messageText}"${typeof turnId === 'number' ? ` (turnId=${turnId})` : ''}`)
 
   cleanupQueryTracking(phoneNumber)
+  throwIfAborted(signal, 'after-cleanup')
 
   // Load conversation history (timeout to avoid hanging on Supabase)
   console.log(`[UnifiedHandler] About to load history with timeout wrapper`)
@@ -154,11 +200,14 @@ export async function handleSMSMessage(
       loadWeightedHistory(phoneNumber, 10),
       4000,
       'loadWeightedHistory',
-      [] as ConversationMessage[]
+      [] as ConversationMessage[],
+      signal
     )
     const historyDuration = Date.now() - historyStartTime
     console.log(`[UnifiedHandler] Loaded ${history.length} history messages in ${historyDuration}ms`)
   }
+
+  throwIfAborted(signal, 'post-history')
 
   // Check welcome flow first
   console.log(`[UnifiedHandler] Checking welcome flow...`)
@@ -167,21 +216,27 @@ export async function handleSMSMessage(
     needsWelcome(phoneNumber),
     2000,
     'needsWelcome',
-    false
+    false,
+    signal
   )
   const welcomeDuration = Date.now() - welcomeStartTime
   console.log(`[UnifiedHandler] Welcome check completed in ${welcomeDuration}ms, needsWelcomeFlow=${needsWelcomeFlow}`)
+  
+  throwIfAborted(signal, 'post-welcome')
   
   if (needsWelcomeFlow) {
     console.log('[UnifiedHandler] User needs welcome flow')
     // Check if this is a name declaration
     const nameCheck = await checkNameDeclaration(messageText)
+    throwIfAborted(signal, 'welcome:name-check')
     if (nameCheck.isName && nameCheck.name) {
       // Initialize user if needed
       await initializeNewUser(phoneNumber, fullPhoneNumber)
+      throwIfAborted(signal, 'welcome:initialize')
       
       // Handle name
       const result = await handleNameInWelcome(phoneNumber, nameCheck.name, fullPhoneNumber)
+      throwIfAborted(signal, 'welcome:handle-name')
       
       return {
         response: result.message,
@@ -193,6 +248,7 @@ export async function handleSMSMessage(
     } else {
       // Send welcome message
       await initializeNewUser(phoneNumber, fullPhoneNumber)
+      throwIfAborted(signal, 'welcome:initialize-existing')
       return {
         response: getWelcomeMessage(),
         shouldSaveHistory: true,
@@ -205,6 +261,7 @@ export async function handleSMSMessage(
   const recentQuery = RECENT_CONTENT_QUERIES.get(phoneNumber)
 
   if (isStatusFollowUp(messageText)) {
+    throwIfAborted(signal, 'status-follow-up')
     if (pendingQuery && pendingQuery.status === 'pending') {
       const elapsed = Date.now() - pendingQuery.startedAt
       if (elapsed < PENDING_QUERY_LIFETIME_MS) {
@@ -225,8 +282,7 @@ export async function handleSMSMessage(
         ? `${recentQuery.response.slice(0, 320)}...`
         : recentQuery.response
       return {
-        response: `Earlier you asked "${recentQuery.query}". Here's what I found:
-${summary}`,
+        response: `Earlier you asked "${recentQuery.query}". Here's what I found:\n${summary}`,
         shouldSaveHistory: true,
         metadata: {
           intent: 'follow_up_query'
@@ -234,6 +290,8 @@ ${summary}`,
       }
     }
   }
+
+  throwIfAborted(signal, 'pre-intent')
 
   console.log(`[UnifiedHandler] Welcome flow check done, proceeding to intent classification`)
 
@@ -263,7 +321,19 @@ ${summary}`,
       }, 8000) // 8 second timeout (matching AbortController timeout)
     })
     
-    intent = await Promise.race([intentPromise, intentTimeoutPromise])
+    intent = await withTimeout(
+      Promise.race([intentPromise, intentTimeoutPromise]),
+      8000, // 8 second timeout
+      'classifyIntent',
+      {
+        type: 'content_query',
+        confidence: 0.1,
+        reasoning: 'Timeout fallback - assuming content_query',
+        instructions: [],
+        needsGeneration: true
+      },
+      signal
+    )
   }
   
   const intentDuration = Date.now() - intentStartTime
@@ -354,7 +424,7 @@ ${summary}`,
   if (intent.type === 'content_query' || intent.type === 'enclave_query') {
     console.log(`[UnifiedHandler] Routing to handleQuery for intent: ${intent.type}`)
     
-    return await handleQuery(phoneNumber, messageText, intent.type, history)
+    return await handleQuery(phoneNumber, messageText, intent.type, history, { abortSignal: signal, turnId })
   }
   
   // Handle based on intent
@@ -381,12 +451,12 @@ ${summary}`,
       return handlePollResponse(phoneNumber, messageText)
 
     case 'random_conversation':
-      return handleSmalltalk(messageText, history)
+      return handleSmalltalk(messageText, history, signal)
 
     default:
       if (isLikelyQuestion(messageText)) {
         console.log('[UnifiedHandler] Default branch detected question, routing to content query handler')
-        return await handleQuery(phoneNumber, messageText, 'content_query', history)
+        return await handleQuery(phoneNumber, messageText, 'content_query', history, { abortSignal: signal, turnId })
       }
       return {
         response: "i didn't quite get that. try asking a question, or say 'send a message' to create an announcement.",
@@ -950,7 +1020,12 @@ async function handlePollResponse(
 /**
  * Handle smalltalk/random conversation
  */
-async function handleSmalltalk(messageText: string, history: ConversationMessage[] = []): Promise<HandlerResult> {
+async function handleSmalltalk(
+  messageText: string,
+  history: ConversationMessage[] = [],
+  signal?: AbortSignal
+): Promise<HandlerResult> {
+  throwIfAborted(signal, 'smalltalk:start')
   const lower = messageText.toLowerCase().trim()
   
   // Simple responses for common smalltalk
@@ -986,7 +1061,9 @@ async function handleSmalltalk(messageText: string, history: ConversationMessage
   
   // Use LLM for contextual smalltalk with personality
   try {
+    throwIfAborted(signal, 'smalltalk:before-llm')
     const { ENV } = await import('@/lib/env')
+    throwIfAborted(signal, 'smalltalk:after-env')
     const enclaveReference = `Enclave System Reference:
 - Name: Enclave
 - Type: Multi-modal organizational AI assistant platform
@@ -1043,8 +1120,11 @@ PERSONALITY RULES:
       })
     })
     
+    throwIfAborted(signal, 'smalltalk:post-fetch')
+    
     if (aiResponse.ok) {
       const aiData = await aiResponse.json()
+      throwIfAborted(signal, 'smalltalk:post-json')
       const response = aiData.choices?.[0]?.message?.content || ''
       if (response.trim().length > 0) {
         const limitedResponse = limitEmojis(response.trim(), 1)
@@ -1058,6 +1138,9 @@ PERSONALITY RULES:
       }
     }
   } catch (err) {
+    if (isTurnAbortedError(err)) {
+      throw err
+    }
     console.error('[UnifiedHandler] Smalltalk LLM failed:', err)
   }
   
@@ -1078,8 +1161,12 @@ async function handleQuery(
   phoneNumber: string,
   messageText: string,
   intentType: IntentType,
-  prefetchedHistory?: ConversationMessage[]
+  prefetchedHistory: ConversationMessage[] | undefined,
+  options: { abortSignal?: AbortSignal; turnId?: number }
 ): Promise<HandlerResult> {
+  const signal = options.abortSignal
+  const turnId = options.turnId
+  throwIfAborted(signal, 'handleQuery:start')
   const startedAt = Date.now()
   const pendingEntry: PendingQueryEntry = {
     query: messageText,
@@ -1089,7 +1176,7 @@ async function handleQuery(
   }
   PENDING_CONTENT_QUERIES.set(phoneNumber, pendingEntry)
 
-  console.log(`[UnifiedHandler] Saving query to action memory: "${messageText}"`)
+  console.log(`[UnifiedHandler] Saving query to action memory: "${messageText}"${typeof turnId === 'number' ? ` (turnId=${turnId})` : ''}`)
   queueActionMemorySave(
     phoneNumber,
     {
@@ -1106,22 +1193,34 @@ async function handleQuery(
   let finalResult: HandlerResult | null = null
 
   try {
-    // Use orchestrator for content query handling
+    throwIfAborted(signal, 'orchestrator:before-import')
     console.log(`[UnifiedHandler] Importing orchestrator...`)
     const importStartTime = Date.now()
     const { handleTurn } = await import('@/lib/orchestrator/handleTurn')
     const importDuration = Date.now() - importStartTime
     console.log(`[UnifiedHandler] Orchestrator imported in ${importDuration}ms, calling handleTurn for query: "${messageText}"`)
+    throwIfAborted(signal, 'orchestrator:before-call')
     
-    // Add timeout wrapper to prevent hanging
     const orchestratorStartTime = Date.now()
     const orchestratorPromise = handleTurn(phoneNumber, messageText, undefined, undefined, { prefetchedHistory })
-    const timeoutPromise = new Promise((_, reject) => {
-      setTimeout(() => reject(new Error('Orchestrator timeout after 60 seconds')), 60000)
+    const abortPromise = signal
+      ? new Promise<HandleTurnResult>((_, reject) => {
+          const listener = () => reject(new TurnAbortedError('orchestrator'))
+          signal.addEventListener('abort', listener, { once: true })
+          orchestratorPromise.finally(() => signal.removeEventListener('abort', listener))
+        })
+      : null
+    
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      const timeoutId = setTimeout(() => reject(new Error('Orchestrator timeout after 60 seconds')), 60000)
+      orchestratorPromise.finally(() => clearTimeout(timeoutId))
     })
     
-    console.log('[UnifiedHandler] Racing orchestrator promise with timeout...')
-    const handleTurnResult = await Promise.race([orchestratorPromise, timeoutPromise]) as HandleTurnResult
+    const handleTurnResult = await (abortPromise
+      ? Promise.race([orchestratorPromise, timeoutPromise, abortPromise])
+      : Promise.race([orchestratorPromise, timeoutPromise])) as HandleTurnResult
+
+    throwIfAborted(signal, 'orchestrator:after-call')
 
     const messages = (handleTurnResult.messages || []).filter(Boolean)
     const responseText = messages.join('\n\n').trim()
@@ -1137,7 +1236,13 @@ async function handleQuery(
         resultCount: messages.length
       }
     }
+    console.log(`[UnifiedHandler] Orchestrator completed in ${Date.now() - orchestratorStartTime}ms`)
   } catch (err) {
+    if (isTurnAbortedError(err)) {
+      console.log('[UnifiedHandler] Query handling aborted', { turnId })
+      throw err
+    }
+
     console.error(`[UnifiedHandler] Error during orchestrator call:`, err)
     finalResult = {
       response: "sorry, I encountered an error while processing your request.",
@@ -1154,6 +1259,8 @@ async function handleQuery(
       PENDING_CONTENT_QUERIES.set(phoneNumber, failed)
     }
   }
+
+  throwIfAborted(signal, 'handleQuery:before-finalize')
 
   if (finalResult) {
     const completedAt = Date.now()

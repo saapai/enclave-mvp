@@ -19,14 +19,14 @@ import type { SearchResult } from './search'
 
 const SMS_SEARCH_BUDGET_MS = Number(process.env.SMS_SEARCH_BUDGET_MS || '20000') // 20s total budget
 const SMS_FTS_TIMEOUT_MS = Number(process.env.SMS_FTS_TIMEOUT_MS || '600') // 0.6s per FTS attempt
-const SMS_EMBED_TIMEOUT_MS = Number(process.env.SMS_EMBED_TIMEOUT_MS || '9000') // 9s for embedding
-const SMS_VECTOR_TIMEOUT_MS = Number(process.env.SMS_VECTOR_TIMEOUT_MS || '4000') // 4s per vector
-const SMS_EMBED_MIN_REMAINING_MS = Number(process.env.SMS_EMBED_MIN_REMAINING_MS || '3000') // Need 3s left to embed
+const SMS_EMBED_TIMEOUT_MS = Number(process.env.SMS_EMBED_TIMEOUT_MS || '600') // 0.6s for embedding
+const SMS_VECTOR_TIMEOUT_MS = Number(process.env.SMS_VECTOR_TIMEOUT_MS || '600') // 0.6s per vector
+const SMS_EMBED_MIN_REMAINING_MS = Number(process.env.SMS_EMBED_MIN_REMAINING_MS || '400') // Need ~0.4s left to embed
 const SMS_FTS_HARD_TIMEOUT_MS = Number(process.env.SMS_FTS_HARD_TIMEOUT_MS || '550')
-const SMS_VECTOR_HARD_TIMEOUT_MS = Number(process.env.SMS_VECTOR_HARD_TIMEOUT_MS || '3900')
+const SMS_VECTOR_HARD_TIMEOUT_MS = Number(process.env.SMS_VECTOR_HARD_TIMEOUT_MS || '550')
 const SMS_FTS_CONFIDENCE_THRESHOLD = Number(process.env.SMS_FTS_CONFIDENCE_THRESHOLD || '0.95')
-const SMS_WAIT_FOR_EMBED_MS = Number(process.env.SMS_WAIT_FOR_EMBED_MS || '500')
-const EMBEDDING_RETRY_DELAYS_MS = [300, 800]
+const SMS_WAIT_FOR_EMBED_MS = Number(process.env.SMS_WAIT_FOR_EMBED_MS || '300')
+const EMBEDDING_RETRY_DELAYS_MS = [150, 300]
 
 // Circuit breaker: if embedding fails 3 times in 5 min, disable for next queries
 const embeddingFailures: number[] = []
@@ -41,10 +41,12 @@ const FTS_CIRCUIT_WINDOW_MS = 30000
 const FTS_CIRCUIT_THRESHOLD = 3
 const FTS_CIRCUIT_COOLDOWN_MS = 60000
 
-// Embedding cache: reuse embeddings for same query
+// Embedding cache and hot results
 const embeddingCache = new Map<string, { embedding: number[]; timestamp: number }>()
 const queryEmbeddingCache = new Map<string, { query: string; embedding: number[]; completedAt: number }>()
-const EMBEDDING_CACHE_TTL = 180000 // 3 minutes
+const EMBEDDING_CACHE_TTL = Number(process.env.EMBEDDING_CACHE_TTL_MS || '86400000')
+const HOT_RESULT_CACHE_TTL = Number(process.env.SMS_HOT_RESULT_TTL_MS || '300000')
+const HOT_RESULT_CACHE = new Map<string, { results: SearchResult[]; timestamp: number }>()
 
 // ============================================================================
 // TYPES
@@ -87,6 +89,61 @@ const KNOWN_ENTITIES = [
   'study hall', 'study session',
   'gm', 'general meeting', 'chapter meeting',
   'social', 'mixer', 'philanthropy'
+]
+
+const CANONICAL_QUERY_ALIASES: Array<{ key: string; patterns: RegExp[] }> = [
+  {
+    key: 'ae summons',
+    patterns: [
+      /\bae\s+summons?\b/i,
+      /\balpha\s+epsilon\s+summons?\b/i,
+      /\bae\s+summon\b/i
+    ]
+  },
+  {
+    key: 'active meeting',
+    patterns: [
+      /\bactive\s+meeting\b/i,
+      /\bactives?\s+meeting\b/i,
+      /\bweekly\s+active\b/i
+    ]
+  },
+  {
+    key: 'big little',
+    patterns: [
+      /\bbig\s+little\b/i,
+      /\bfamily\s+reveal\b/i,
+      /\bbig\s*&\s*little\b/i
+    ]
+  },
+  {
+    key: 'big little appreciation',
+    patterns: [
+      /\bbig\s+little\s+appreciation\b/i,
+      /\bbla\b/i
+    ]
+  },
+  {
+    key: 'study hall',
+    patterns: [
+      /\bstudy\s+hall\b/i,
+      /\bweekly\s+study\b/i
+    ]
+  },
+  {
+    key: 'creatathon',
+    patterns: [
+      /\bcreatathon\b/i,
+      /\bcreate\s*a\s*thon\b/i
+    ]
+  },
+  {
+    key: 'crossing',
+    patterns: [
+      /\bcrossing\b/i,
+      /\binitiation\b/i
+    ]
+  }
 ]
 
 /**
@@ -138,6 +195,22 @@ function rerankResults(results: SearchResult[], query: string): SearchResult[] {
     // 3. Score
     return (b.score || 0) - (a.score || 0)
   })
+}
+
+function expandFtsQuery(query: string): string {
+  const canonical = resolveCanonicalQuery(query)
+  if (!canonical) return query
+  const expansions: Record<string, string[]> = {
+    'ae summons': ['"alpha epsilon summons"', '"ae summon"'],
+    'active meeting': ['"actives meeting"', '"weekly active"'],
+    'big little': ['"family reveal"', '"big & little"'],
+    'big little appreciation': ['"bla"'],
+    'study hall': ['"weekly study"'],
+    'creatathon': ['"create a thon"']
+  }
+  const extra = expansions[canonical]
+  if (!extra || extra.length === 0) return query
+  return `${query} ${extra.join(' ')}`
 }
 
 // ============================================================================
@@ -225,16 +298,14 @@ function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms))
 }
 
-async function getCachedEmbedding(query: string, budget: SearchBudget): Promise<number[] | null> {
-  const normalizedQuery = query.toLowerCase().trim()
-  const cached = embeddingCache.get(normalizedQuery)
+async function getCachedEmbedding(query: string, cacheKey: string, budget: SearchBudget, abortSignal?: AbortSignal): Promise<number[] | null> {
+  const cached = embeddingCache.get(cacheKey)
   
   if (cached && Date.now() - cached.timestamp < EMBEDDING_CACHE_TTL) {
     console.log('[Search V2] Using cached embedding')
     return cached.embedding
   }
   
-  // Check if we have enough budget and embedding is enabled
   if (budget.getRemainingMs() < SMS_EMBED_MIN_REMAINING_MS) {
     console.log(`[Search V2] Insufficient budget for embedding (${budget.getRemainingMs()}ms < ${SMS_EMBED_MIN_REMAINING_MS}ms)`)
     return null
@@ -248,14 +319,35 @@ async function getCachedEmbedding(query: string, budget: SearchBudget): Promise<
   try {
     for (let attempt = 0; attempt <= EMBEDDING_RETRY_DELAYS_MS.length; attempt++) {
       const attemptLabel = attempt + 1
-      console.log(`[Search V2] Generating embedding (attempt ${attemptLabel}) with ${SMS_EMBED_TIMEOUT_MS}ms timeout`)
+      const remaining = budget.getRemainingMs()
+      if (remaining < SMS_EMBED_MIN_REMAINING_MS) {
+        console.log('[Search V2] Embedding attempt skipped due to budget exhaustion')
+        return null
+      }
+      const timeout = Math.min(SMS_EMBED_TIMEOUT_MS, remaining)
+      console.log(`[Search V2] Generating embedding (attempt ${attemptLabel}) with ${timeout}ms timeout`)
+      let abortListener: (() => void) | null = null
       try {
-        const embedding = await Promise.race([
-          embedText(query),
-          new Promise<never>((_, reject) =>
-            setTimeout(() => reject(new Error('Embedding timeout')), SMS_EMBED_TIMEOUT_MS)
-          )
-        ])
+        const timeoutPromise = new Promise<number[] | null>((_, reject) =>
+          setTimeout(() => reject(new Error('Embedding timeout')), timeout)
+        )
+        const abortPromise = abortSignal
+          ? new Promise<number[] | null>((_, reject) => {
+              abortListener = () => {
+                const error = new Error('Embedding aborted')
+                ;(error as any).name = 'AbortError'
+                reject(error)
+              }
+              abortSignal.addEventListener('abort', abortListener!, { once: true })
+            })
+          : null
+        const sources: Array<Promise<number[] | null>> = [embedText(query), timeoutPromise]
+        if (abortPromise) sources.push(abortPromise)
+        const embedding = await Promise.race(sources)
+
+        if (abortListener && abortSignal) {
+          abortSignal.removeEventListener('abort', abortListener)
+        }
 
         if (!embedding) {
           console.error('[Search V2] Embedding generation returned null')
@@ -267,9 +359,16 @@ async function getCachedEmbedding(query: string, budget: SearchBudget): Promise<
         embeddingFailures.length = 0
 
         console.log(`[Search V2] Embedding generated (${embedding.length} dims)`)
-        embeddingCache.set(normalizedQuery, { embedding, timestamp: Date.now() })
+        embeddingCache.set(cacheKey, { embedding, timestamp: Date.now() })
+        queryEmbeddingCache.set(cacheKey, { query, embedding, completedAt: Date.now() })
         return embedding
       } catch (err: any) {
+        if (abortListener && abortSignal) {
+          abortSignal.removeEventListener('abort', abortListener)
+        }
+        if (err instanceof Error && err.name === 'AbortError') {
+          throw err
+        }
         recordEmbeddingFailure()
         console.error(`[Search V2] Embedding attempt ${attemptLabel} failed:`, err?.message || err)
         const backoff = EMBEDDING_RETRY_DELAYS_MS[attempt]
@@ -281,6 +380,9 @@ async function getCachedEmbedding(query: string, budget: SearchBudget): Promise<
       }
     }
   } catch (err: any) {
+    if (err instanceof Error && err.name === 'AbortError') {
+      throw err
+    }
     console.error('[Search V2] Embedding failed unexpectedly:', err?.message || err)
     recordEmbeddingFailure()
     return null
@@ -474,7 +576,7 @@ async function searchFTS(
 
   try {
     const { data, error } = await Promise.resolve(
-      client
+      (client as any)
         .rpc('search_resources_fts', {
           search_query: query,
           target_space_id: spaceId,
@@ -571,7 +673,7 @@ async function searchVectorChunks(
     }
     
     // First, try chunk-based search for better granularity
-    const { data: chunkData, error: chunkError } = await client
+    const chunkResponse = await (client as any)
       .rpc('search_resource_chunks_vector', {
         query_embedding: embedding,
         target_space_id: spaceId,
@@ -579,6 +681,8 @@ async function searchVectorChunks(
         offset_count: 0
       })
       .abortSignal(controller.signal)
+    const chunkData = (chunkResponse?.data as any[] | null) ?? null
+    const chunkError = chunkResponse?.error as any
     
     clearTimeout(timeoutId)
     scoped.dispose()
@@ -618,7 +722,7 @@ async function searchVectorChunks(
       .slice(0, limit)
       .map(([id]) => id)
     
-    const { data: resources, error: resourceError } = await client
+    const resourceResponse = await (client as any)
       .from('resource')
       .select(`
         *,
@@ -628,6 +732,8 @@ async function searchVectorChunks(
         event_meta(*)
       `)
       .in('id', topResourceIds)
+    const resources = resourceResponse?.data as any[] | null
+    const resourceError = resourceResponse?.error as any
     
     if (resourceError || !resources) {
       console.error('[Search V2 Vector] Error fetching resources:', resourceError)
@@ -678,7 +784,7 @@ async function searchVectorResources(
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
   
   try {
-    const { data, error } = await client
+    const vectorResponse = await (client as any)
       .rpc('search_resources_vector', {
         query_embedding: embedding,
         target_space_id: spaceId,
@@ -690,6 +796,9 @@ async function searchVectorResources(
     
     clearTimeout(timeoutId)
     scoped.dispose()
+    
+    const data = vectorResponse?.data as any[] | null
+    const error = vectorResponse?.error as any
     
     if (error) {
       console.error('[Search V2 Vector] Resource RPC error:', error.message)
@@ -734,7 +843,8 @@ async function searchWorkspace(
   embeddingState: EmbeddingState,
   embeddingPromise: Promise<number[] | null> | null,
   budget: SearchBudget,
-  abortSignal?: AbortSignal
+  abortSignal?: AbortSignal,
+  highConfidenceThreshold: number = 0.75
 ): Promise<WorkspaceSearchResult> {
   const wsStart = Date.now()
   console.log(`[Search V2] Searching workspace ${workspaceId.substring(0, 8)}... (budget: ${budget.getRemainingMs()}ms)`)
@@ -773,7 +883,7 @@ async function searchWorkspace(
     console.log(`[Search V2] FTS top score: ${topFtsScore.toFixed(3)} in ${workspaceId.substring(0, 8)}`)
   }
 
-  const ftsHighConfidence = ftsResults.length > 0 && topFtsScore >= SMS_FTS_CONFIDENCE_THRESHOLD
+  const ftsHighConfidence = ftsResults.length > 0 && topFtsScore >= highConfidenceThreshold
   if (ftsHighConfidence && !embeddingState.value && !embeddingPromise) {
     const totalMs = Date.now() - wsStart
     console.log(`[Search V2] FTS high confidence (${topFtsScore.toFixed(3)}), no embedding available; returning lexical results (total ${totalMs}ms)`) 
@@ -875,9 +985,10 @@ export async function hybridSearchV2(
   
   const budget = createBudget(budgetMs)
   const searchId = traceId ? `${traceId}` : `search_${Date.now()}_${Math.random().toString(36).substring(7)}`
+  const cacheKey = resolveCacheKey(query)
   
   console.log(`[Search V2] [${searchId}] Starting hybrid search`)
-  console.log(`[Search V2] [${searchId}] Query: "${query}"`)
+  console.log(`[Search V2] [${searchId}] Query: "${query}" (cacheKey: ${cacheKey})`)
   console.log(`[Search V2] [${searchId}] Workspaces: ${workspaceIds.length}`)
   console.log(`[Search V2] [${searchId}] Budget: ${budgetMs}ms`)
   
@@ -891,15 +1002,16 @@ export async function hybridSearchV2(
     return []
   }
   
-  const queryTokens = new Set(normalize(query).split(' '))
+  const hotEntry = HOT_RESULT_CACHE.get(cacheKey)
+  if (hotEntry && Date.now() - hotEntry.timestamp < HOT_RESULT_CACHE_TTL) {
+    console.log(`[Search V2] [${searchId}] Hot cache hit for ${cacheKey}`)
+    return hotEntry.results.slice(0, 10)
+  }
   
-  // Step 1: Use cached embeddings only for search (don't block on generation)
   const embeddingState: EmbeddingState = { value: null }
   let embeddingPromise: Promise<number[] | null> | null = null
-  const normalizedQuery = query.toLowerCase().trim()
-  const recentEmbeddingEntry = queryEmbeddingCache.get(normalizedQuery)
-
-  const cachedEntry = embeddingCache.get(normalizedQuery)
+  const recentEmbeddingEntry = queryEmbeddingCache.get(cacheKey)
+  const cachedEntry = embeddingCache.get(cacheKey)
   
   if (recentEmbeddingEntry && Date.now() - recentEmbeddingEntry.completedAt < EMBEDDING_CACHE_TTL) {
     embeddingState.value = recentEmbeddingEntry.embedding
@@ -907,43 +1019,49 @@ export async function hybridSearchV2(
   } else if (cachedEntry && Date.now() - cachedEntry.timestamp < EMBEDDING_CACHE_TTL) {
     embeddingState.value = cachedEntry.embedding
     console.log(`[Search V2] [${searchId}] Embedding: cached (budget: ${budget.getRemainingMs()}ms)`)
-  } else {
+  } else if (budget.getRemainingMs() > SMS_EMBED_MIN_REMAINING_MS && isEmbeddingEnabled()) {
     console.log(`[Search V2] [${searchId}] No cached embedding available for this query`)
-    embeddingPromise = getCachedEmbedding(query, budget).then(embedding => {
+    embeddingPromise = getCachedEmbedding(query, cacheKey, budget, abortSignal).then(embedding => {
       if (embedding) {
-        embeddingCache.set(normalizedQuery, { embedding, timestamp: Date.now() })
-        queryEmbeddingCache.set(normalizedQuery, { query, embedding, completedAt: Date.now() })
+        embeddingCache.set(cacheKey, { embedding, timestamp: Date.now() })
+        queryEmbeddingCache.set(cacheKey, { query, embedding, completedAt: Date.now() })
       }
       return embedding
     }).catch(err => {
       console.error('[Search V2] Embedding generation failed:', err)
       return null
     })
+  } else {
+    console.log(`[Search V2] [${searchId}] Skipping embedding generation (budget: ${budget.getRemainingMs()}ms, circuit=${isEmbeddingEnabled()})`)
   }
   
-  // Step 2: Search workspaces sequentially (FTS first, then vector if embedding ready)
+  const entities = extractEntities(query)
+  if (entities.length > 0) {
+    console.log(`[Search V2] [${searchId}] Extracted entities:`, entities)
+  }
+
   const workspaceResults: WorkspaceSearchResult[] = []
   
   for (const workspaceId of workspaceIds) {
-    if (budget.getRemainingMs() < 500 || abortSignal?.aborted) {
+    if (budget.getRemainingMs() < 150 || abortSignal?.aborted) {
       console.log(`[Search V2] [${searchId}] Budget exhausted, stopping at ${workspaceResults.length}/${workspaceIds.length} workspaces`)
       break
     }
     
-    const wsResult = await searchWorkspace(query, workspaceId, embeddingState, embeddingPromise, budget, abortSignal)
+    const wsResult = await searchWorkspace(query, workspaceId, embeddingState, embeddingPromise, budget, abortSignal, highConfidenceThreshold)
     workspaceResults.push(wsResult)
     
-    // Continue searching all workspaces (no early exit)
-    // We'll rerank results globally after collecting from all sources
+    if (wsResult.topScore >= highConfidenceThreshold && wsResult.results.length > 0) {
+      console.log(`[Search V2] [${searchId}] High-confidence results found in ${workspaceId.substring(0, 8)}, stopping early`)
+      break
+    }
   }
   
-  // Step 3: Aggregate and rank results
   const allResults: SearchResult[] = []
   for (const wsResult of workspaceResults) {
     allResults.push(...wsResult.results)
   }
   
-  // Deduplicate by ID
   const seen = new Set<string>()
   const deduped: SearchResult[] = []
   for (const result of allResults) {
@@ -965,23 +1083,24 @@ export async function hybridSearchV2(
     console.log(`[Search V2] [${searchId}] No hits returned across searched workspaces`)
   }
 
-  // Apply entity-based reranking (entity match > type priority > score)
   const reranked = rerankResults(deduped, query)
   
-  // Log extracted entities and reranking effect
-  const entities = extractEntities(query)
-  if (entities.length > 0) {
-    console.log(`[Search V2] [${searchId}] Extracted entities:`, entities)
-  }
   if (reranked.length > 0 && reranked[0].id !== deduped[0]?.id) {
     console.log(`[Search V2] [${searchId}] Reranking changed top result: "${deduped[0]?.title}" → "${reranked[0]?.title}"`)
   }
   
   if (embeddingState.value) {
-    queryEmbeddingCache.set(normalizedQuery, {
+    queryEmbeddingCache.set(cacheKey, {
       query,
       embedding: embeddingState.value,
       completedAt: Date.now()
+    })
+  }
+  
+  if (reranked.length > 0) {
+    HOT_RESULT_CACHE.set(cacheKey, {
+      results: reranked.slice(0, 10),
+      timestamp: Date.now()
     })
   }
 
@@ -991,14 +1110,8 @@ export async function hybridSearchV2(
   console.log(`[Search V2] [${searchId}] Top result: "${reranked[0]?.title}" (type: ${reranked[0]?.type})`)
   console.log(`[Search V2] [${searchId}] Workspaces searched: ${workspaceResults.length}/${workspaceIds.length}`)
   
-  return reranked.slice(0, 10) // Return top 10
+  return reranked.slice(0, 10)
 }
-
-// ============================================================================
-// EXPORTS
-// ============================================================================
-
-export { getCachedEmbedding, isEmbeddingEnabled }
 
 function computeWeight(result: SearchResult, queryTokens: Set<string>): number {
   let weight = typeof result.score === 'number' ? result.score : 0
@@ -1033,20 +1146,16 @@ function normalize(text: string): string {
     .trim()
 }
 
-const FTS_SYNONYMS: Array<{ match: RegExp; expansions: string[] }> = [
-  {
-    match: /\bbig\s+little\b/i,
-    expansions: ['"big/little"', '"big & little"', '"family reveal"']
-  }
-]
-
-function expandFtsQuery(query: string): string {
-  let expanded = query
-  for (const { match, expansions } of FTS_SYNONYMS) {
-    if (match.test(query)) {
-      expanded += ' ' + expansions.join(' ')
+function resolveCanonicalQuery(query: string): string | null {
+  const normalized = normalize(query)
+  for (const { key, patterns } of CANONICAL_QUERY_ALIASES) {
+    if (patterns.some(pattern => pattern.test(query) || pattern.test(normalized))) {
+      return key
     }
   }
-  return expanded
+  return null
 }
 
+function resolveCacheKey(query: string): string {
+  return resolveCanonicalQuery(query) || normalize(query)
+}

@@ -64,6 +64,7 @@ const TWILIO_RATE_LIMIT_DELAY = 200
 const MAX_MESSAGES_PER_BATCH = 5
 const CONTENT_DEDUP_WINDOW_MS = 2000
 const INFLIGHT_CONTENT: Map<string, number> = new Map()
+const ACTIVE_TURNS: Map<string, { controller: AbortController; turnId: number }> = new Map()
 
 // Check if message is a send affirmation (but NOT if it's a poll response)
 const isSendAffirmation = (message: string, isPollResponseContext: boolean = false): boolean => {
@@ -810,28 +811,33 @@ export async function POST(request: NextRequest) {
         INFLIGHT_CONTENT.set(dedupeKey, now)
         setTimeout(() => INFLIGHT_CONTENT.delete(dedupeKey), CONTENT_DEDUP_WINDOW_MS)
         
-        // For content queries, return immediate acknowledgment and process asynchronously
-        // This prevents Twilio timeout (10-15 second limit)
-        const traceId = `sms_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`
-        console.log(`[Twilio SMS] [${traceId}] Content query detected, processing asynchronously`)
+        const previousTurn = ACTIVE_TURNS.get(phoneNumber)
+        if (previousTurn) {
+          console.log(`[Twilio SMS] Detected active turn ${previousTurn.turnId} for ${phoneNumber}, aborting before starting new query`)
+          previousTurn.controller.abort()
+        }
+        const nextTurnId = (previousTurn?.turnId ?? 0) + 1
+        const turnController = new AbortController()
+        ACTIVE_TURNS.set(phoneNumber, { controller: turnController, turnId: nextTurnId })
         
-        // Return immediate acknowledgment
+        const traceId = `sms_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`
+        console.log(`[Twilio SMS] [${traceId}] Content query detected, processing asynchronously (turnId=${nextTurnId})`)
+        
         const ackResponse = new NextResponse('<?xml version="1.0" encoding="UTF-8"?><Response/>', {
           headers: { 'Content-Type': 'application/xml' }
         })
         
-        // Process query asynchronously (don't await)
-        console.log(`[Twilio SMS] [${traceId}] Starting async handler for content query: "${body.substring(0, 50)}"`)
-        
-        // Process asynchronously with isolated timers
-        // Create a closure to capture the traceId and ensure timer isolation
-        const processQuery = async (queryTraceId: string, queryFrom: string, queryBody: string) => {
-          // WATCHDOG: 5s timeout to prevent silent hangs (Vercel Pro allows 60s)
-          // Lexical search should complete in <1s, so 5s is generous
+        const processQuery = async (queryTraceId: string, queryFrom: string, queryBody: string, turnId: number) => {
           let watchdogFired = false
           let timeoutFired = false
-          
+
+          const cancelTimers = () => {
+            clearTimeout(watchdog)
+            clearTimeout(asyncTimeout)
+          }
+
           const watchdog = setTimeout(async () => {
+            if (turnController.signal.aborted) return
             watchdogFired = true
             console.error(`[Twilio SMS] [${queryTraceId}] WATCHDOG: content_query exceeded 25s, sending degraded reply`)
             try {
@@ -840,10 +846,10 @@ export async function POST(request: NextRequest) {
             } catch (err) {
               console.error(`[Twilio SMS] [${queryTraceId}] Failed to send watchdog message:`, err)
             }
-          }, 25000) // 25 second watchdog to allow slower searches
-            
-          // Set a hard timeout before Vercel kills us (Pro = 60s)
+          }, 25000)
+
           const asyncTimeout = setTimeout(async () => {
+            if (turnController.signal.aborted) return
             timeoutFired = true
             console.error(`[Twilio SMS] [${queryTraceId}] Async handler timeout after 55s for query: "${queryBody.substring(0, 50)}"`)
             if (!watchdogFired) {
@@ -854,37 +860,62 @@ export async function POST(request: NextRequest) {
                 console.error(`[Twilio SMS] [${queryTraceId}] Failed to send timeout message:`, err)
               }
             }
-          }, 55000) // 55 second timeout (5s buffer before Vercel's 60s limit)
-            
-          // Re-process the message asynchronously
-          // Pass the already-classified intent to avoid redundant LLM call
+          }, 55000)
+
+          const abortListener = () => {
+            console.log(`[Twilio SMS] [${queryTraceId}] Turn aborted (turnId=${turnId}), cancelling timers`)
+            cancelTimers()
+          }
+          turnController.signal.addEventListener('abort', abortListener, { once: true })
+
+          const finalizeTurn = () => {
+            turnController.signal.removeEventListener('abort', abortListener)
+            cancelTimers()
+            const active = ACTIVE_TURNS.get(phoneNumber)
+            if (active && active.turnId === turnId) {
+              ACTIVE_TURNS.delete(phoneNumber)
+            }
+          }
+
+          const isSuperseded = () => {
+            const active = ACTIVE_TURNS.get(phoneNumber)
+            return !active || active.turnId !== turnId || turnController.signal.aborted
+          }
+
           const handlerStartTime = Date.now()
           try {
-            const result = await handleSMSMessage(phoneNumber, queryFrom, queryBody, intent, history)
-            clearTimeout(watchdog)
-            clearTimeout(asyncTimeout)
-            const handlerDuration = Date.now() - handlerStartTime
-            console.log(`[Twilio SMS] [${queryTraceId}] Async handler completed successfully in ${handlerDuration}ms`)
-            console.log(`[Twilio SMS] [${queryTraceId}] Async handler returned: "${result?.response?.substring(0, 100) || 'NO RESPONSE'}..."`)
-            
-            // If watchdog or timeout already fired, don't send another message
-            if (timeoutFired) {
-              console.log(`[Twilio SMS] [${queryTraceId}] Hard timeout already fired, skipping result send`)
+            const result = await handleSMSMessage(phoneNumber, queryFrom, queryBody, intent, history, {
+              abortSignal: turnController.signal,
+              turnId
+            })
+
+            if (isSuperseded()) {
+              console.log(`[Twilio SMS] [${queryTraceId}] Turn superseded before completion (turnId=${turnId}), skipping send`)
+              finalizeTurn()
               return
             }
-            
-            if (watchdogFired) {
-              console.log(`[Twilio SMS] [${queryTraceId}] Watchdog message already sent; delivering final result update`)
+
+            const handlerDuration = Date.now() - handlerStartTime
+            console.log(`[Twilio SMS] [${queryTraceId}] Async handler completed successfully in ${handlerDuration}ms (turnId=${turnId})`)
+            console.log(`[Twilio SMS] [${queryTraceId}] Async handler returned: "${result?.response?.substring(0, 100) || 'NO RESPONSE'}..."`)
+
+            if (timeoutFired) {
+              console.log(`[Twilio SMS] [${queryTraceId}] Hard timeout already fired, skipping result send`)
+              finalizeTurn()
+              return
             }
-            
-            // Ensure we have a response
+
             if (!result || !result.response || result.response.trim().length === 0) {
               console.error('[Twilio SMS] Async handler returned empty response!', result)
+              finalizeTurn()
               await sendSms(from, "Sorry, I couldn't find information about that.", { retries: 1, retryDelay: 2000 })
               return
             }
-            
-            // Save conversation history if needed
+
+            if (watchdogFired) {
+              console.log(`[Twilio SMS] [${queryTraceId}] Watchdog message already sent; delivering final result update`)
+            }
+
             if (result.shouldSaveHistory) {
               try {
                 await supabase.from('sms_conversation_history').insert({
@@ -897,28 +928,27 @@ export async function POST(request: NextRequest) {
                 console.error('[Twilio SMS] Failed to save conversation history:', err)
               }
             }
-            
-            // Split long messages
+
             const messages = splitLongMessage(result.response, 1600)
-            
+
             console.log(`[Twilio SMS] OUTBOUND`, {
               traceId,
               count: messages.length,
               preview: messages[0]?.slice(0, 40) || 'NO_MESSAGE'
             })
             console.log(`[Twilio SMS] Sending ${messages.length} async message(s) to user at ${from}`)
-            
-            // Send via Twilio API
-            // Add small delay between messages to avoid rate limiting
+
             for (let i = 0; i < messages.length; i++) {
+              if (isSuperseded()) {
+                console.log(`[Twilio SMS] [${queryTraceId}] Turn superseded during send loop (turnId=${turnId}), stopping sends`)
+                finalizeTurn()
+                return
+              }
               const message = messages[i]
               try {
-                // Add delay between messages (except first one)
                 if (i > 0) {
-                  await new Promise(resolve => setTimeout(resolve, 500)) // 500ms delay
+                  await new Promise(resolve => setTimeout(resolve, 500))
                 }
-                
-                console.log(`[Twilio SMS] Sending async message ${i + 1}/${messages.length} to ${from} (length: ${message.length})`)
                 const smsResult = await sendSms(from, message, { retries: 1, retryDelay: 2000 })
                 if (smsResult.ok) {
                   if (smsResult.deliveryError) {
@@ -928,20 +958,24 @@ export async function POST(request: NextRequest) {
                   }
                 } else {
                   console.error(`[Twilio SMS] Failed to send async message ${i + 1}: ${smsResult.error}`)
-                  // Don't break the loop - continue sending remaining messages
                 }
               } catch (err) {
                 console.error(`[Twilio SMS] Error sending async message ${i + 1}:`, err)
-                // Don't break the loop - continue sending remaining messages
               }
             }
+
             console.log(`[Twilio SMS] Finished sending all async messages`)
+            finalizeTurn()
           } catch (err) {
-            clearTimeout(watchdog)
-            clearTimeout(asyncTimeout)
+            if (isSuperseded()) {
+              console.log(`[Twilio SMS] [${queryTraceId}] Turn aborted/superseded during handler execution (turnId=${turnId})`)
+              finalizeTurn()
+              return
+            }
+
+            finalizeTurn()
             console.error(`[Twilio SMS] [${queryTraceId}] Async handler error:`, err)
             console.error(`[Twilio SMS] [${queryTraceId}] Error stack:`, err instanceof Error ? err.stack : 'No stack trace')
-            // Send error message to user (only if watchdog hasn't already sent something)
             if (!watchdogFired) {
               try {
                 const smsResult = await sendSms(from, "Sorry, I encountered an error processing your query. Please try again.")
@@ -957,8 +991,7 @@ export async function POST(request: NextRequest) {
           }
         }
         
-        // Start processing asynchronously (fire and forget)
-        processQuery(traceId, from, body).catch((err) => {
+        processQuery(traceId, from, body, nextTurnId).catch((err) => {
           console.error(`[Twilio SMS] [${traceId}] Process query error:`, err)
         })
         

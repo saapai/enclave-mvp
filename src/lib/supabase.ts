@@ -7,6 +7,31 @@ const supabaseAnonKey = ENV.NEXT_PUBLIC_SUPABASE_ANON_KEY
 
 export const supabase = createClient<Database>(supabaseUrl, supabaseAnonKey)
 
+function mergeAbortSignals(timeoutMs: number, incoming?: AbortSignal | null): { signal: AbortSignal; dispose: () => void } {
+  const timeoutController = new AbortController()
+  let incomingListener: (() => void) | null = null
+
+  if (incoming) {
+    if (incoming.aborted) {
+      timeoutController.abort()
+    } else {
+      incomingListener = () => timeoutController.abort()
+      incoming.addEventListener('abort', incomingListener, { once: true })
+    }
+  }
+
+  const timeoutId = setTimeout(() => timeoutController.abort(), timeoutMs)
+
+  const dispose = () => {
+    clearTimeout(timeoutId)
+    if (incoming && incomingListener) {
+      incoming.removeEventListener('abort', incomingListener)
+    }
+  }
+
+  return { signal: timeoutController.signal, dispose }
+}
+
 // Server-side client with service role key for admin operations
 // Only create this on the server side to avoid client-side environment variable issues
 export const supabaseAdmin = typeof window === 'undefined' ? (() => {
@@ -32,15 +57,12 @@ export const supabaseAdmin = typeof window === 'undefined' ? (() => {
         headers: {
           'Connection': 'keep-alive'
         },
-        fetch: (url, init) => {
-          // Add timeout to prevent hangs (15s for queries)
-          const controller = new AbortController()
-          const timeoutId = setTimeout(() => controller.abort(), 15000) // 15s max for any DB query
-          
+        fetch: (url, init = {}) => {
+          const { signal: mergedSignal, dispose } = mergeAbortSignals(15000, init.signal)
           return fetch(url, {
             ...init,
-            signal: controller.signal
-          }).finally(() => clearTimeout(timeoutId))
+            signal: mergedSignal
+          }).finally(() => dispose())
         }
       }
     }
