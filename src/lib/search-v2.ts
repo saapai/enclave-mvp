@@ -18,11 +18,11 @@ import type { SearchResult } from './search'
 // ============================================================================
 
 const SMS_SEARCH_BUDGET_MS = Number(process.env.SMS_SEARCH_BUDGET_MS || '20000') // 20s total budget
-const SMS_FTS_TIMEOUT_MS = Number(process.env.SMS_FTS_TIMEOUT_MS || '2500') // 2.5s per FTS attempt
+const SMS_FTS_TIMEOUT_MS = Number(process.env.SMS_FTS_TIMEOUT_MS || '600') // 0.6s per FTS attempt
 const SMS_EMBED_TIMEOUT_MS = Number(process.env.SMS_EMBED_TIMEOUT_MS || '9000') // 9s for embedding
 const SMS_VECTOR_TIMEOUT_MS = Number(process.env.SMS_VECTOR_TIMEOUT_MS || '4000') // 4s per vector
 const SMS_EMBED_MIN_REMAINING_MS = Number(process.env.SMS_EMBED_MIN_REMAINING_MS || '3000') // Need 3s left to embed
-const SMS_FTS_HARD_TIMEOUT_MS = Number(process.env.SMS_FTS_HARD_TIMEOUT_MS || '2400')
+const SMS_FTS_HARD_TIMEOUT_MS = Number(process.env.SMS_FTS_HARD_TIMEOUT_MS || '550')
 const SMS_VECTOR_HARD_TIMEOUT_MS = Number(process.env.SMS_VECTOR_HARD_TIMEOUT_MS || '3900')
 const SMS_FTS_CONFIDENCE_THRESHOLD = Number(process.env.SMS_FTS_CONFIDENCE_THRESHOLD || '0.95')
 const SMS_WAIT_FOR_EMBED_MS = Number(process.env.SMS_WAIT_FOR_EMBED_MS || '500')
@@ -34,6 +34,12 @@ const CIRCUIT_BREAKER_WINDOW_MS = 30000 // 30 seconds
 const CIRCUIT_BREAKER_THRESHOLD = 3
 const CIRCUIT_BREAKER_COOLDOWN_MS = 30000
 let embeddingBreakerOpenUntil = 0
+
+const ftsTimeouts: number[] = []
+let ftsCircuitOpenUntil = 0
+const FTS_CIRCUIT_WINDOW_MS = 30000
+const FTS_CIRCUIT_THRESHOLD = 3
+const FTS_CIRCUIT_COOLDOWN_MS = 60000
 
 // Embedding cache: reuse embeddings for same query
 const embeddingCache = new Map<string, { embedding: number[]; timestamp: number }>()
@@ -172,6 +178,29 @@ function recordEmbeddingFailure(): void {
   }
 }
 
+function isFtsEnabled(): boolean {
+  const now = Date.now()
+  if (now < ftsCircuitOpenUntil) {
+    return false
+  }
+
+  const recentTimeouts = ftsTimeouts.filter(t => now - t < FTS_CIRCUIT_WINDOW_MS)
+  ftsTimeouts.length = 0
+  ftsTimeouts.push(...recentTimeouts)
+  return recentTimeouts.length < FTS_CIRCUIT_THRESHOLD
+}
+
+function recordFtsTimeout(): void {
+  const now = Date.now()
+  ftsTimeouts.push(now)
+  const recentTimeouts = ftsTimeouts.filter(t => now - t < FTS_CIRCUIT_WINDOW_MS)
+  if (recentTimeouts.length >= FTS_CIRCUIT_THRESHOLD) {
+    ftsCircuitOpenUntil = now + FTS_CIRCUIT_COOLDOWN_MS
+    console.warn('[Search V2] FTS circuit breaker OPEN (skipping FTS temporarily)')
+    ftsTimeouts.length = 0
+  }
+}
+
 function createScopedController(parent?: AbortSignal): AbortableController {
   const controller = new AbortController()
   const onAbort = () => controller.abort()
@@ -296,6 +325,9 @@ async function searchLexicalFallback(
   // Prefer longer tokens to avoid broad scans on short fragments like "ae"
   const sortedTokens = [...tokens].sort((a, b) => b.length - a.length)
   const primaryToken = sortedTokens.find(token => token.length >= 3) || sortedTokens[0]
+  const escapedToken = primaryToken
+    .replace(/[%_]/g, (match) => `\\${match}`)
+    .replace(/'/g, "''")
   
   const queryStart = Date.now()
   const maxAttempts = 3
@@ -310,7 +342,7 @@ async function searchLexicalFallback(
     const scoped = createScopedController(abortSignal)
     const controller = scoped.controller
     const remainingBudget = budget ? budget.getRemainingMs() : SMS_FTS_TIMEOUT_MS + 250
-    const attemptTimeout = Math.max(500, Math.min(SMS_FTS_TIMEOUT_MS, remainingBudget - 100))
+    const attemptTimeout = Math.max(250, Math.min(SMS_FTS_TIMEOUT_MS, remainingBudget - 100))
     const hardTimeout = Math.min(attemptTimeout, SMS_FTS_HARD_TIMEOUT_MS)
     const timeoutId = setTimeout(() => controller.abort(), hardTimeout)
 
@@ -319,7 +351,7 @@ async function searchLexicalFallback(
         .from('resource')
         .select('id,space_id,type,title,body,url,created_by,created_at,updated_at')
         .eq('space_id', spaceId)
-        .or(`title.ilike.%${primaryToken}%,body.ilike.%${primaryToken}%`)
+        .or(`title.ilike.%${escapedToken}%,body.ilike.%${escapedToken}%`)
         .order('updated_at', { ascending: false })
         .limit(limit * 2)
         .abortSignal(controller.signal)
@@ -405,6 +437,11 @@ async function searchFTS(
   limit: number = 10,
   abortSignal?: AbortSignal
 ): Promise<SearchResult[]> {
+  if (!isFtsEnabled()) {
+    console.warn('[Search V2 FTS] Circuit breaker open, skipping FTS and using lexical fallback')
+    return searchLexicalFallback(query, spaceId, limit, budget, abortSignal)
+  }
+
   const client = supabaseAdmin || supabase
   if (!client) {
     console.error('[Search V2 FTS] No Supabase client available')
@@ -412,77 +449,89 @@ async function searchFTS(
   }
 
   const remainingBudget = budget.getRemainingMs()
-  const attemptTimeout = Math.max(500, Math.min(SMS_FTS_TIMEOUT_MS, remainingBudget - 100))
+  const attemptTimeout = Math.max(250, Math.min(SMS_FTS_TIMEOUT_MS, remainingBudget - 100))
   const hardTimeout = Math.min(attemptTimeout, SMS_FTS_HARD_TIMEOUT_MS)
 
   console.log(`[Search V2 FTS] RPC start for "${query}" (space ${spaceId.substring(0, 8)}, timeout ${hardTimeout}ms)`)
 
-  let fallbackTimer: NodeJS.Timeout | null = null
+  const scoped = createScopedController(abortSignal)
+  const controller = scoped.controller
 
-  const fallbackPromise = new Promise<{ type: 'fallback'; results: SearchResult[] }>((resolve) => {
-    fallbackTimer = setTimeout(() => {
-      console.warn(`[Search V2 FTS] Timed out after ${hardTimeout}ms, switching to lexical fallback`)
-      searchLexicalFallback(query, spaceId, limit, budget, abortSignal)
-        .then((results) => resolve({ type: 'fallback', results }))
-        .catch((err) => {
-          console.error('[Search V2 FTS] Lexical fallback after timeout failed:', err)
-          resolve({ type: 'fallback', results: [] })
-        })
+  let timeoutId: NodeJS.Timeout | null = null
+  let timeoutTriggered = false
+
+  const startTimeout = () => {
+    if (timeoutId) return
+    timeoutId = setTimeout(() => {
+      timeoutTriggered = true
+      recordFtsTimeout()
+      console.warn(`[Search V2 FTS] Timeout after ${hardTimeout}ms, aborting RPC and switching to lexical fallback`)
+      controller.abort()
     }, hardTimeout)
-  })
+  }
 
-  const ftsPromise = Promise.resolve(
-    client.rpc('search_resources_fts', {
-      search_query: query,
-      target_space_id: spaceId,
-      limit_count: limit,
-      offset_count: 0
-    })
-  )
-    .then(({ data, error }) => ({ type: 'fts', data, error }))
-    .catch((err: unknown) => {
+  startTimeout()
+
+  try {
+    const { data, error } = await Promise.resolve(
+      client
+        .rpc('search_resources_fts', {
+          search_query: query,
+          target_space_id: spaceId,
+          limit_count: limit,
+          offset_count: 0
+        })
+        .abortSignal(controller.signal)
+    )
+
+    if (timeoutId) {
+      clearTimeout(timeoutId)
+      timeoutId = null
+    }
+    scoped.dispose()
+
+    if (error) {
+      console.error('[Search V2 FTS] RPC error:', error.message || error)
+      return searchLexicalFallback(query, spaceId, limit, budget, abortSignal)
+    }
+
+    if (!data || data.length === 0) {
+      console.log('[Search V2 FTS] No rows returned, falling back to lexical search')
+      return searchLexicalFallback(query, spaceId, limit, budget, abortSignal)
+    }
+
+    const results = data.map((row: any) => ({
+      ...row,
+      tags: [],
+      score: typeof row.rank === 'number' ? row.rank : 0,
+      source: 'fts'
+    } as SearchResult))
+
+    console.log(`[Search V2 FTS] Returned ${results.length} rows (top score: ${results[0]?.score?.toFixed(3) || 'N/A'})`)
+    return results
+  } catch (err: unknown) {
+    if (timeoutId) {
+      clearTimeout(timeoutId)
+      timeoutId = null
+    }
+    scoped.dispose()
+
+    if (isAbortError(err)) {
+      if (timeoutTriggered) {
+        console.warn('[Search V2 FTS] RPC aborted due to timeout')
+      } else {
+        console.warn('[Search V2 FTS] RPC aborted by parent signal')
+      }
+    } else {
       console.error('[Search V2 FTS] RPC exception:', err)
-      return { type: 'fts-error', error: err }
-    })
+    }
 
-  const winner = await Promise.race([ftsPromise, fallbackPromise])
-  if (fallbackTimer) {
-    clearTimeout(fallbackTimer)
-    fallbackTimer = null
-  }
-
-  if ((winner as any)?.type === 'fallback') {
-    const fallbackResults = (winner as any).results as SearchResult[]
-    return fallbackResults
-  }
-
-  const typed = winner as { type: 'fts'; data: any[] | null; error: any } | { type: 'fts-error'; error: any }
-
-  if (typed.type === 'fts-error') {
+    if (!timeoutTriggered) {
+      // Only record timeout if we didn't already do so above
+      recordFtsTimeout()
+    }
     return searchLexicalFallback(query, spaceId, limit, budget, abortSignal)
   }
-
-  const { data, error } = typed
-
-  if (error) {
-    console.error('[Search V2 FTS] RPC error:', error.message || error)
-    return searchLexicalFallback(query, spaceId, limit, budget, abortSignal)
-  }
-
-  if (!data || data.length === 0) {
-    console.log('[Search V2 FTS] No rows returned, falling back to lexical search')
-    return searchLexicalFallback(query, spaceId, limit, budget, abortSignal)
-  }
-
-  const results = data.map((row: any) => ({
-    ...row,
-    tags: [],
-    score: typeof row.rank === 'number' ? row.rank : 0,
-    source: 'fts'
-  } as SearchResult))
-
-  console.log(`[Search V2 FTS] Returned ${results.length} rows (top score: ${results[0]?.score?.toFixed(3) || 'N/A'})`)
-  return results
 }
 
 // ============================================================================

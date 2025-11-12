@@ -21,6 +21,8 @@ RETURNS TABLE (
   rank REAL
 ) AS $$
 BEGIN
+  PERFORM set_config('statement_timeout', '500ms', true);
+  PERFORM set_config('idle_in_transaction_session_timeout', '1000ms', true);
   RETURN QUERY
   SELECT 
     r.id,
@@ -72,4 +74,5 @@ SELECT
 FROM information_schema.routines
 WHERE routine_name = 'search_resources_fts'
   AND routine_schema = 'public';
+
 
