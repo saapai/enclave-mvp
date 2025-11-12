@@ -293,9 +293,9 @@ async function searchLexicalFallback(
     return []
   }
   
-  // Use the FIRST token only for fast search (avoid OR explosion)
-  // This is much faster than multiple OR clauses
-  const primaryToken = tokens[0]
+  // Prefer longer tokens to avoid broad scans on short fragments like "ae"
+  const sortedTokens = [...tokens].sort((a, b) => b.length - a.length)
+  const primaryToken = sortedTokens.find(token => token.length >= 3) || sortedTokens[0]
   
   const queryStart = Date.now()
   const maxAttempts = 3
