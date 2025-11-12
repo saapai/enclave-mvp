@@ -18,11 +18,11 @@ import type { SearchResult } from './search'
 // ============================================================================
 
 const SMS_SEARCH_BUDGET_MS = Number(process.env.SMS_SEARCH_BUDGET_MS || '20000') // 20s total budget
-const SMS_FTS_TIMEOUT_MS = Number(process.env.SMS_FTS_TIMEOUT_MS || '4000') // 4s per FTS
+const SMS_FTS_TIMEOUT_MS = Number(process.env.SMS_FTS_TIMEOUT_MS || '8000') // 8s per lexical/FTS attempt
 const SMS_EMBED_TIMEOUT_MS = Number(process.env.SMS_EMBED_TIMEOUT_MS || '9000') // 9s for embedding
 const SMS_VECTOR_TIMEOUT_MS = Number(process.env.SMS_VECTOR_TIMEOUT_MS || '4000') // 4s per vector
 const SMS_EMBED_MIN_REMAINING_MS = Number(process.env.SMS_EMBED_MIN_REMAINING_MS || '3000') // Need 3s left to embed
-const SMS_FTS_HARD_TIMEOUT_MS = Number(process.env.SMS_FTS_HARD_TIMEOUT_MS || '3900')
+const SMS_FTS_HARD_TIMEOUT_MS = Number(process.env.SMS_FTS_HARD_TIMEOUT_MS || '7800')
 const SMS_VECTOR_HARD_TIMEOUT_MS = Number(process.env.SMS_VECTOR_HARD_TIMEOUT_MS || '3900')
 const SMS_FTS_CONFIDENCE_THRESHOLD = Number(process.env.SMS_FTS_CONFIDENCE_THRESHOLD || '0.95')
 const SMS_WAIT_FOR_EMBED_MS = Number(process.env.SMS_WAIT_FOR_EMBED_MS || '500')
@@ -265,24 +265,6 @@ function isAbortError(err: any): boolean {
   return err.name === 'AbortError' || err.message === 'This operation was aborted'
 }
 
-async function runWithRetry<T>(label: string, attempts: number, operation: () => Promise<T>, delayMs: number = 250): Promise<T> {
-  let lastError: any
-  for (let attempt = 1; attempt <= attempts; attempt++) {
-    try {
-      return await operation()
-    } catch (err) {
-      lastError = err
-      const abort = isAbortError(err)
-      console.warn(`[Search V2] ${label} attempt ${attempt} failed${abort ? ' (aborted)' : ''}:`, err?.message || err)
-      if (attempt === attempts || abort) {
-        break
-      }
-      await sleep(delayMs * attempt)
-    }
-  }
-  throw lastError
-}
-
 // ============================================================================
 // FTS SEARCH (using proper RPC)
 // ============================================================================
@@ -291,7 +273,8 @@ async function searchLexicalFallback(
   query: string,
   spaceId: string,
   limit: number,
-  offset: number = 0
+  budget?: SearchBudget,
+  abortSignal?: AbortSignal
 ): Promise<SearchResult[]> {
   const client = supabaseAdmin || supabase
   if (!client) {
@@ -315,72 +298,104 @@ async function searchLexicalFallback(
   const primaryToken = tokens[0]
   
   const queryStart = Date.now()
-  
-  try {
-    // FAST QUERY: Select only needed columns, no body scan
-    const { data, error } = await runWithRetry(
-      'Lexical fallback',
-      3,
-      () => client
+  const maxAttempts = 3
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    if (abortSignal?.aborted) {
+      console.warn('[Search V2] Lexical fallback skipped because parent signal already aborted')
+      return []
+    }
+
+    const attemptStart = Date.now()
+    const scoped = createScopedController(abortSignal)
+    const controller = scoped.controller
+    const remainingBudget = budget ? budget.getRemainingMs() : SMS_FTS_TIMEOUT_MS + 250
+    const attemptTimeout = Math.max(500, Math.min(SMS_FTS_TIMEOUT_MS, remainingBudget - 100))
+    const hardTimeout = Math.min(attemptTimeout, SMS_FTS_HARD_TIMEOUT_MS)
+    const timeoutId = setTimeout(() => controller.abort(), hardTimeout)
+
+    try {
+      const { data, error } = await client
         .from('resource')
         .select('id,space_id,type,title,body,url,created_by,created_at,updated_at')
         .eq('space_id', spaceId)
         .or(`title.ilike.%${primaryToken}%,body.ilike.%${primaryToken}%`)
         .order('updated_at', { ascending: false })
         .limit(limit * 2)
-    )
+        .abortSignal(controller.signal)
 
-    const durationMs = Date.now() - queryStart
+      clearTimeout(timeoutId)
+      scoped.dispose()
 
-    if (error) {
-      console.error('[Search V2] Lexical fallback failed:', error, `(duration: ${durationMs}ms)`)
-      return []
-    }
+      const durationMs = Date.now() - attemptStart
 
-    if (!data || data.length === 0) {
-      console.log(`[Search V2] Lexical fallback returned no rows in ${durationMs}ms`)
-      return []
-    }
-
-    // Post-filter: prefer results that match multiple tokens
-    const results = data.map((resource: Record<string, unknown>) => {
-      const titleLower = (resource.title as string || '').toLowerCase()
-      const bodyLower = (resource.body as string || '').toLowerCase()
-      
-      // Count how many tokens match
-      let matchCount = 0
-      for (const token of tokens) {
-        if (titleLower.includes(token) || bodyLower.includes(token)) {
-          matchCount++
+      if (error) {
+        console.error(`[Search V2] Lexical fallback attempt ${attempt} failed:`, error, `(duration: ${durationMs}ms)`)
+        if (attempt < maxAttempts) {
+          await sleep(200 * attempt)
+          continue
         }
+        return []
       }
-      
-      // Boost score based on match count
-      const score = 0.3 + (matchCount / tokens.length) * 0.7
-      
-      return {
-        ...resource,
-        tags: [], // Skip tags for speed
-        rank: score,
-        score: score,
-        source: 'lexical'
-      }
-    })
 
-    // Sort by score and return top results
-    results.sort((a, b) => (b.score || 0) - (a.score || 0))
-    console.log(`[Search V2] Lexical fallback succeeded in ${durationMs}ms (rows: ${results.length})`)
-    return results.slice(0, limit) as SearchResult[]
-    
-  } catch (err) {
-    const durationMs = Date.now() - queryStart
-    if (isAbortError(err)) {
-      console.warn(`[Search V2] Lexical fallback aborted after ${durationMs}ms`)
-    } else {
-      console.error('[Search V2] Lexical fallback exception:', err, `(duration: ${durationMs}ms)`)
+      if (!data || data.length === 0) {
+        console.log(`[Search V2] Lexical fallback returned no rows in ${durationMs}ms`)
+        return []
+      }
+
+      // Post-filter: prefer results that match multiple tokens
+      const results = data.map((resource: Record<string, unknown>) => {
+        const titleLower = (resource.title as string || '').toLowerCase()
+        const bodyLower = (resource.body as string || '').toLowerCase()
+        
+        // Count how many tokens match
+        let matchCount = 0
+        for (const token of tokens) {
+          if (titleLower.includes(token) || bodyLower.includes(token)) {
+            matchCount++
+          }
+        }
+        
+        // Boost score based on match count
+        const score = 0.3 + (matchCount / tokens.length) * 0.7
+        
+        return {
+          ...resource,
+          tags: [], // Skip tags for speed
+          rank: score,
+          score: score,
+          source: 'lexical'
+        }
+      })
+
+      // Sort by score and return top results
+      results.sort((a, b) => (b.score || 0) - (a.score || 0))
+      console.log(`[Search V2] Lexical fallback succeeded in ${durationMs}ms (rows: ${results.length})`)
+      return results.slice(0, limit) as SearchResult[]
+
+    } catch (err) {
+      clearTimeout(timeoutId)
+      scoped.dispose()
+
+      const durationMs = Date.now() - attemptStart
+
+      if (isAbortError(err)) {
+        console.warn(`[Search V2] Lexical fallback aborted on attempt ${attempt} after ${durationMs}ms`)
+        return []
+      }
+
+      console.error(`[Search V2] Lexical fallback attempt ${attempt} exception:`, err, `(duration: ${durationMs}ms)`)
+      if (attempt < maxAttempts) {
+        await sleep(200 * attempt)
+        continue
+      }
+      return []
     }
-    return []
   }
+
+  const durationMs = Date.now() - queryStart
+  console.warn(`[Search V2] Lexical fallback exhausted attempts after ${durationMs}ms`)
+  return []
 }
 
 async function searchFTS(
@@ -392,7 +407,7 @@ async function searchFTS(
 ): Promise<SearchResult[]> {
   // BYPASS FTS RPC entirely due to hanging issues - go straight to lexical
   console.log(`[Search V2 FTS] Using lexical search for "${query}" in space ${spaceId.substring(0, 8)}...`)
-  return searchLexicalFallback(query, spaceId, limit)
+  return searchLexicalFallback(query, spaceId, limit, budget, abortSignal)
 }
 
 // ============================================================================
@@ -612,17 +627,17 @@ async function searchWorkspace(
       topScore: 0
     }
   }
-  let ftsResults = await searchFTS(query, workspaceId, budget, 8)
+  let ftsResults = await searchFTS(query, workspaceId, budget, 8, abortSignal)
   if (ftsResults.length === 0) {
     const expanded = expandFtsQuery(query)
     if (expanded !== query) {
       console.log('[Search V2] FTS returned no results, retrying with expanded query')
-      ftsResults = await searchFTS(expanded, workspaceId, budget, 8)
+      ftsResults = await searchFTS(expanded, workspaceId, budget, 8, abortSignal)
     }
 
     if (ftsResults.length === 0) {
       console.log('[Search V2] FTS still empty after expansion, using lexical fallback')
-      const fallbackResults = await searchLexicalFallback(query, workspaceId, 8)
+      const fallbackResults = await searchLexicalFallback(query, workspaceId, 8, budget, abortSignal)
       ftsResults = fallbackResults
     }
   }
