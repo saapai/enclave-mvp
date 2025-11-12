@@ -7,7 +7,7 @@ const EMBEDDING_MODEL = process.env.EMBEDDING_MODEL || 'text-embedding-3-small'
 // OpenAI text-embedding-3-small naturally produces 1536 dimensions
 const EMBEDDING_DIMENSIONS = Number(process.env.EMBEDDING_DIMENSIONS || '1536')
 const OPENAI_EMBED_TIMEOUT_MS = Number(process.env.OPENAI_EMBED_TIMEOUT_MS || '9000')
-const OPENAI_EMBED_ATTEMPTS = Number(process.env.OPENAI_EMBED_ATTEMPTS || '3')
+const OPENAI_EMBED_ATTEMPTS = Number(process.env.OPENAI_EMBED_ATTEMPTS || '1')
 const OPENAI_EMBED_RETRY_DELAYS_MS = [300, 800]
 
 async function generateEmbedding(
