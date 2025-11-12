@@ -64,7 +64,7 @@ const TWILIO_RATE_LIMIT_DELAY = 200
 const MAX_MESSAGES_PER_BATCH = 5
 const CONTENT_DEDUP_WINDOW_MS = 2000
 const INFLIGHT_CONTENT: Map<string, number> = new Map()
-const ACTIVE_TURNS: Map<string, { controller: AbortController; turnId: number }> = new Map()
+const ACTIVE_TURNS: Map<string, Array<{ controller: AbortController; turnId: number; query: string }>> = new Map()
 
 // Check if message is a send affirmation (but NOT if it's a poll response)
 const isSendAffirmation = (message: string, isPollResponseContext: boolean = false): boolean => {
@@ -811,14 +811,20 @@ export async function POST(request: NextRequest) {
         INFLIGHT_CONTENT.set(dedupeKey, now)
         setTimeout(() => INFLIGHT_CONTENT.delete(dedupeKey), CONTENT_DEDUP_WINDOW_MS)
         
-        const previousTurn = ACTIVE_TURNS.get(phoneNumber)
-        if (previousTurn) {
-          console.log(`[Twilio SMS] Detected active turn ${previousTurn.turnId} for ${phoneNumber}, aborting before starting new query`)
-          previousTurn.controller.abort()
+        const normalizedBody = body.trim().toLowerCase()
+        const activeEntries = ACTIVE_TURNS.get(phoneNumber) ?? []
+        let maxTurnId = 0
+        for (const entry of activeEntries) {
+          maxTurnId = Math.max(maxTurnId, entry.turnId)
+          if (entry.query === normalizedBody) {
+            console.log(`[Twilio SMS] Detected duplicate turn ${entry.turnId} for ${phoneNumber}, aborting previous duplicate`)
+            entry.controller.abort()
+          }
         }
-        const nextTurnId = (previousTurn?.turnId ?? 0) + 1
+        const nextTurnId = maxTurnId + 1
         const turnController = new AbortController()
-        ACTIVE_TURNS.set(phoneNumber, { controller: turnController, turnId: nextTurnId })
+        activeEntries.push({ controller: turnController, turnId: nextTurnId, query: normalizedBody })
+        ACTIVE_TURNS.set(phoneNumber, activeEntries)
         
         const traceId = `sms_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`
         console.log(`[Twilio SMS] [${traceId}] Content query detected, processing asynchronously (turnId=${nextTurnId})`)
@@ -828,6 +834,9 @@ export async function POST(request: NextRequest) {
         })
         
         const processQuery = async (queryTraceId: string, queryFrom: string, queryBody: string, turnId: number) => {
+          const turnEntries = ACTIVE_TURNS.get(phoneNumber) || []
+          const turnEntry = turnEntries.find(entry => entry.turnId === turnId)
+          const turnController = turnEntry?.controller ?? new AbortController()
           let watchdogFired = false
           let timeoutFired = false
 
@@ -872,14 +881,19 @@ export async function POST(request: NextRequest) {
             turnController.signal.removeEventListener('abort', abortListener)
             cancelTimers()
             const active = ACTIVE_TURNS.get(phoneNumber)
-            if (active && active.turnId === turnId) {
-              ACTIVE_TURNS.delete(phoneNumber)
+            if (active) {
+              const updated = active.filter(entry => entry.turnId !== turnId)
+              if (updated.length > 0) {
+                ACTIVE_TURNS.set(phoneNumber, updated)
+              } else {
+                ACTIVE_TURNS.delete(phoneNumber)
+              }
             }
           }
 
           const isSuperseded = () => {
             const active = ACTIVE_TURNS.get(phoneNumber)
-            return !active || active.turnId !== turnId || turnController.signal.aborted
+            return !active || !active.some(entry => entry.turnId === turnId) || turnController.signal.aborted
           }
 
           const handlerStartTime = Date.now()
