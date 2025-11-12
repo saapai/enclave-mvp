@@ -556,26 +556,19 @@ async function searchFTS(
 
   console.log(`[Search V2 FTS] RPC start for "${query}" (space ${spaceId.substring(0, 8)}, timeout ${hardTimeout}ms)`)
 
-  const scoped = createScopedController(abortSignal)
-  const controller = scoped.controller
+  const requestScoped = createScopedController(abortSignal)
+  const requestController = requestScoped.controller
+  const timeoutId = setTimeout(() => requestController.abort(), hardTimeout)
 
-  let timeoutId: NodeJS.Timeout | null = null
-  let timeoutTriggered = false
-
-  const startTimeout = () => {
-    if (timeoutId) return
-    timeoutId = setTimeout(() => {
-      timeoutTriggered = true
-      recordFtsTimeout()
-      console.warn(`[Search V2 FTS] Timeout after ${hardTimeout}ms, aborting RPC and switching to lexical fallback`)
-      controller.abort()
-    }, hardTimeout)
-  }
-
-  startTimeout()
+  let timedOut = false
+  const timeoutHandle = setTimeout(() => {
+    timedOut = true
+    console.warn(`[Search V2 FTS] Timeout after ${hardTimeout}ms, aborting RPC`)
+    requestController.abort()
+  }, hardTimeout)
 
   try {
-    const { data, error } = await Promise.resolve(
+    const response = await Promise.resolve(
       (client as any)
         .rpc('search_resources_fts', {
           search_query: query,
@@ -583,14 +576,15 @@ async function searchFTS(
           limit_count: limit,
           offset_count: 0
         })
-        .abortSignal(controller.signal)
+        .abortSignal(requestController.signal)
     )
 
-    if (timeoutId) {
-      clearTimeout(timeoutId)
-      timeoutId = null
-    }
-    scoped.dispose()
+    clearTimeout(timeoutHandle)
+    clearTimeout(timeoutId)
+    requestScoped.dispose()
+
+    const data = response?.data as any[] | null
+    const error = response?.error as any
 
     if (error) {
       console.error('[Search V2 FTS] RPC error:', error.message || error)
@@ -612,26 +606,16 @@ async function searchFTS(
     console.log(`[Search V2 FTS] Returned ${results.length} rows (top score: ${results[0]?.score?.toFixed(3) || 'N/A'})`)
     return results
   } catch (err: unknown) {
-    if (timeoutId) {
-      clearTimeout(timeoutId)
-      timeoutId = null
-    }
-    scoped.dispose()
+    clearTimeout(timeoutHandle)
+    clearTimeout(timeoutId)
+    requestScoped.dispose()
 
-    if (isAbortError(err)) {
-      if (timeoutTriggered) {
-        console.warn('[Search V2 FTS] RPC aborted due to timeout')
-      } else {
-        console.warn('[Search V2 FTS] RPC aborted by parent signal')
-      }
-    } else {
-      console.error('[Search V2 FTS] RPC exception:', err)
+    if ((err instanceof Error && err.name === 'AbortError') || timedOut) {
+      console.warn('[Search V2 FTS] Aborted or timed out, running lexical fallback separately')
+      return searchLexicalFallback(query, spaceId, limit, budget, abortSignal)
     }
 
-    if (!timeoutTriggered) {
-      // Only record timeout if we didn't already do so above
-      recordFtsTimeout()
-    }
+    console.error('[Search V2 FTS] RPC exception:', err)
     return searchLexicalFallback(query, spaceId, limit, budget, abortSignal)
   }
 }
