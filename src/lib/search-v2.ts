@@ -405,9 +405,63 @@ async function searchFTS(
   limit: number = 10,
   abortSignal?: AbortSignal
 ): Promise<SearchResult[]> {
-  // BYPASS FTS RPC entirely due to hanging issues - go straight to lexical
-  console.log(`[Search V2 FTS] Using lexical search for "${query}" in space ${spaceId.substring(0, 8)}...`)
-  return searchLexicalFallback(query, spaceId, limit, budget, abortSignal)
+  const client = supabaseAdmin || supabase
+  if (!client) {
+    console.error('[Search V2 FTS] No Supabase client available')
+    return []
+  }
+
+  const scoped = createScopedController(abortSignal)
+  const controller = scoped.controller
+  const remainingBudget = budget.getRemainingMs()
+  const attemptTimeout = Math.max(500, Math.min(SMS_FTS_TIMEOUT_MS, remainingBudget - 100))
+  const hardTimeout = Math.min(attemptTimeout, SMS_FTS_HARD_TIMEOUT_MS)
+  const timeoutId = setTimeout(() => controller.abort(), hardTimeout)
+
+  try {
+    const { data, error } = await client
+      .rpc('search_resources_fts', {
+        search_query: query,
+        target_space_id: spaceId,
+        limit_count: limit,
+        offset_count: 0
+      })
+      .abortSignal(controller.signal)
+
+    clearTimeout(timeoutId)
+    scoped.dispose()
+
+    if (error) {
+      console.error('[Search V2 FTS] RPC error:', error.message || error)
+      return searchLexicalFallback(query, spaceId, limit, budget, abortSignal)
+    }
+
+    if (!data || data.length === 0) {
+      console.log('[Search V2 FTS] No rows returned, falling back to lexical search')
+      return searchLexicalFallback(query, spaceId, limit, budget, abortSignal)
+    }
+
+    const results = data.map((row: any) => ({
+      ...row,
+      tags: [],
+      score: typeof row.rank === 'number' ? row.rank : 0,
+      source: 'fts'
+    } as SearchResult))
+
+    console.log(`[Search V2 FTS] Returned ${results.length} rows (top score: ${results[0]?.score?.toFixed(3) || 'N/A'})`)
+    return results
+
+  } catch (err) {
+    clearTimeout(timeoutId)
+    scoped.dispose()
+
+    if (isAbortError(err)) {
+      console.warn('[Search V2 FTS] Aborted due to timeout, switching to lexical fallback')
+    } else {
+      console.error('[Search V2 FTS] Exception:', err)
+    }
+    return searchLexicalFallback(query, spaceId, limit, budget, abortSignal)
+  }
 }
 
 // ============================================================================
@@ -649,9 +703,10 @@ async function searchWorkspace(
     console.log(`[Search V2] FTS top score: ${topFtsScore.toFixed(3)} in ${workspaceId.substring(0, 8)}`)
   }
 
-  if (ftsResults.length > 0 && topFtsScore >= SMS_FTS_CONFIDENCE_THRESHOLD) {
+  const ftsHighConfidence = ftsResults.length > 0 && topFtsScore >= SMS_FTS_CONFIDENCE_THRESHOLD
+  if (ftsHighConfidence && !embeddingState.value && !embeddingPromise) {
     const totalMs = Date.now() - wsStart
-    console.log(`[Search V2] FTS high confidence (${topFtsScore.toFixed(3)}), skipping vector for ${workspaceId.substring(0, 8)} (total ${totalMs}ms)`)
+    console.log(`[Search V2] FTS high confidence (${topFtsScore.toFixed(3)}), no embedding available; returning lexical results (total ${totalMs}ms)`) 
     return {
       workspaceId,
       results: ftsResults,
