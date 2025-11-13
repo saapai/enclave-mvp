@@ -58,7 +58,7 @@ export async function parseCommand(
             content: `You are a command parser for Jarvis, an SMS bot that creates announcements and polls.
 
 Parse the user's command and extract:
-1. verbatimText: Exact text the user wants to use (if they say "use my exact wording", "send this exactly", or provide quoted text)
+1. verbatimText: Exact text the user wants to use (if they say "use my exact wording", "send this exactly", "saying", or provide quoted text). For quoted text, extract the FULL content between the outermost quotes, including any nested quotes.
 2. instructions: Specific instructions about what to include/modify (e.g., "make sure to say it's at 9am", "mention the location", "add that it's mandatory")
 3. needsGeneration: true if bot should generate content, false if user provided exact text
 4. extractedFields: Extract any explicit fields mentioned:
@@ -73,11 +73,14 @@ Parse the user's command and extract:
    - mustNotChange: Things that must NOT be changed from verbatim text
    - verbatimOnly: true if entire message should be verbatim
 
+CRITICAL: When extracting quoted text, capture EVERYTHING between the outermost quotes, including nested quotes.
+
 Examples:
 - "send out a message: meeting at 9am" → needsGeneration: true, extractedFields: {content: "meeting", time: "9am"}
 - "use my exact wording: meeting at 9am" → verbatimText: "meeting at 9am", verbatimOnly: true, needsGeneration: false
 - "send a message about study hall, make sure to say it's at 9am" → needsGeneration: true, instructions: ["make sure to say it's at 9am"], extractedFields: {content: "study hall", time: "9am"}
 - "broadcast this exactly: 'Active meeting tonight at 8pm'" → verbatimText: "Active meeting tonight at 8pm", verbatimOnly: true, needsGeneration: false
+- "Send a poll saying "Meeting tonight at 8pm. Are you coming? Reply "yes" or "no"."" → verbatimText: "Meeting tonight at 8pm. Are you coming? Reply "yes" or "no".", verbatimOnly: true, needsGeneration: false
 
 Return ONLY valid JSON:
 {
@@ -146,30 +149,50 @@ Return ONLY valid JSON:
 function fallbackParse(message: string): ParsedCommand {
   const lower = message.toLowerCase()
   
-  // Check for verbatim indicators
-  const verbatimPatterns = [
-    /use\s+my\s+exact\s+wording[:\s]+(.+)/i,
-    /send\s+this\s+exactly[:\s]+(.+)/i,
-    /broadcast\s+this\s+exactly[:\s]+(.+)/i,
-    /use\s+exact\s+text[:\s]+(.+)/i,
-    /"([^"]+)"/, // Quoted text
-    /'([^']+)'/, // Single quoted text
-  ]
-
+  // Extract the outermost quoted text (handles nested quotes)
   let verbatimText: string | undefined
-  for (const pattern of verbatimPatterns) {
-    const match = message.match(pattern)
-    if (match && match[1]) {
-      verbatimText = match[1].trim()
-      break
+  
+  // Look for pattern: saying "..." or poll, "..." or similar
+  const sayingMatch = message.match(/(?:saying|poll,?|message,?|asking)\s+"(.+)"$/i)
+  if (sayingMatch && sayingMatch[1]) {
+    verbatimText = sayingMatch[1].trim()
+  }
+  
+  // If not found, try to extract the last/longest quoted section
+  if (!verbatimText) {
+    // Find all quote positions
+    const quotePositions: number[] = []
+    for (let i = 0; i < message.length; i++) {
+      if (message[i] === '"') {
+        quotePositions.push(i)
+      }
+    }
+    
+    // If we have at least 2 quotes, extract content between first and last
+    if (quotePositions.length >= 2) {
+      const firstQuote = quotePositions[0]
+      const lastQuote = quotePositions[quotePositions.length - 1]
+      if (lastQuote > firstQuote) {
+        verbatimText = message.substring(firstQuote + 1, lastQuote).trim()
+      }
     }
   }
-
-  // Extract quoted text
+  
+  // Check for verbatim indicators
   if (!verbatimText) {
-    const quotedMatch = message.match(/"([^"]+)"/) || message.match(/'([^']+)'/)
-    if (quotedMatch) {
-      verbatimText = quotedMatch[1].trim()
+    const verbatimPatterns = [
+      /use\s+my\s+exact\s+wording[:\s]+(.+)/i,
+      /send\s+this\s+exactly[:\s]+(.+)/i,
+      /broadcast\s+this\s+exactly[:\s]+(.+)/i,
+      /use\s+exact\s+text[:\s]+(.+)/i,
+    ]
+
+    for (const pattern of verbatimPatterns) {
+      const match = message.match(pattern)
+      if (match && match[1]) {
+        verbatimText = match[1].trim()
+        break
+      }
     }
   }
 

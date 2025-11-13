@@ -159,6 +159,36 @@ function isLikelyQuestion(text: string): boolean {
   return QUESTION_PREFIX.test(normalized)
 }
 
+function detectPollCommand(message: string, history: ConversationMessage[]): boolean {
+  const lower = message.trim().toLowerCase()
+  if (!lower) return false
+  if (!(/poll\b/.test(lower) || /\bsurvey\b/.test(lower))) {
+    return false
+  }
+
+  const lastBotMessage = history
+    .filter(msg => msg.role === 'bot')
+    .pop()?.text.toLowerCase() || ''
+
+  if (
+    lastBotMessage.includes("here's what the poll will say") ||
+    lastBotMessage.includes('what would you like to ask in the poll') ||
+    lastBotMessage.includes('reply "send it" to send')
+  ) {
+    return false
+  }
+
+  const pollCommandPatterns: RegExp[] = [
+    /\b(send|make|create|put out|set up|draft|launch|blast|throw|fire off|text out|shoot out)\b[^.?!]*\b(poll|survey)\b/,
+    /\bpoll\b[^.?!]*\bsaying\b/,
+    /\bpoll\b[^.?!]*\basking\b/,
+    /^poll[:\s]/,
+    /^survey[:\s]/
+  ]
+
+  return pollCommandPatterns.some((regex) => regex.test(lower))
+}
+
 function queueActionMemorySave(
   phoneNumber: string,
   action: Omit<ActionMemory, 'timestamp'>,
@@ -299,8 +329,18 @@ export async function handleSMSMessage(
   // If pre-classified intent provided (from route.ts), use it to avoid redundant LLM call
   let intent: ClassifiedIntent
   const intentStartTime = Date.now()
-  
-  if (preClassifiedIntent) {
+  const pollCommandHeuristic = detectPollCommand(messageText, history)
+
+  if (pollCommandHeuristic) {
+    console.log('[UnifiedHandler] Poll command detected via heuristic, skipping LLM classification')
+    intent = {
+      type: 'poll_command',
+      confidence: 0.99,
+      reasoning: 'Keyword detection (poll command)',
+      instructions: [],
+      needsGeneration: true
+    }
+  } else if (preClassifiedIntent) {
     console.log(`[UnifiedHandler] Using pre-classified intent: ${preClassifiedIntent.type} (confidence: ${preClassifiedIntent.confidence})`)
     intent = preClassifiedIntent
   } else {
@@ -647,15 +687,21 @@ async function handlePollCommand(
   history: ConversationMessage[]
 ): Promise<HandlerResult> {
   try {
-    const { extractPollDetails, generatePollQuestion, savePollDraft, getActivePollDraft } = await import('@/lib/polls')
+    const { generatePollQuestion, savePollDraft } = await import('@/lib/polls')
     
     // Parse command to see if question is included
     const parsed = await parseCommand(messageText, history)
     
+    const baseQuestion = (parsed.verbatimText || parsed.extractedFields.content || '').trim()
+    
     // Check if question is provided
-    if (parsed.extractedFields.content) {
+    if (baseQuestion) {
       // Generate conversational poll question
-      const pollQuestion = await generatePollQuestion({ question: parsed.extractedFields.content })
+      const pollQuestion = await generatePollQuestion({
+        question: baseQuestion,
+        tone: parsed.extractedFields.tone,
+        verbatim: Boolean(parsed.verbatimText && parsed.constraints?.verbatimOnly)
+      })
       
       // Get workspace IDs
       const { getWorkspaceIds } = await import('@/lib/workspace')
@@ -677,14 +723,14 @@ async function handlePollCommand(
           draftCreated: true
         }
       }
-    } else {
-      // Ask for question
-      return {
-        response: "what would you like to ask in the poll?",
-        shouldSaveHistory: true,
-        metadata: {
-          intent: 'poll_command'
-        }
+    }
+    
+    // No question provided, ask for it
+    return {
+      response: "what would you like to ask in the poll?",
+      shouldSaveHistory: true,
+      metadata: {
+        intent: 'poll_command'
       }
     }
   } catch (err) {
@@ -916,16 +962,18 @@ async function handleControlCommand(
   
   if (/^(cancel|stop|never\s+mind|forget\s+it|discard)$/i.test(lower)) {
     // Delete drafts
-    await supabaseAdmin
-      ?.from('sms_announcement_draft')
-      .delete()
-      .eq('phone', phoneNumber)
-    
-    await supabaseAdmin
-      ?.from('sms_poll')
-      .update({ status: 'cancelled' } as any)
-      .eq('phone', phoneNumber)
-      .eq('status', 'draft')
+    if (supabaseAdmin) {
+      await supabaseAdmin
+        .from('sms_announcement_draft')
+        .delete()
+        .eq('phone', phoneNumber)
+      
+      await supabaseAdmin
+        .from('sms_poll')
+        .update({ status: 'cancelled' } as any)
+        .eq('phone', phoneNumber)
+        .eq('status', 'draft')
+    }
     
     return {
       response: "draft discarded",
@@ -1248,7 +1296,7 @@ async function handleQuery(
       response: "sorry, I encountered an error while processing your request.",
       shouldSaveHistory: true,
       metadata: {
-        intent: 'error'
+        intent: intentType
       }
     }
 

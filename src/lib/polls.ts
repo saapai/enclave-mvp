@@ -9,6 +9,63 @@ import { ENV } from './env';
 import { createAirtableFields, normalizePhoneForAirtable, upsertAirtableRecord } from './airtable';
 import { parsePollQuotes, hasQuotes } from './nlp/quotes';
 
+function normalizePollQuestionText(raw: string, verbatim = false): string {
+  let text = (raw || '').replace(/[“”]/g, '"').replace(/[‘’]/g, "'").trim();
+
+  if (!text) {
+    return 'yo are you coming?';
+  }
+
+  // Remove surrounding quotes if present
+  if ((text.startsWith('"') && text.endsWith('"')) || (text.startsWith("'") && text.endsWith("'"))) {
+    text = text.slice(1, -1).trim();
+  }
+
+  if (verbatim) {
+    return text;
+  }
+
+  const ensureQuestionMark = (value: string): string => {
+    const trimmed = value.trim();
+    return trimmed.endsWith('?') ? trimmed : `${trimmed}?`;
+  };
+
+  const addYoPrefix = (value: string): string => {
+    const trimmed = value.trim();
+    if (/^yo\b/i.test(trimmed)) {
+      return trimmed.replace(/^yo\s+/i, 'yo ').trim();
+    }
+    return `yo ${trimmed}`.replace(/^yo\s+yo\s+/i, 'yo ').trim();
+  };
+
+  const normalized = text.toLowerCase();
+  const questionStarterRegex = /^(yo|are|do|does|did|will|would|can|could|should|is|was|were|if|who|what|when|where|why|how|can you|can u|can ya|can y'all|can yall|can we|should we|would you|will you|could you)\b/;
+
+  if (questionStarterRegex.test(normalized) || text.includes('?')) {
+    let final = text.replace(/\s+\?/g, '?').trim();
+    final = ensureQuestionMark(final);
+    final = addYoPrefix(final);
+    return final;
+  }
+
+  if (/^(if|whether)\s+/i.test(normalized)) {
+    const rest = text.replace(/^(if|whether)\s+/i, '').trim();
+    let final = `yo can you ${rest}`;
+    final = ensureQuestionMark(final);
+    return final.replace(/\s+\?/g, '?');
+  }
+
+  if (/^(come|coming|can you come|can ya come|can u come|pull up|pulling up|show up|showing up|attend|attending|are you coming|are you able to)/i.test(normalized)) {
+    let final = addYoPrefix(text);
+    final = ensureQuestionMark(final);
+    return final.replace(/\s+\?/g, '?');
+  }
+
+  let final = `yo are you coming to ${text}`;
+  final = ensureQuestionMark(final);
+  return final.replace(/\s+\?/g, '?');
+}
+
 export interface PollDraft {
   id?: string;
   question: string;
@@ -106,113 +163,34 @@ Only return valid JSON, nothing else.`,
  * Generate conversational poll question based on details
  */
 export async function generatePollQuestion(
-  details: { question?: string; tone?: string },
+  details: { question?: string; tone?: string; verbatim?: boolean },
   previousDraft?: string
 ): Promise<string> {
   try {
-    let question = details.question || '';
-    
-    // CRITICAL: If question contains quotes, use quoted text VERBATIM
-    const quoteMatch = question.match(/"([^"]+)"/)
-    if (quoteMatch) {
-      question = quoteMatch[1] // Use exact quoted text
-      // Still make it conversational if needed
-      if (!question.match(/\?$/)) {
-        // Not a question - convert based on content
-        if (question.match(/^(is|are|do|does)\s+/i)) {
-          // Already starts with question word - just add "yo"
-          question = `yo ${question}`
-        } else {
-          // Statement-like - convert to question
-          question = `yo ${question}?`
-        }
-      } else {
-        // Already a question - just add "yo" if not present
-        if (!question.match(/^(yo|hey|sup)/i)) {
-          question = `yo ${question}`
-        }
-      }
-      return question
+    const candidate = (details.question || '').trim()
+    if (candidate.length > 0) {
+      return normalizePollQuestionText(candidate, details.verbatim === true)
     }
-    
-    // If it's short and specific, use it directly
-    const isShort = question.length < 200 && question.length > 5;
-    
-    if (isShort && !previousDraft) {
-      // Convert to conversational format
-      let draft = question.replace(/^["']|["']$/g, ''); // Remove outer quotes
-      
-      // If it's already a complete question, just ensure it's conversational
-      if (draft.match(/\?$/)) {
-        // Already a question - just ensure it starts casually
-        if (!draft.match(/^(yo|hey|sup|u |are you|you |who)/i)) {
-          draft = `yo ${draft}`;
-        }
-        return draft;
-      }
-      
-      // Check if it's a statement/topic that needs to be converted to a question
-      // Use pattern matching to extract the core topic
-      const topicMatch = draft.match(/^(if |whether |do |does )?(.+?)(\s+is\s+.+|\s+are\s+.+)?$/i);
-      
-      if (topicMatch) {
-        // Extract just the subject matter
-        let topic = topicMatch[2] || draft;
-        
-        // Common patterns to strip
-        topic = topic.replace(/^(people (think|believe|say|are saying|are thinking)|you think|we think)\s+/i, '');
-        
-        // If there's a predicate (is/are), keep it
-        const predicate = topicMatch[3] || '';
-        const fullTopic = (topic + predicate).trim();
-        
-        // Make it conversational
-        if (fullTopic.match(/^(ash|saathvik|[A-Z][a-z]+)\s+(is|are)/i)) {
-          // It's about a person/thing with a quality: "ash is hot" -> "yo is ash hot?"
-          // Rearrange: "ash is hot" -> "is ash hot"
-          const parts = fullTopic.match(/^(.+?)\s+(is|are)\s+(.+)$/i)
-          if (parts && parts.length === 4) {
-            draft = `yo is ${parts[1].toLowerCase()} ${parts[3]}?`
-          } else {
-            draft = `yo is ${fullTopic.toLowerCase()}?`
-          }
-        } else {
-          // It's an event/activity: "active meeting" -> "are you coming to active meeting"
-          draft = `yo are you coming to ${fullTopic}?`;
-        }
-      } else {
-        // Fallback: just make it conversational
-        draft = `yo are you coming to ${draft}`;
-      }
-      
-      return draft;
+
+    if (previousDraft && previousDraft.trim().length > 0) {
+      return normalizePollQuestionText(previousDraft)
     }
-    
-    // Otherwise, generate with AI based on tone
+
     const toneInstructions: Record<string, string> = {
       urgent: "make it urgent like 'need to know ASAP'",
       casual: "make it casual and friendly, like texting a friend",
-      neutral: "keep it straightforward and conversational"
-    };
+      neutral: 'keep it straightforward and conversational'
+    }
 
-    const tone = details.tone || 'casual';
-    const toneInstruction = toneInstructions[tone] || toneInstructions.casual;
+    const tone = details.tone || 'casual'
+    const toneInstruction = toneInstructions[tone] || toneInstructions.casual
 
-    const prompt = previousDraft
-      ? `Modify this poll question to ${toneInstruction}:
-
-Original: "${previousDraft}"
-
-New question (keep it conversational, under 160 chars, like texting a friend):`
-      : `Write a conversational poll question for: "${question}"
-
+    const prompt = `Write a conversational poll question.
 Style: ${toneInstruction}
 Keep it under 160 chars, conversational like texting a friend. Start with "yo" or similar.
-Make it a question asking if they're coming/attending.
+Ask if they are attending.`
 
-Question:`;
-
-    const aiUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'https://www.tryenclave.com'}/api/ai`;
+    const aiUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'https://www.tryenclave.com'}/api/ai`
     const aiRes = await fetch(aiUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -221,22 +199,20 @@ Question:`;
         context: '',
         type: 'general'
       })
-    });
+    })
 
     if (aiRes.ok) {
-      const aiData = await aiRes.json();
-      let draft = aiData.response || question || 'yo are you coming';
-      
-      // Remove quotes if present
-      draft = draft.replace(/^["']|["']$/g, '');
-      
-      return draft;
+      const aiData = await aiRes.json()
+      const draft = (aiData.response || '').replace(/^['"`]|['"`]$/g, '').trim()
+      if (draft.length > 0) {
+        return normalizePollQuestionText(draft)
+      }
     }
   } catch (err) {
-    console.error('[Polls] Failed to generate question:', err);
+    console.error('[Polls] Failed to generate question:', err)
   }
-  
-  return details.question || 'yo are you coming';
+
+  return 'yo are you coming?'
 }
 
 /**
@@ -635,9 +611,19 @@ Only return valid JSON, nothing else.`,
   const cleanMsg = message.replace(/[\u{1F300}-\u{1F9FF}]/gu, '').trim()
   const lowerCleanMsg = cleanMsg.toLowerCase()
   
+  const noOptionKeyword = /^(no|nope|nah|naw|n)\b/i
+  if (noOptionKeyword.test(lowerCleanMsg)) {
+    const noOption = options.find(opt => opt.toLowerCase() === 'no')
+    if (noOption) {
+      const remaining = cleanMsg.replace(noOptionKeyword, '').trim()
+      const notes = remaining.replace(/^(but|and|,)/i, '').trim()
+      return { option: noOption, notes: notes || undefined }
+    }
+  }
+  
   // Check for explicit "no" patterns (even with emojis)
-  if (/^(no|nope|nah|n)\s*[💔❤️💕😢😭😔]?$/i.test(message.trim()) || 
-      /^(no|nope|nah|n)\s*[💔❤️💕😢😭😔]?$/i.test(cleanMsg.trim())) {
+  if (/^(no|nope|nah|naw|n)\s*[💔❤️💕😢😭😔]?$/i.test(message.trim()) || 
+      /^(no|nope|nah|naw|n)\s*[💔❤️💕😢😭😔]?$/i.test(cleanMsg.trim())) {
     const noOption = options.find(opt => opt.toLowerCase() === 'no')
     if (noOption) {
       return { option: noOption }
