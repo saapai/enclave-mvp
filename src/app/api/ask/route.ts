@@ -125,6 +125,8 @@ export async function GET(request: NextRequest) {
     const systemPrompt = `You are a helpful assistant for a workspace. Answer the user's question using ONLY the provided context. If the answer isn't in the context, say you don't have that information. Keep answers concise.`
     const userPrompt = `Context:\n${context}\n\nQuestion: ${query}\n\nAnswer based strictly on the context above.`
 
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), 6000)
     const aiRes = await fetch('https://api.mistral.ai/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -139,8 +141,11 @@ export async function GET(request: NextRequest) {
         ],
         max_tokens: 500,
         temperature: 0.2,
-      })
+        stop: ['\n\n']
+      }),
+      signal: controller.signal
     })
+    clearTimeout(timeoutId)
 
     if (!aiRes.ok) {
       const errorData = await aiRes.text()

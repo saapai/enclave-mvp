@@ -128,7 +128,10 @@ CRITICAL TEMPORAL AWARENESS:
       userPrompt = `User query: ${safeQuery}\n\nContext available: ${safeContext || 'No specific context available'}\n\nRespond helpfully to the user's query. If you have relevant context, use it. If not, provide general helpful information about what you can do or suggest how they might find what they're looking for.`
     }
 
-    // Call Mistral API
+    // Call Mistral API with a hard timeout and conservative stop sequence
+    const controller = new AbortController()
+    const timeoutMs = Math.min(8000, Math.max(2000, type === 'summary' ? 6000 : 8000))
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
     const response = await fetch('https://api.mistral.ai/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -147,10 +150,13 @@ CRITICAL TEMPORAL AWARENESS:
             content: userPrompt
           }
         ],
-        max_tokens: maxTokens, // Dynamic token limit based on query type
-        temperature: type === 'summary' ? 0.4 : 0.7, // Slightly higher temp for naturalness, still focused
+        max_tokens: maxTokens,
+        temperature: type === 'summary' ? 0.4 : 0.7,
+        stop: ['\n\n'] // help avoid run-on generations
       }),
+      signal: controller.signal
     })
+    clearTimeout(timeoutId)
 
     if (!response.ok) {
       const errorData = await response.text()

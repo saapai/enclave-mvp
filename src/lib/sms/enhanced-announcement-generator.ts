@@ -169,6 +169,8 @@ ${timeInfo ? timeInfo + '\n' : ''}${dateInfo ? dateInfo + '\n' : ''}${locationIn
 
 Generate a brief, straightforward message (1-2 sentences). Use ONLY the information provided above. Do not invent details like event names, locations, descriptions, or emojis that weren't mentioned. Keep it simple and direct.`
 
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), 6000)
     const response = await fetch('https://api.mistral.ai/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -188,9 +190,12 @@ Generate a brief, straightforward message (1-2 sentences). Use ONLY the informat
           }
         ],
         temperature: 0.7,
-        max_tokens: 300
-      })
+        max_tokens: 300,
+        stop: ['\n\n']
+      }),
+      signal: controller.signal
     })
+    clearTimeout(timeoutId)
 
     if (!response.ok) {
       throw new Error(`Mistral API error: ${response.status}`)

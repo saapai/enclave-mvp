@@ -1273,6 +1273,17 @@ async function handleSmalltalk(
 - Capabilities: Knowledge retrieval, SMS messaging, announcements, polls, alerts, search
 - Target users: Student organizations, professional fraternities, small teams, clubs`
     
+    // Combine parent abort with a local timeout to avoid hangs
+    const localController = new AbortController()
+    const onAbort = () => localController.abort()
+    if (signal) {
+      if (signal.aborted) {
+        localController.abort()
+      } else {
+        signal.addEventListener('abort', onAbort)
+      }
+    }
+    const localTimeout = setTimeout(() => localController.abort(), 3000)
     const aiResponse = await fetch('https://api.mistral.ai/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -1314,9 +1325,15 @@ PERSONALITY RULES:
           }
         ],
         temperature: 0.8,
-        max_tokens: 150
-      })
+        max_tokens: 150,
+        stop: ['\n\n'] // keep SMS replies tight
+      }),
+      signal: localController.signal
     })
+    clearTimeout(localTimeout)
+    if (signal) {
+      signal.removeEventListener('abort', onAbort)
+    }
     
     throwIfAborted(signal, 'smalltalk:post-fetch')
     

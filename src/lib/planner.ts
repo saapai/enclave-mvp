@@ -83,6 +83,8 @@ export async function planQuery(
  */
 async function llmPlanQuery(query: string, spaceId: string): Promise<QueryPlan | null> {
   try {
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), 4000)
     const response = await fetch('https://api.mistral.ai/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -128,8 +130,10 @@ Return ONLY valid JSON with this exact structure:
         ],
         temperature: 0.1,
         max_tokens: 300
-      })
+      }),
+      signal: controller.signal
     })
+    clearTimeout(timeoutId)
 
     if (!response.ok) {
       console.error(`[Planner LLM] API error: ${response.status}`)

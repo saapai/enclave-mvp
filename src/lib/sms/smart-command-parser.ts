@@ -44,6 +44,8 @@ export async function parseCommand(
     : `Current message: "${message}"`
 
   try {
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), 6000)
     const response = await fetch('https://api.mistral.ai/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -108,9 +110,12 @@ Return ONLY valid JSON:
           }
         ],
         temperature: 0.1,
-        max_tokens: 800
-      })
+        max_tokens: 800,
+        stop: ['\n\n']
+      }),
+      signal: controller.signal
     })
+    clearTimeout(timeoutId)
 
     if (!response.ok) {
       throw new Error(`Mistral API error: ${response.status}`)

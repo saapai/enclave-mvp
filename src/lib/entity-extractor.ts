@@ -97,6 +97,8 @@ ${text.substring(0, 4000)}
 Return JSON only.`
 
   try {
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), 6000)
     const response = await fetch('https://api.mistral.ai/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -111,9 +113,12 @@ Return JSON only.`
         ],
         temperature: 0.3,
         max_tokens: 1000,
-        response_format: { type: 'json_object' }
-      })
+        response_format: { type: 'json_object' },
+        stop: ['\n\n']
+      }),
+      signal: controller.signal
     })
+    clearTimeout(timeoutId)
 
     if (!response.ok) {
       console.error('[Entity Extractor] API error:', response.status)
