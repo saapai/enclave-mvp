@@ -162,6 +162,36 @@ async function composeDirectResponse(
     }
   }
   
+  const fallbackFromResults = (reason: string): ExecuteResult => {
+    console.warn(`[Execute Answer] [${traceId}] ${reason}`)
+    const structured = selectEventAnswer(results, query, traceId)
+    if (structured) {
+      return { messages: [structured] }
+    }
+
+    const firstResult = results[0]
+    if (firstResult) {
+      const fields = extractEventFields(firstResult, query)
+      if (isAnswerable(fields)) {
+        return { messages: [formatEventAnswer(fields, query)] }
+      }
+
+      const rawPreview = ((firstResult as any)?.snippet as string)
+        || ((firstResult as any)?.summary as string)
+        || ((firstResult as any)?.body as string)
+        || ''
+      const preview = rawPreview.replace(/\s+/g, ' ').trim().slice(0, 200)
+      if (preview.length > 0) {
+        return { messages: [`${firstResult.title || 'This resource'} mentions: ${preview}`] }
+      }
+      return { messages: [`I found "${firstResult.title || 'a document'}" but couldn't extract the answer.`] }
+    }
+
+    return {
+      messages: ["I found some information but couldn't process it properly. Please try again."]
+    }
+  }
+
   try {
     const keywordSet = Array.from(
       new Set(
@@ -325,80 +355,137 @@ async function composeDirectResponse(
       ? combinedContext.substring(0, maxContextLength) + '...'
       : combinedContext
     
-    // Add timeout to Mistral API call to prevent hanging
-    const mistralController = new AbortController()
-    const mistralTimeout = setTimeout(() => mistralController.abort(), 3000) // 3 second timeout
-    
-    const response = await fetch('https://api.mistral.ai/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${ENV.MISTRAL_API_KEY}`
-      },
-      body: JSON.stringify({
-        model: 'mistral-small-latest',
-        messages: [
-          {
-            role: 'system',
-            content: 'You are a helpful assistant answering questions for a sorority/fraternity operations team. Provide ONE concise, direct answer using ONLY the provided search results. Answer EXACTLY what was asked - do not drift to related topics. For example, if asked "when is big little", answer about "Big Little", NOT "Big Little Appreciation". Do NOT repeat information. If you find date, time, or location, state it once clearly. If the answer is not in the results, say so briefly.'
-          },
-          {
-            role: 'user',
-            content: `Search Results:\n${truncatedContext}\n\nQuestion: ${query}\n\nProvide a single, concise answer (2-3 sentences max) that answers EXACTLY what was asked. Do NOT answer about related or similar events unless explicitly asked. Do NOT repeat the same information multiple times. If you find the answer, state it once clearly. If not found, say "I couldn't find that information."`
-          }
-        ],
-        temperature: 0.05,
-        max_tokens: 120
-      }),
-      signal: mistralController.signal
-    })
-    
-    clearTimeout(mistralTimeout)
-    
-    if (!response.ok) {
-      const errorText = await response.text()
-      console.error(`[Execute Answer] [${traceId}] Mistral API error:`, response.status, errorText)
+    const rawAnswer = await getChatAnswer(truncatedContext, query, traceId, results)
+
+    if (rawAnswer && rawAnswer.trim().length > 0) {
+      let trimmedAnswer = rawAnswer.trim()
+      const needsTemporalPrecision = /\bwhen\b|date|time/.test(query.toLowerCase())
+      const hasTemporalPrecision = /(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|\b\d{1,2}(st|nd|rd|th)?\b|\b\d{1,2}:\d{2}\b|\b(am|pm)\b)/i.test(trimmedAnswer)
+      if (needsTemporalPrecision && !hasTemporalPrecision) {
+        trimmedAnswer += '\n\nI didn\'t see a specific date or time in the docs—double-check with exec before announcing.'
+      }
+      console.log(`[Execute Answer] [${traceId}] Composed response: "${trimmedAnswer.substring(0, 100)}..."`)
       return {
-        messages: ["I found some information but couldn't process it properly. Please try again."]
+        messages: [trimmedAnswer]
       }
     }
-    
-    const data = await response.json()
-    const answer = data.choices?.[0]?.message?.content?.trim()
-    
-    if (!answer) {
-      console.error(`[Execute Answer] [${traceId}] LLM returned empty response`)
-      return {
-        messages: ["I found some information but couldn't formulate a good answer. Try asking differently."]
-      }
-    }
-    
-    let trimmedAnswer = answer.length > 0 ? answer : 'I located context but could not format a response in time.'
-    const needsTemporalPrecision = /\bwhen\b|date|time/.test(query.toLowerCase())
-    const hasTemporalPrecision = /(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|\b\d{1,2}(st|nd|rd|th)?\b|\b\d{1,2}:\d{2}\b|\b(am|pm)\b)/i.test(trimmedAnswer)
-    if (needsTemporalPrecision && !hasTemporalPrecision) {
-      trimmedAnswer += '\n\nI didn\'t see a specific date or time in the docs—double-check with exec before announcing.'
-    }
-    console.log(`[Execute Answer] [${traceId}] Composed response: "${trimmedAnswer.substring(0, 100)}..."`)
-    return {
-      messages: [trimmedAnswer]
-    }
+
+    return fallbackFromResults('Chat model unavailable, using fallback from search results')
     
   } catch (err: any) {
-    if (err.name === 'AbortError') {
-      console.error(`[Execute Answer] [${traceId}] Mistral API timed out after 3s`)
-      // Return a basic answer from the search results without LLM processing
-      const firstResult = results[0]
-      const title = firstResult?.title || 'the document'
-      return {
-        messages: [`I found information in "${title}" but the response took too long to generate. Try asking again or rephrase your question.`]
-      }
+    if (err?.name === 'AbortError') {
+      console.error(`[Execute Answer] [${traceId}] Chat model timed out`) 
+      return fallbackFromResults('Chat model timed out, using fallback from search results')
     }
     console.error(`[Execute Answer] [${traceId}] Error composing response:`, err)
-    return {
-      messages: ["I found some information but couldn't process it properly. Please try again."]
-    }
+    return fallbackFromResults('Error composing response, using fallback from search results')
   }
+}
+
+async function getChatAnswer(
+  truncatedContext: string,
+  query: string,
+  traceId: string,
+  results: SearchResult[]
+): Promise<string | null> {
+  const systemPrompt = 'You are a helpful assistant answering questions for a sorority/fraternity operations team. Provide ONE concise, direct answer using ONLY the provided search results. Answer EXACTLY what was asked - do not drift to related topics. For example, if asked "when is big little", answer about "Big Little", NOT "Big Little Appreciation". Do NOT repeat information. If you find date, time, or location, state it once clearly. If the answer is not in the results, say so briefly.'
+
+  const userPrompt = `Search Results:\n${truncatedContext}\n\nQuestion: ${query}\n\nProvide a single, concise answer (2-3 sentences max) that answers EXACTLY what was asked. Do NOT answer about related or similar events unless explicitly asked. Do NOT repeat the same information multiple times. If you find the answer, state it once clearly. If not found, say "I couldn't find that information."`
+
+  const messages = [
+    { role: 'system', content: systemPrompt },
+    { role: 'user', content: userPrompt }
+  ]
+
+  if (ENV.OPENAI_API_KEY) {
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), 3000)
+    try {
+      const response = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${ENV.OPENAI_API_KEY}`
+        },
+        body: JSON.stringify({
+          model: 'gpt-4o-mini',
+          messages,
+          temperature: 0.05,
+          max_tokens: 200
+        }),
+        signal: controller.signal
+      })
+      clearTimeout(timeoutId)
+
+      if (response.ok) {
+        const data = await response.json()
+        const answer = data.choices?.[0]?.message?.content?.trim()
+        if (answer) {
+          console.log(`[Execute Answer] [${traceId}] OpenAI chat success`)
+          return answer
+        }
+        console.warn(`[Execute Answer] [${traceId}] OpenAI returned empty response`)
+      } else {
+        const errorText = await response.text()
+        console.error(`[Execute Answer] [${traceId}] OpenAI error ${response.status}:`, errorText)
+      }
+    } catch (err: any) {
+      clearTimeout(timeoutId)
+      if (controller.signal.aborted) {
+        console.warn(`[Execute Answer] [${traceId}] OpenAI chat timed out (3s)`, err?.message || err)
+      } else {
+        console.error(`[Execute Answer] [${traceId}] OpenAI chat exception:`, err)
+      }
+    }
+  } else {
+    console.warn('[Execute Answer] OPENAI_API_KEY not set, skipping OpenAI chat')
+  }
+
+  if (ENV.MISTRAL_API_KEY) {
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), 3000)
+    try {
+      const response = await fetch('https://api.mistral.ai/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${ENV.MISTRAL_API_KEY}`
+        },
+        body: JSON.stringify({
+          model: 'mistral-small-latest',
+          messages,
+          temperature: 0.05,
+          max_tokens: 150
+        }),
+        signal: controller.signal
+      })
+      clearTimeout(timeoutId)
+
+      if (response.ok) {
+        const data = await response.json()
+        const answer = data.choices?.[0]?.message?.content?.trim()
+        if (answer) {
+          console.log(`[Execute Answer] [${traceId}] Mistral chat success`)
+          return answer
+        }
+        console.warn(`[Execute Answer] [${traceId}] Mistral returned empty response`)
+      } else {
+        const errorText = await response.text()
+        console.error(`[Execute Answer] [${traceId}] Mistral error ${response.status}:`, errorText)
+      }
+    } catch (err: any) {
+      clearTimeout(timeoutId)
+      if (controller.signal.aborted) {
+        console.warn(`[Execute Answer] [${traceId}] Mistral chat timed out (3s)`, err?.message || err)
+      } else {
+        console.error(`[Execute Answer] [${traceId}] Mistral chat exception:`, err)
+      }
+    }
+  } else {
+    console.warn('[Execute Answer] MISTRAL_API_KEY not set, skipping Mistral chat fallback')
+  }
+
+  return null
 }
 
 interface EventFields {
