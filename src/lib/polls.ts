@@ -156,7 +156,6 @@ export async function getPendingPollForPhone(
       .select(selectClause)
       .in('phone', candidates)
       .order('received_at', { ascending: false, nullsFirst: true })
-      .order('created_at', { ascending: false })
       .limit(1)
       .maybeSingle()
 
