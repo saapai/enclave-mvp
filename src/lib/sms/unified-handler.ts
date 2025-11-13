@@ -736,10 +736,14 @@ async function handlePollCommand(
       const spaceIds = await getWorkspaceIds()
       const workspaceId = spaceIds[0] || null
       
+      // Detect if poll is required (needs reason for "No")
+      const isRequired = /\b(required|mandatory|must|need to know)\b/i.test(messageText)
+      
       // Save draft
       await savePollDraft(phoneNumber, {
         question: pollQuestion,
         options: ['Yes', 'No', 'Maybe'],
+        requiresReason: isRequired,
         workspaceId: workspaceId || undefined
       }, workspaceId || '')
       
@@ -1059,6 +1063,73 @@ async function handlePollResponse(
       const formattedOptions = options.join(', ')
       return {
         response: `i didn't catch that. reply with one of: ${formattedOptions}. you can add details like "no, midterm" and i'll note it.`,
+        shouldSaveHistory: true,
+        metadata: {
+          intent: 'poll_response'
+        }
+      }
+    }
+    
+    // Check if poll requires reason for "No" responses
+    const isNoResponse = selectedOption.toLowerCase() === 'no'
+    const requiresReason = poll.requires_reason === true
+    const hasNotes = notes && notes.length > 0
+    
+    if (isNoResponse && requiresReason && !hasNotes) {
+      // Mark response as "awaiting_reason" so we know they already said "no"
+      const responsePhone = responseRecord.phone || fullPhoneNumber || phoneNumber
+      await supabaseAdmin
+        ?.from('sms_poll_response')
+        .upsert({
+          poll_id: poll.id,
+          phone: responsePhone,
+          option_index: options.indexOf(selectedOption),
+          option_label: selectedOption,
+          response_status: 'awaiting_reason'
+        } as any, {
+          onConflict: 'poll_id,phone'
+        } as any)
+      
+      return {
+        response: "got it — you can't make it. can you let me know why? (e.g., \"midterm\", \"work conflict\", etc.)",
+        shouldSaveHistory: true,
+        metadata: {
+          intent: 'poll_response'
+        }
+      }
+    }
+    
+    // If they're providing a reason after saying "no", update the existing response
+    if (responseRecord.response_status === 'awaiting_reason' && responseRecord.option_label?.toLowerCase() === 'no') {
+      // They already said "no", now they're providing the reason
+      const responsePhone = responseRecord.phone || fullPhoneNumber || phoneNumber
+      const personName = responseRecord.person_name || await getOrAskForName(responsePhone)
+      const saved = await recordPollResponse(poll.id, responsePhone, 'No', messageText, personName || undefined)
+      
+      if (!saved) {
+        return {
+          response: "couldn't record that reason. can you try again?",
+          shouldSaveHistory: true,
+          metadata: {
+            intent: 'poll_response'
+          }
+        }
+      }
+      
+      queueActionMemorySave(
+        phoneNumber,
+        {
+          type: 'poll_response_recorded',
+          details: {
+            pollQuestion: poll.question,
+            pollResponse: 'No'
+          }
+        },
+        'saveAction (poll_response_recorded)'
+      )
+      
+      return {
+        response: `got it — logged you as no. noted: ${messageText}. thanks for replying about "${poll.question}".`,
         shouldSaveHistory: true,
         metadata: {
           intent: 'poll_response'

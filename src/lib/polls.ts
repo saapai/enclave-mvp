@@ -71,6 +71,7 @@ type PollRecord = {
   question: string
   options: string[]
   status: string
+  requires_reason?: boolean | null
   airtable_question_field?: string | null
   airtable_response_field?: string | null
   airtable_notes_field?: string | null
@@ -142,6 +143,7 @@ export async function getPendingPollForPhone(
       question,
       options,
       status,
+      requires_reason,
       airtable_question_field,
       airtable_response_field,
       airtable_notes_field
@@ -178,6 +180,7 @@ export async function getPendingPollForPhone(
         question: data.poll.question,
         options: (data.poll.options as string[]) || ['Yes', 'No', 'Maybe'],
         status: data.poll.status,
+        requires_reason: data.poll.requires_reason,
         airtable_question_field: data.poll.airtable_question_field,
         airtable_response_field: data.poll.airtable_response_field,
         airtable_notes_field: data.poll.airtable_notes_field
@@ -204,6 +207,7 @@ export interface PollDraft {
   tone?: string;
   workspaceId?: string;
   airtableQuestionField?: string; // Track the dynamic Airtable field name for this poll
+  requiresReason?: boolean; // If true, "No" responses must include a reason
   createdAt?: string;
   updatedAt?: string;
 }
@@ -364,6 +368,7 @@ export async function savePollDraft(
         space_id: workspaceId,
         question: draft.question,
         options: draft.options,
+        requires_reason: draft.requiresReason || false,
         code: code,
         created_by: phoneNumber,
         status: 'draft',
