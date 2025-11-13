@@ -159,7 +159,9 @@ const POLL_RESPONSE_PATTERNS: RegExp[] = [
   /^(maybe|not sure|depends|possibly|might)(\b|!|\s|$)/i,
   /(i have|i've got|got)\s+(a\s+)?(conflict|midterm|exam|class|meeting)/i,
   /(i can|i can't|i cant|i will|i won't|ill|i'll)\s+(make it|come|be there|attend)/i,
-  /^(coming|i'm coming|im coming)(\s+to)?/i
+  /^(coming|i'm coming|im coming)(\s+to)?/i,
+  /(can't\s+(come|make it|attend|go)|cannot\s+(come|make it|attend|go))/i,
+  /(am i excused|can i be excused|excuse me|i need to be excused|i get excused)/i
 ]
 
 function isLikelyQuestion(text: string): boolean {

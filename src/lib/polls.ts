@@ -755,7 +755,27 @@ Only return valid JSON, nothing else.`,
       return { option: noOption, notes: notes || undefined }
     }
   }
-  
+
+  // Check for excused requests or can't make it statements
+  const noLikePatterns = [
+    /(can't|cant|cannot)\s+(come|make it|attend|go)/i,
+    /\bexcused\b/i,
+    /\bexcuse me\b/i,
+    /\bam i excused\b/i,
+    /\bcan i be excused\b/i
+  ]
+
+  for (const pattern of noLikePatterns) {
+    if (pattern.test(lowerCleanMsg)) {
+      const noOption = options.find(opt => opt.toLowerCase() === 'no')
+      if (noOption) {
+        // Remove leading question phrases for notes
+        const notes = cleanMsg.replace(pattern, '').replace(/^(please|can|could|may|am i|i'm|im)\s*/i, '').trim()
+        return { option: noOption, notes: notes || undefined }
+      }
+    }
+  }
+
   // Check for explicit "no" patterns (even with emojis)
   if (/^(no|nope|nah|naw|n)\s*[💔❤️💕😢😭😔]?$/i.test(message.trim()) || 
       /^(no|nope|nah|naw|n)\s*[💔❤️💕😢😭😔]?$/i.test(cleanMsg.trim())) {
