@@ -806,28 +806,52 @@ Only return valid JSON, nothing else.`,
  */
 export async function getOrAskForName(phone: string): Promise<string | null> {
   try {
+    // Normalize phone to match how it's stored (remove +1 prefix if present)
+    const normalizedPhone = phone.replace(/^\+?1?/, '')
+    
     // Check if we have a name in sms_poll_response
     const { data: existing } = await supabaseAdmin
       .from('sms_poll_response')
       .select('person_name')
-      .eq('phone', phone)
+      .eq('phone', normalizedPhone)
       .not('person_name', 'is', null)
       .limit(1)
       .maybeSingle();
 
     if (existing?.person_name) {
+      console.log(`[Polls] Found name in sms_poll_response: ${existing.person_name}`)
       return existing.person_name;
+    }
+
+    // Check sms_optin (where names are stored from SMS onboarding)
+    const { data: optIn } = await supabaseAdmin
+      .from('sms_optin')
+      .select('name')
+      .eq('phone', normalizedPhone)
+      .not('name', 'is', null)
+      .limit(1)
+      .maybeSingle();
+
+    if (optIn?.name && optIn.name !== normalizedPhone) {
+      console.log(`[Polls] Found name in sms_optin: ${optIn.name}`)
+      return optIn.name;
     }
 
     // Check app_user
     const { data: appUser } = await supabaseAdmin
       .from('app_user')
       .select('name')
-      .ilike('phone', `%${phone.slice(-10)}%`)
+      .ilike('phone', `%${normalizedPhone.slice(-10)}%`)
       .limit(1)
       .maybeSingle();
 
-    return appUser?.name || null;
+    if (appUser?.name) {
+      console.log(`[Polls] Found name in app_user: ${appUser.name}`)
+      return appUser.name;
+    }
+
+    console.log(`[Polls] No name found for phone: ${normalizedPhone}`)
+    return null;
   } catch (err) {
     console.error('[Polls] Failed to get name:', err);
     return null;
