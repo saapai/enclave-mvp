@@ -325,6 +325,10 @@ async function composeDirectResponse(
       ? combinedContext.substring(0, maxContextLength) + '...'
       : combinedContext
     
+    // Add timeout to Mistral API call to prevent hanging
+    const mistralController = new AbortController()
+    const mistralTimeout = setTimeout(() => mistralController.abort(), 3000) // 3 second timeout
+    
     const response = await fetch('https://api.mistral.ai/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -345,8 +349,11 @@ async function composeDirectResponse(
         ],
         temperature: 0.05,
         max_tokens: 120
-      })
+      }),
+      signal: mistralController.signal
     })
+    
+    clearTimeout(mistralTimeout)
     
     if (!response.ok) {
       const errorText = await response.text()
@@ -377,7 +384,16 @@ async function composeDirectResponse(
       messages: [trimmedAnswer]
     }
     
-  } catch (err) {
+  } catch (err: any) {
+    if (err.name === 'AbortError') {
+      console.error(`[Execute Answer] [${traceId}] Mistral API timed out after 3s`)
+      // Return a basic answer from the search results without LLM processing
+      const firstResult = results[0]
+      const title = firstResult?.title || 'the document'
+      return {
+        messages: [`I found information in "${title}" but the response took too long to generate. Try asking again or rephrase your question.`]
+      }
+    }
     console.error(`[Execute Answer] [${traceId}] Error composing response:`, err)
     return {
       messages: ["I found some information but couldn't process it properly. Please try again."]
