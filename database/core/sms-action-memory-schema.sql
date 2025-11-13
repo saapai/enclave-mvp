@@ -31,3 +31,4 @@ $$ LANGUAGE plpgsql;
 COMMENT ON TABLE sms_action_memory IS 'Stores recent actions for SMS users to enable contextual responses about past actions';
 
 
+

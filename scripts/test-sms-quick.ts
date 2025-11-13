@@ -1,6 +1,5 @@
 import fs from 'fs'
 import path from 'path'
-import { loadEnvConfig } from '@next/env'
 
 function loadEnvLocal(): void {
   const envPath = path.join(process.cwd(), '.env.local')
@@ -20,7 +19,6 @@ function loadEnvLocal(): void {
 }
 
 loadEnvLocal()
-loadEnvConfig(process.cwd(), true)
 
 if (process.env.SUPABASE_URL && !process.env.NEXT_PUBLIC_SUPABASE_URL) {
   process.env.NEXT_PUBLIC_SUPABASE_URL = process.env.SUPABASE_URL
@@ -29,28 +27,18 @@ if (process.env.SUPABASE_ANON_KEY && !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY)
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY
 }
 
-const envStatus = {
-  NEXT_PUBLIC_SUPABASE_URL: Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL),
-  NEXT_PUBLIC_SUPABASE_ANON_KEY: Boolean(process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY),
-  SUPABASE_SERVICE_ROLE_KEY: Boolean(process.env.SUPABASE_SERVICE_ROLE_KEY)
-}
-console.log('Supabase env status:', envStatus)
-
 const TEST_PHONE = '3853687238'
 const TEST_PHONE_E164 = '+13853687238'
 
 const QUERIES = [
-  'When is active meeting',
   'When is big little',
-  'When is big little appreciation',
   'When is ae summons',
-  'Explain big little',
-  'When is study hall'
+  'When is active meeting'
 ]
 
 async function run(): Promise<void> {
   const { handleSMSMessage } = await import('../src/lib/sms/unified-handler')
-  console.log('Running SMS pipeline test...')
+  console.log('Running quick SMS pipeline test...\n')
   for (const query of QUERIES) {
     const start = Date.now()
     try {
@@ -60,13 +48,12 @@ async function run(): Promise<void> {
         query
       )
       const duration = Date.now() - start
-      console.log(`\n=== ${query} ===`)
-      console.log(`Duration: ${duration}ms`)
-      console.log('Response:')
-      console.log(result.response)
+      console.log(`✓ ${query}`)
+      console.log(`  Duration: ${duration}ms`)
+      console.log(`  Response: ${result.response}\n`)
     } catch (err) {
-      console.error(`\n=== ${query} ===`)
-      console.error('Error:', err)
+      console.error(`✗ ${query}`)
+      console.error(`  Error:`, err, '\n')
     }
   }
 }
@@ -75,3 +62,4 @@ run().catch((err) => {
   console.error('Test run failed:', err)
   process.exit(1)
 })
+

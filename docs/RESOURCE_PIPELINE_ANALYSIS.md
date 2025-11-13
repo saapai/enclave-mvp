@@ -650,3 +650,4 @@ console.log('[Answer] Composition:', {
 - FTS function: `database/fixes/fix-resource-created-by-type.sql` (lines 57-100)
 - Vector function: `database/core/supabase-vector-function.sql`
 
+

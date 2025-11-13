@@ -336,15 +336,15 @@ async function composeDirectResponse(
         messages: [
           {
             role: 'system',
-            content: 'You are a helpful assistant answering questions for a sorority/fraternity operations team. Provide ONE concise, direct answer using ONLY the provided search results. Do NOT repeat information. If you find date, time, or location, state it once clearly. If the answer is not in the results, say so briefly.'
+            content: 'You are a helpful assistant answering questions for a sorority/fraternity operations team. Provide ONE concise, direct answer using ONLY the provided search results. Answer EXACTLY what was asked - do not drift to related topics. For example, if asked "when is big little", answer about "Big Little", NOT "Big Little Appreciation". Do NOT repeat information. If you find date, time, or location, state it once clearly. If the answer is not in the results, say so briefly.'
           },
           {
             role: 'user',
-            content: `Search Results:\n${truncatedContext}\n\nQuestion: ${query}\n\nProvide a single, concise answer (2-3 sentences max). Do NOT repeat the same information multiple times. If you find the answer, state it once clearly. If not found, say "I couldn't find that information."`
+            content: `Search Results:\n${truncatedContext}\n\nQuestion: ${query}\n\nProvide a single, concise answer (2-3 sentences max) that answers EXACTLY what was asked. Do NOT answer about related or similar events unless explicitly asked. Do NOT repeat the same information multiple times. If you find the answer, state it once clearly. If not found, say "I couldn't find that information."`
           }
         ],
-        temperature: 0.1,
-        max_tokens: 150
+        temperature: 0.05,
+        max_tokens: 120
       })
     })
     

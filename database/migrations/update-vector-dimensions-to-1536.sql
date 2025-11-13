@@ -153,3 +153,4 @@ WHERE attrelid = 'resource_chunk'::regclass
 
 -- Expected output: dimension = 1536 for both tables
 
+

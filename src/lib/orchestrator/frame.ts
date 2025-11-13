@@ -264,6 +264,7 @@ async function determineMode(
   }
   
   // If draft exists and ready to send, check if we're in confirm mode
+  // BUT: if user is asking an explicit question, always return IDLE regardless of drafts
   if (activeDraft || activePollDraft) {
     // Check if last bot message was asking to confirm send
     const lowerLastBot = lastBotMessage.toLowerCase()
@@ -291,8 +292,7 @@ async function determineMode(
       }
     }
     
-    // Otherwise, if draft exists and user is NOT asking a question, we're in input mode
-    // But if user IS asking a question, treat as IDLE (query) instead
+    // If draft exists but user is NOT asking a question, we're in input mode
     if (activeDraft) {
       return {
         mode: 'ANNOUNCEMENT_INPUT',

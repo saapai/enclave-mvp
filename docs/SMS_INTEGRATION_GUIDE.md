@@ -202,3 +202,4 @@ AIRTABLE_TABLE_NAME=your_table_name
 5. Add more features (scheduling, templates, etc.)
 
 
+

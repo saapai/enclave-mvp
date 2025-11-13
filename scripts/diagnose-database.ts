@@ -187,3 +187,4 @@ diagnoseDatabase()
     process.exit(1)
   })
 
+

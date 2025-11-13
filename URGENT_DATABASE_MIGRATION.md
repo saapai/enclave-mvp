@@ -181,3 +181,4 @@ This will regenerate all embeddings with the correct 1536 dimensions.
 
 **DO THIS NOW** before testing any more queries!
 
+

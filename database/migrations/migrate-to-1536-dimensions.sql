@@ -119,3 +119,4 @@ GRANT SELECT ON resource_chunk TO authenticated;
 -- Done! Now run: npx tsx scripts/reembed-with-1536-dims.ts
 -- to regenerate all embeddings with the correct dimensions
 
+

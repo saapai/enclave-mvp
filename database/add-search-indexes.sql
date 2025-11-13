@@ -28,3 +28,4 @@ FROM pg_indexes
 WHERE tablename = 'resource'
 ORDER BY indexname;
 
+
