@@ -360,9 +360,9 @@ export async function POST(request: NextRequest) {
     const needsName = optInDataAll?.needs_name === true || (optInDataAll && (!optInDataAll.name || optInDataAll.name.trim().length === 0))
     
     // Skip name collection for poll responses - let unified handler deal with them
-    const lowerBody = (body || '').trim().toLowerCase()
-    const looksLikePollResponse = /^(yes|yeah|yep|ya|y|no|nope|nah|naw|n|maybe|not sure|coming)(\s|!|$)/i.test(lowerBody) ||
-                                  /^(i can'?t|i won'?t|i will|i'll|i have|i've got|i'?m coming)/i.test(lowerBody)
+    const normalizedBody = (body || '').trim().toLowerCase()
+    const looksLikePollResponse = /^(yes|yeah|yep|ya|y|no|nope|nah|naw|n|maybe|not sure|coming)(\s|!|$)/i.test(normalizedBody) ||
+                                  /^(i can'?t|i won'?t|i will|i'll|i have|i've got|i'?m coming)/i.test(normalizedBody)
     
     if (looksLikePollResponse) {
       console.log(`[Name Collection] Skipping name collection - detected poll response: "${body.substring(0, 50)}"`)
