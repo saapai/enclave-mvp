@@ -586,6 +586,29 @@ async function handleNameDeclaration(
   fullPhoneNumber: string,
   messageText: string
 ): Promise<HandlerResult> {
+  // If we got here via intent classification, trust that it's a name
+  // Extract the name by cleaning up the message
+  let extractedName = messageText.trim()
+  
+  // Remove common prefixes
+  extractedName = extractedName
+    .replace(/^(i'?m|i\s+am|my\s+name\s+is|call\s+me|this\s+is)\s+/i, '')
+    .trim()
+  
+  // If it's a single word and looks like a name (letters only, capitalized or not)
+  if (extractedName && /^[a-zA-Z]+$/.test(extractedName)) {
+    // Capitalize first letter
+    const name = extractedName.charAt(0).toUpperCase() + extractedName.slice(1).toLowerCase()
+    
+    const result = await handleNameInWelcome(phoneNumber, name, fullPhoneNumber)
+    return {
+      response: result.message,
+      shouldSaveHistory: true,
+      metadata: { welcomeComplete: result.complete }
+    }
+  }
+  
+  // Fallback: try the AI check
   const nameCheck = await checkNameDeclaration(messageText)
   if (nameCheck.isName && nameCheck.name) {
     const result = await handleNameInWelcome(phoneNumber, nameCheck.name, fullPhoneNumber)
