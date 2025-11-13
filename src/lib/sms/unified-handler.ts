@@ -17,6 +17,7 @@ import { checkActionQuery, saveAction, type ActionMemory } from './action-memory
 import { supabaseAdmin } from '@/lib/supabase'
 import type { HandleTurnResult } from '@/lib/orchestrator/handleTurn'
 import { splitLongMessage } from '@/lib/text/limits'
+import type { PendingPollContext } from '@/lib/polls'
 // Name declaration is handled inline
 
 const ACTION_MEMORY_TIMEOUT_MS = 150
@@ -152,6 +153,14 @@ function isStatusFollowUp(text: string): boolean {
 
 const QUESTION_PREFIX = /^(when|what|who|where|why|how|which|is|are|was|were|do|does|did|will|would|should|can|could|answer|tell me)  *./
 
+const POLL_RESPONSE_PATTERNS: RegExp[] = [
+  /^(yes|yeah|yep|ya|y|sure|of course|count me in|ill be there|i'll be there|i can make it)(\b|!)/i,
+  /^(no|nope|nah|naw|n|can't|cant|cannot|won't|will not|i'm out|im out|i can't)(\b|!)/i,
+  /^(maybe|not sure|depends|possibly|might)(\b|!)/i,
+  /(i have|i've got|got)\s+(a\s+)?(conflict|midterm|exam|class|meeting)/i,
+  /(i can|i can't|i cant|i will|i won't|ill|i'll)\s+(make it|come|be there|attend)/i
+]
+
 function isLikelyQuestion(text: string): boolean {
   const normalized = text.trim().toLowerCase()
   if (!normalized) return false
@@ -162,7 +171,7 @@ function isLikelyQuestion(text: string): boolean {
 function detectPollCommand(message: string, history: ConversationMessage[]): boolean {
   const lower = message.trim().toLowerCase()
   if (!lower) return false
-  if (!(/poll\b/.test(lower) || /\bsurvey\b/.test(lower))) {
+  if (!(/\bpoll\b/.test(lower) || /\bsurvey\b/.test(lower))) {
     return false
   }
 
@@ -187,6 +196,15 @@ function detectPollCommand(message: string, history: ConversationMessage[]): boo
   ]
 
   return pollCommandPatterns.some((regex) => regex.test(lower))
+}
+
+function isLikelyPollResponse(text: string): boolean {
+  const normalized = text.trim().toLowerCase()
+  if (!normalized) return false
+  if (normalized.length <= 3 && /^(y|n)$/i.test(normalized)) {
+    return true
+  }
+  return POLL_RESPONSE_PATTERNS.some(regex => regex.test(normalized))
 }
 
 function queueActionMemorySave(
@@ -322,6 +340,16 @@ export async function handleSMSMessage(
   }
 
   throwIfAborted(signal, 'pre-intent')
+
+  // Heuristic: quick poll response detection for pending polls
+  if (isLikelyPollResponse(messageText)) {
+    const { getPendingPollForPhone } = await import('@/lib/polls')
+    const pendingPollContext = await getPendingPollForPhone(phoneNumber, fullPhoneNumber)
+    if (pendingPollContext) {
+      console.log('[UnifiedHandler] Poll response detected via heuristic, processing without LLM')
+      return await handlePollResponse(phoneNumber, fullPhoneNumber, messageText, pendingPollContext)
+    }
+  }
 
   console.log(`[UnifiedHandler] Welcome flow check done, proceeding to intent classification`)
 
@@ -488,7 +516,7 @@ export async function handleSMSMessage(
       return handleControlCommand(phoneNumber, messageText)
 
     case 'poll_response':
-      return handlePollResponse(phoneNumber, messageText)
+      return handlePollResponse(phoneNumber, fullPhoneNumber, messageText)
 
     case 'random_conversation':
       return handleSmalltalk(messageText, history, signal)
@@ -963,14 +991,15 @@ async function handleControlCommand(
   if (/^(cancel|stop|never\s+mind|forget\s+it|discard)$/i.test(lower)) {
     // Delete drafts
     if (supabaseAdmin) {
-      await supabaseAdmin
+      const admin = supabaseAdmin as any
+      await admin
         .from('sms_announcement_draft')
         .delete()
         .eq('phone', phoneNumber)
       
-      await supabaseAdmin
+      await admin
         .from('sms_poll')
-        .update({ status: 'cancelled' } as any)
+        .update({ status: 'cancelled' })
         .eq('phone', phoneNumber)
         .eq('status', 'draft')
     }
@@ -995,16 +1024,22 @@ async function handleControlCommand(
  */
 async function handlePollResponse(
   phoneNumber: string,
-  messageText: string
+  fullPhoneNumber: string,
+  messageText: string,
+  prefetchedContext?: PendingPollContext | null
 ): Promise<HandlerResult> {
   try {
-    const { recordPollResponse, getActivePollDraft, parseResponseWithNotes } = await import('@/lib/polls')
+    const {
+      recordPollResponse,
+      getPendingPollForPhone,
+      parseResponseWithNotes,
+      getOrAskForName
+    } = await import('@/lib/polls')
     
-    // Get active poll
-    const activePoll = await getActivePollDraft(phoneNumber)
-    if (!activePoll || !activePoll.id) {
+    const pollContext = prefetchedContext ?? await getPendingPollForPhone(phoneNumber, fullPhoneNumber)
+    if (!pollContext) {
       return {
-        response: "i don't see an active poll. create one first!",
+        response: "i don't see an active poll right now. hang tight for the next one!",
         shouldSaveHistory: true,
         metadata: {
           intent: 'poll_response'
@@ -1012,45 +1047,63 @@ async function handlePollResponse(
       }
     }
     
-    // Parse response
-    const { option, notes } = await parseResponseWithNotes(messageText, activePoll.options || ['Yes', 'No', 'Maybe'])
+    const poll = pollContext.poll
+    const responseRecord = pollContext.response
+    const options = (poll.options && poll.options.length > 0) ? poll.options : ['Yes', 'No', 'Maybe']
     
-    // Record response
-    const success = await recordPollResponse(
-      activePoll.id,
-      phoneNumber,
-      option,
-      notes
-    )
+    const parsed = await parseResponseWithNotes(messageText, options)
+    const selectedOption = (parsed.option || '').trim()
+    const notes = parsed.notes?.trim()
     
-    if (success) {
-      // Save action memory asynchronously
-      queueActionMemorySave(
-        phoneNumber,
-        {
-          type: 'poll_response_recorded',
-          details: {
-            pollQuestion: activePoll.question,
-            pollResponse: option
-          }
-        },
-        'saveAction (poll_response_recorded)'
-      )
-      
+    if (!selectedOption) {
+      const formattedOptions = options.join(', ')
       return {
-        response: "got it! thanks for responding.",
+        response: `i didn't catch that. reply with one of: ${formattedOptions}. you can add details like "no, midterm" and i'll note it.`,
         shouldSaveHistory: true,
         metadata: {
           intent: 'poll_response'
         }
       }
-    } else {
+    }
+    
+    const responsePhone = responseRecord.phone || fullPhoneNumber || phoneNumber
+    const personName = responseRecord.person_name || await getOrAskForName(responsePhone)
+    const saved = await recordPollResponse(poll.id, responsePhone, selectedOption, notes, personName || undefined)
+    
+    if (!saved) {
       return {
-        response: "couldn't record your response. please try again.",
+        response: "couldn't record that response. can you try again in a sec?",
         shouldSaveHistory: true,
         metadata: {
           intent: 'poll_response'
         }
+      }
+    }
+    
+    queueActionMemorySave(
+      phoneNumber,
+      {
+        type: 'poll_response_recorded',
+        details: {
+          pollQuestion: poll.question,
+          pollResponse: selectedOption
+        }
+      },
+      'saveAction (poll_response_recorded)'
+    )
+    
+    const optionLower = selectedOption.toLowerCase()
+    const ackParts: string[] = [`got it — logged you as ${optionLower}.`]
+    if (notes) {
+      ackParts.push(`noted: ${notes}.`)
+    }
+    ackParts.push(`thanks for replying about "${poll.question}".`)
+    
+    return {
+      response: ackParts.join(' '),
+      shouldSaveHistory: true,
+      metadata: {
+        intent: 'poll_response'
       }
     }
   } catch (err) {

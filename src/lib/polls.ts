@@ -66,6 +66,137 @@ function normalizePollQuestionText(raw: string, verbatim = false): string {
   return final.replace(/\s+\?/g, '?');
 }
 
+type PollRecord = {
+  id: string
+  question: string
+  options: string[]
+  status: string
+  airtable_question_field?: string | null
+  airtable_response_field?: string | null
+  airtable_notes_field?: string | null
+}
+
+export type PendingPollContext = {
+  poll: PollRecord
+  response: {
+    poll_id: string
+    phone: string
+    response_status?: string | null
+    option_index?: number | null
+    option_label?: string | null
+    notes?: string | null
+    person_name?: string | null
+  }
+}
+
+function normalizePhoneCandidates(lastTen: string, fullPhone?: string): string[] {
+  const candidates = new Set<string>()
+  const cleanDigits = lastTen.replace(/[^\d]/g, '')
+  if (cleanDigits.length >= 10) {
+    const last10 = cleanDigits.slice(-10)
+    candidates.add(last10)
+    candidates.add(`+1${last10}`)
+  } else if (cleanDigits.length > 0) {
+    candidates.add(cleanDigits)
+  }
+
+  if (fullPhone) {
+    candidates.add(fullPhone)
+    const fullDigits = fullPhone.replace(/[^\d]/g, '')
+    if (fullDigits.length >= 10) {
+      const last10 = fullDigits.slice(-10)
+      candidates.add(last10)
+      if (!fullPhone.startsWith('+')) {
+        candidates.add(`+1${last10}`)
+      }
+    }
+  }
+
+  return Array.from(candidates).filter(Boolean)
+}
+
+export async function getPendingPollForPhone(
+  phoneNumber: string,
+  fullPhoneNumber?: string
+): Promise<PendingPollContext | null> {
+  if (!supabaseAdmin) {
+    console.error('[Polls] Supabase admin client not available for getPendingPollForPhone')
+    return null
+  }
+
+  const candidates = normalizePhoneCandidates(phoneNumber, fullPhoneNumber)
+  if (candidates.length === 0) {
+    return null
+  }
+
+  const selectClause = `
+    poll_id,
+    phone,
+    response_status,
+    option_index,
+    option_label,
+    notes,
+    person_name,
+    poll:sms_poll (
+      id,
+      question,
+      options,
+      status,
+      airtable_question_field,
+      airtable_response_field,
+      airtable_notes_field
+    )
+  `
+
+  const fetchLatest = async (pendingOnly: boolean) => {
+    let query = supabaseAdmin
+      .from('sms_poll_response')
+      .select(selectClause)
+      .in('phone', candidates)
+      .order('received_at', { ascending: false, nullsFirst: true })
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+
+    if (pendingOnly) {
+      query = query.eq('response_status', 'pending')
+    }
+
+    const { data, error } = await query
+    if (error) {
+      console.error('[Polls] Failed to fetch pending poll for phone:', error)
+      return null
+    }
+
+    if (!data || !data.poll || data.poll.status !== 'sent') {
+      return null
+    }
+
+    return {
+      poll: {
+        id: data.poll.id,
+        question: data.poll.question,
+        options: (data.poll.options as string[]) || ['Yes', 'No', 'Maybe'],
+        status: data.poll.status,
+        airtable_question_field: data.poll.airtable_question_field,
+        airtable_response_field: data.poll.airtable_response_field,
+        airtable_notes_field: data.poll.airtable_notes_field
+      },
+      response: {
+        poll_id: data.poll_id,
+        phone: data.phone,
+        response_status: data.response_status,
+        option_index: data.option_index,
+        option_label: data.option_label,
+        notes: data.notes,
+        person_name: data.person_name
+      }
+    } satisfies PendingPollContext
+  }
+
+  return (await fetchLatest(true)) || (await fetchLatest(false))
+}
+
 export interface PollDraft {
   id?: string;
   question: string;
