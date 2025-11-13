@@ -154,11 +154,12 @@ function isStatusFollowUp(text: string): boolean {
 const QUESTION_PREFIX = /^(when|what|who|where|why|how|which|is|are|was|were|do|does|did|will|would|should|can|could|answer|tell me)  *./
 
 const POLL_RESPONSE_PATTERNS: RegExp[] = [
-  /^(yes|yeah|yep|ya|y|sure|of course|count me in|ill be there|i'll be there|i can make it)(\b|!)/i,
-  /^(no|nope|nah|naw|n|can't|cant|cannot|won't|will not|i'm out|im out|i can't)(\b|!)/i,
-  /^(maybe|not sure|depends|possibly|might)(\b|!)/i,
+  /^(yes|yeah|yep|ya|y|sure|of course|count me in|ill be there|i'll be there|i can make it|coming|i'm coming|im coming)(\b|!|\s|$)/i,
+  /^(no|nope|nah|naw|n|can't|cant|cannot|won't|will not|i'm out|im out|i can't)(\b|!|\s|$)/i,
+  /^(maybe|not sure|depends|possibly|might)(\b|!|\s|$)/i,
   /(i have|i've got|got)\s+(a\s+)?(conflict|midterm|exam|class|meeting)/i,
-  /(i can|i can't|i cant|i will|i won't|ill|i'll)\s+(make it|come|be there|attend)/i
+  /(i can|i can't|i cant|i will|i won't|ill|i'll)\s+(make it|come|be there|attend)/i,
+  /^(coming|i'm coming|im coming)(\s+to)?/i
 ]
 
 function isLikelyQuestion(text: string): boolean {

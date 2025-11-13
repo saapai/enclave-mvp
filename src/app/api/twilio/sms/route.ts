@@ -361,19 +361,19 @@ export async function POST(request: NextRequest) {
     
     // Skip name collection for poll responses - let unified handler deal with them
     const lowerBody = (body || '').trim().toLowerCase()
-    const isPollResponse = /^(yes|yeah|yep|ya|y|no|nope|nah|naw|n|maybe|not sure)(\s|!|$)/i.test(lowerBody) ||
-                          /^(i can'?t|i won'?t|i will|i'll|i have|i've got)/i.test(lowerBody)
+    const looksLikePollResponse = /^(yes|yeah|yep|ya|y|no|nope|nah|naw|n|maybe|not sure|coming)(\s|!|$)/i.test(lowerBody) ||
+                                  /^(i can'?t|i won'?t|i will|i'll|i have|i've got|i'?m coming)/i.test(lowerBody)
     
-    if (isPollResponse) {
+    if (looksLikePollResponse) {
       console.log(`[Name Collection] Skipping name collection - detected poll response: "${body.substring(0, 50)}"`)
     }
     
-    console.log(`[Name Collection] Checking user: phone=${phoneNumber}, isTrulyNewUser=${isTrulyNewUser}, needsName=${needsName}, isPollResponse=${isPollResponse}`)
+    console.log(`[Name Collection] Checking user: phone=${phoneNumber}, isTrulyNewUser=${isTrulyNewUser}, needsName=${needsName}, looksLikePollResponse=${looksLikePollResponse}`)
     if (optInDataAll) {
       console.log(`[Name Collection] optInDataAll: needs_name=${optInDataAll.needs_name}, name="${optInDataAll.name || 'null'}"`)
     }
     
-    if (isTrulyNewUser && !isPollResponse) {
+    if (isTrulyNewUser && !looksLikePollResponse) {
       console.log(`[Name Collection] Brand new user ${phoneNumber}, sending intro and asking for name`)
       
       // Auto-opt in the user with needs_name status
@@ -463,7 +463,7 @@ export async function POST(request: NextRequest) {
     
     // Check if existing user needs to provide name (including those who slipped through)
     // But skip if it's a poll response
-    if (needsName && !isPollResponse) {
+    if (needsName && !looksLikePollResponse) {
       console.log(`[Name Collection] User ${phoneNumber} needs to provide name`)
       
       // Ensure user exists in Airtable (create row if not exists, even without name)
