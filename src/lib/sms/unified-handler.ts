@@ -344,6 +344,17 @@ export async function handleSMSMessage(
 
   throwIfAborted(signal, 'pre-intent')
 
+  try {
+    const { getPendingPollForPhone } = await import('@/lib/polls')
+    const pendingPollContext = await getPendingPollForPhone(phoneNumber, fullPhoneNumber)
+    if (pendingPollContext?.response?.response_status === 'awaiting_reason') {
+      console.log('[UnifiedHandler] Poll awaiting reason detected, routing message as poll response')
+      return await handlePollResponse(phoneNumber, fullPhoneNumber, messageText, pendingPollContext)
+    }
+  } catch (err) {
+    console.error('[UnifiedHandler] Failed to check awaiting poll reason:', err)
+  }
+
   // Heuristic: quick poll response detection for pending polls
   if (isLikelyPollResponse(messageText)) {
     const { getPollContextForMessage } = await import('@/lib/polls')

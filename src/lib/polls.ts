@@ -262,6 +262,7 @@ export async function getPollContextForMessage(
 
   const textLower = trimmed.toLowerCase()
   const tokens = extractMeaningfulPollTokens(textLower)
+  const phoneCandidates = normalizePhoneCandidates(phoneNumber, fullPhoneNumber)
 
   try {
     const { data: polls, error } = await supabaseAdmin
@@ -304,19 +305,49 @@ export async function getPollContextForMessage(
       return null
     }
 
-    const responsePhone = normalizeE164(fullPhoneNumber || phoneNumber)
-
-    await supabaseAdmin
+    const { data: existingResponse, error: existingError } = await supabaseAdmin
       .from('sms_poll_response')
-      .upsert({
+      .select('poll_id, phone, response_status, option_index, option_label, notes, person_name')
+      .eq('poll_id', bestPoll.id)
+      .in('phone', phoneCandidates)
+      .order('received_at', { ascending: false, nullsLast: true })
+      .limit(1)
+      .maybeSingle()
+
+    if (existingError) {
+      console.error('[Polls] Failed to load existing poll response for message context:', existingError)
+    }
+
+    let responsePhone = normalizeE164(fullPhoneNumber || phoneNumber)
+    let responseRecord = existingResponse
+
+    if (existingResponse?.phone) {
+      responsePhone = existingResponse.phone
+    }
+
+    if (!responseRecord) {
+      await supabaseAdmin
+        .from('sms_poll_response')
+        .upsert({
+          poll_id: bestPoll.id,
+          phone: responsePhone,
+          option_index: -1,
+          option_label: '',
+          response_status: 'pending'
+        } as any, {
+          onConflict: 'poll_id,phone'
+        } as any)
+
+      responseRecord = {
         poll_id: bestPoll.id,
         phone: responsePhone,
+        response_status: 'pending',
         option_index: -1,
         option_label: '',
-        response_status: 'pending'
-      } as any, {
-        onConflict: 'poll_id,phone'
-      } as any)
+        notes: null,
+        person_name: null
+      }
+    }
 
     return {
       poll: {
@@ -330,9 +361,13 @@ export async function getPollContextForMessage(
         airtable_notes_field: bestPoll.airtable_notes_field
       },
       response: {
-        poll_id: bestPoll.id,
-        phone: responsePhone,
-        response_status: 'pending'
+        poll_id: responseRecord.poll_id,
+        phone: responseRecord.phone,
+        response_status: responseRecord.response_status,
+        option_index: responseRecord.option_index,
+        option_label: responseRecord.option_label,
+        notes: responseRecord.notes,
+        person_name: responseRecord.person_name
       }
     }
   } catch (err) {
