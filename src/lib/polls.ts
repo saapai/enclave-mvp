@@ -4,10 +4,51 @@
  */
 
 import { supabaseAdmin } from './supabase';
+import { normalizeE164 } from './sms';
 import Airtable from 'airtable';
 import { ENV } from './env';
 import { createAirtableFields, normalizePhoneForAirtable, upsertAirtableRecord } from './airtable';
 import { parsePollQuotes, hasQuotes } from './nlp/quotes';
+
+const POLL_MATCH_STOPWORDS = new Set([
+  'the', 'and', 'for', 'with', 'that', 'this', 'have', 'about', 'from', 'your',
+  'just', 'what', 'when', 'where', 'who', 'how', 'cant', "can't", 'cannot',
+  'make', 'into', 'into', 'today', 'tonight', 'gonna', 'goin', 'going', 'like',
+  'into', 'since', 'because', 'please', 'reply', 'send', 'broadcast', 'thanks',
+  'thank', 'hey', 'hello', 'hi', 'yo', 'ill', "i'll", 'im', "i'm", 'to', 'at',
+  'in', 'on', 'it', 'is', 'be', 'are', 'was', 'were', 'as', 'an', 'a'
+]);
+
+function extractMeaningfulPollTokens(text: string): string[] {
+  const cleaned = text
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .filter(token => token.length >= 3 && !POLL_MATCH_STOPWORDS.has(token));
+
+  return Array.from(new Set(cleaned));
+}
+
+function scorePollMatch(questionLower: string, tokens: string[], textLower: string): number {
+  let score = 0;
+  for (const token of tokens) {
+    if (questionLower.includes(token)) {
+      score += 1;
+    }
+  }
+
+  const hasMeeting = /\bmeeting\b/.test(textLower) || /\bgm\b/.test(textLower) || /general\s+meeting/.test(textLower);
+  const hasBigLittle = /big\s*little/.test(textLower);
+  const hasSummons = /summons/.test(textLower);
+  const hasChapter = /chapter/.test(textLower);
+
+  if (hasMeeting && questionLower.includes('meeting')) score += 2;
+  if (hasBigLittle && questionLower.includes('big little')) score += 3;
+  if (hasSummons && questionLower.includes('summons')) score += 2;
+  if (hasChapter && questionLower.includes('chapter')) score += 1;
+
+  return score;
+}
 
 function normalizePollQuestionText(raw: string, verbatim = false): string {
   let text = (raw || '').replace(/[“”]/g, '"').replace(/[‘’]/g, "'").trim();
@@ -197,6 +238,107 @@ export async function getPendingPollForPhone(
   }
 
   return (await fetchLatest(true)) || (await fetchLatest(false))
+}
+
+export async function getPollContextForMessage(
+  phoneNumber: string,
+  fullPhoneNumber: string | undefined,
+  messageText: string
+): Promise<PendingPollContext | null> {
+  const directContext = await getPendingPollForPhone(phoneNumber, fullPhoneNumber)
+  if (directContext) {
+    return directContext
+  }
+
+  if (!supabaseAdmin) {
+    console.error('[Polls] Supabase admin client not available for getPollContextForMessage')
+    return null
+  }
+
+  const trimmed = (messageText || '').trim()
+  if (!trimmed) {
+    return null
+  }
+
+  const textLower = trimmed.toLowerCase()
+  const tokens = extractMeaningfulPollTokens(textLower)
+
+  try {
+    const { data: polls, error } = await supabaseAdmin
+      .from('sms_poll')
+      .select('id, question, options, status, requires_reason, airtable_question_field, airtable_response_field, airtable_notes_field, sent_at, created_at')
+      .eq('status', 'sent')
+      .order('sent_at', { ascending: false, nullsLast: true })
+      .order('created_at', { ascending: false })
+      .limit(8)
+
+    if (error) {
+      console.error('[Polls] Failed to fetch recent polls for fallback:', error)
+      return null
+    }
+
+    if (!polls || polls.length === 0) {
+      return null
+    }
+
+    let bestPoll: any = null
+    let bestScore = -Infinity
+
+    for (const poll of polls) {
+      const questionLower = (poll.question || '').toLowerCase()
+      const score = scorePollMatch(questionLower, tokens, textLower)
+
+      if (score > bestScore) {
+        bestScore = score
+        bestPoll = poll
+      }
+    }
+
+    if (!bestPoll) {
+      return null
+    }
+
+    const hasStrongMatch = bestScore > 0 || polls.length === 1
+    if (!hasStrongMatch) {
+      console.log('[Polls] Fallback poll match skipped due to low score', { bestScore, message: textLower })
+      return null
+    }
+
+    const responsePhone = normalizeE164(fullPhoneNumber || phoneNumber)
+
+    await supabaseAdmin
+      .from('sms_poll_response')
+      .upsert({
+        poll_id: bestPoll.id,
+        phone: responsePhone,
+        option_index: -1,
+        option_label: '',
+        response_status: 'pending'
+      } as any, {
+        onConflict: 'poll_id,phone'
+      } as any)
+
+    return {
+      poll: {
+        id: bestPoll.id,
+        question: bestPoll.question,
+        options: (bestPoll.options as string[]) || ['Yes', 'No', 'Maybe'],
+        status: bestPoll.status,
+        requires_reason: bestPoll.requires_reason,
+        airtable_question_field: bestPoll.airtable_question_field,
+        airtable_response_field: bestPoll.airtable_response_field,
+        airtable_notes_field: bestPoll.airtable_notes_field
+      },
+      response: {
+        poll_id: bestPoll.id,
+        phone: responsePhone,
+        response_status: 'pending'
+      }
+    }
+  } catch (err) {
+    console.error('[Polls] Failed to resolve poll context for message:', err)
+    return null
+  }
 }
 
 export interface PollDraft {

@@ -346,8 +346,8 @@ export async function handleSMSMessage(
 
   // Heuristic: quick poll response detection for pending polls
   if (isLikelyPollResponse(messageText)) {
-    const { getPendingPollForPhone } = await import('@/lib/polls')
-    const pendingPollContext = await getPendingPollForPhone(phoneNumber, fullPhoneNumber)
+    const { getPollContextForMessage } = await import('@/lib/polls')
+    const pendingPollContext = await getPollContextForMessage(phoneNumber, fullPhoneNumber, messageText)
     if (pendingPollContext) {
       console.log('[UnifiedHandler] Poll response detected via heuristic, processing without LLM')
       return await handlePollResponse(phoneNumber, fullPhoneNumber, messageText, pendingPollContext)
@@ -1061,12 +1061,12 @@ async function handlePollResponse(
   try {
     const {
       recordPollResponse,
-      getPendingPollForPhone,
+      getPollContextForMessage,
       parseResponseWithNotes,
       getOrAskForName
     } = await import('@/lib/polls')
     
-    const pollContext = prefetchedContext ?? await getPendingPollForPhone(phoneNumber, fullPhoneNumber)
+    const pollContext = prefetchedContext ?? await getPollContextForMessage(phoneNumber, fullPhoneNumber, messageText)
     if (!pollContext) {
       return {
         response: "i don't see an active poll right now. hang tight for the next one!",
