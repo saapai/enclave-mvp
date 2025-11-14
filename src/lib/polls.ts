@@ -13,11 +13,18 @@ import { parsePollQuotes, hasQuotes } from './nlp/quotes';
 const POLL_MATCH_STOPWORDS = new Set([
   'the', 'and', 'for', 'with', 'that', 'this', 'have', 'about', 'from', 'your',
   'just', 'what', 'when', 'where', 'who', 'how', 'cant', "can't", 'cannot',
-  'make', 'into', 'into', 'today', 'tonight', 'gonna', 'goin', 'going', 'like',
-  'into', 'since', 'because', 'please', 'reply', 'send', 'broadcast', 'thanks',
+  'make', 'into', 'today', 'tonight', 'gonna', 'goin', 'going', 'like',
+  'since', 'because', 'please', 'reply', 'send', 'broadcast', 'thanks',
   'thank', 'hey', 'hello', 'hi', 'yo', 'ill', "i'll", 'im', "i'm", 'to', 'at',
-  'in', 'on', 'it', 'is', 'be', 'are', 'was', 'were', 'as', 'an', 'a'
+  'in', 'on', 'it', 'is', 'be', 'are', 'was', 'were', 'as', 'an', 'a',
+  'yes', 'yeah', 'yep', 'yup', 'y', 'no', 'nope', 'nah', 'maybe', 'ok', 'okay'
 ]);
+
+const POLL_INTENT_KEYWORDS = [
+  'meeting', 'gm', 'general', 'summons', 'big', 'little', 'crossing',
+  'poll', 'coming', 'event', 'practice', 'rehearsal', 'workshop', 'clinic',
+  'social', 'mandatory', 'mandatory', 'attendance', 'tonight', 'today'
+];
 
 function extractMeaningfulPollTokens(text: string): string[] {
   const cleaned = text
@@ -262,7 +269,12 @@ export async function getPollContextForMessage(
 
   const textLower = trimmed.toLowerCase()
   const tokens = extractMeaningfulPollTokens(textLower)
+  const containsIntentKeyword = POLL_INTENT_KEYWORDS.some(keyword => textLower.includes(keyword))
   const phoneCandidates = normalizePhoneCandidates(phoneNumber, fullPhoneNumber)
+
+  if (tokens.length === 0 && !containsIntentKeyword) {
+    return null
+  }
 
   try {
     const { data: polls, error } = await supabaseAdmin
@@ -285,7 +297,14 @@ export async function getPollContextForMessage(
     let bestPoll: any = null
     let bestScore = -Infinity
 
+    const nowMs = Date.now()
+
     for (const poll of polls) {
+      const sentMs = poll.sent_at ? new Date(poll.sent_at as string).getTime() : (poll.created_at ? new Date(poll.created_at as string).getTime() : null)
+      if (sentMs && nowMs - sentMs > 1000 * 60 * 60 * 36) {
+        continue
+      }
+
       const questionLower = (poll.question || '').toLowerCase()
       const score = scorePollMatch(questionLower, tokens, textLower)
 
@@ -299,7 +318,7 @@ export async function getPollContextForMessage(
       return null
     }
 
-    const hasStrongMatch = bestScore > 0 || polls.length === 1
+    const hasStrongMatch = bestScore > 0 || (tokens.length > 0 && containsIntentKeyword)
     if (!hasStrongMatch) {
       console.log('[Polls] Fallback poll match skipped due to low score', { bestScore, message: textLower })
       return null
