@@ -344,6 +344,12 @@ export async function handleSMSMessage(
 
   throwIfAborted(signal, 'pre-intent')
 
+  // Fast-path: explicit questions go straight to query handling
+  if (isLikelyQuestion(messageText)) {
+    console.log('[UnifiedHandler] Fast-path question detected, routing directly to handleQuery (skipping poll checks and LLM intent)')
+    return await handleQuery(phoneNumber, messageText, 'content_query', history, { abortSignal: signal, turnId })
+  }
+
   try {
     const { getPendingPollForPhone } = await import('@/lib/polls')
     // Hard-cap awaiting-reason poll check to avoid blocking queries
