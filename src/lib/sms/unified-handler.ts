@@ -346,19 +346,35 @@ export async function handleSMSMessage(
 
   try {
     const { getPendingPollForPhone } = await import('@/lib/polls')
-    const pendingPollContext = await getPendingPollForPhone(phoneNumber, fullPhoneNumber)
+    // Hard-cap awaiting-reason poll check to avoid blocking queries
+    const pendingPollContext = await withTimeout(
+      getPendingPollForPhone(phoneNumber, fullPhoneNumber),
+      200,
+      'awaiting_reason_check',
+      null as any
+    ).catch(() => null)
     if (pendingPollContext?.response?.response_status === 'awaiting_reason') {
       console.log('[UnifiedHandler] Poll awaiting reason detected, routing message as poll response')
       return await handlePollResponse(phoneNumber, fullPhoneNumber, messageText, pendingPollContext)
     }
   } catch (err) {
-    console.error('[UnifiedHandler] Failed to check awaiting poll reason:', err)
+    // Ignore aborts/timeouts silently to avoid noisy logs during query flow
+    const isAbort = err && ((err as any).name === 'AbortError' || /aborted/i.test((err as any)?.message || ''))
+    if (!isAbort) {
+      console.error('[UnifiedHandler] Failed to check awaiting poll reason:', err)
+    }
   }
 
   // Heuristic: quick poll response detection for pending polls
   if (isLikelyPollResponse(messageText)) {
     const { getPollContextForMessage } = await import('@/lib/polls')
-    const pendingPollContext = await getPollContextForMessage(phoneNumber, fullPhoneNumber, messageText)
+    // Non-blocking fallback: if poll context takes >200ms, continue as normal
+    const pendingPollContext = await withTimeout(
+      getPollContextForMessage(phoneNumber, fullPhoneNumber, messageText),
+      200,
+      'poll_context_lookup',
+      null as any
+    ).catch(() => null)
     if (pendingPollContext) {
       console.log('[UnifiedHandler] Poll response detected via heuristic, processing without LLM')
       return await handlePollResponse(phoneNumber, fullPhoneNumber, messageText, pendingPollContext)

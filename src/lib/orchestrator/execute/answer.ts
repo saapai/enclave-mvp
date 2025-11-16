@@ -399,7 +399,7 @@ async function getChatAnswer(
 
   if (ENV.OPENAI_API_KEY) {
     const controller = new AbortController()
-    const timeoutId = setTimeout(() => controller.abort(), 3000)
+    const timeoutId = setTimeout(() => controller.abort(), 2500)
     try {
       const response = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
@@ -443,7 +443,7 @@ async function getChatAnswer(
 
   if (ENV.MISTRAL_API_KEY) {
     const controller = new AbortController()
-    const timeoutId = setTimeout(() => controller.abort(), 3000)
+    const timeoutId = setTimeout(() => controller.abort(), 2500)
     try {
       const response = await fetch('https://api.mistral.ai/v1/chat/completions', {
         method: 'POST',
