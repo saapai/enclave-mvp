@@ -589,20 +589,22 @@ async function searchFTS(
     )
 
     if (!response) {
-      console.warn('[Search V2 FTS] Skipped due to exhausted budget, using lexical fallback')
-      return searchLexicalFallback(query, spaceId, limit, budget, undefined)
+      console.warn('[Search V2 FTS] Skipped due to exhausted budget, using lexical fallback with independent budget')
+      // Use independent budget so lexical gets a fair shot even if FTS consumed the shared budget
+      return searchLexicalFallback(query, spaceId, limit, undefined, undefined)
     }
 
     const { data, error } = response
 
     if (error) {
       console.error('[Search V2 FTS] RPC error:', error.message || error)
-      return searchLexicalFallback(query, spaceId, limit, budget, undefined)
+      // Use independent budget on RPC errors
+      return searchLexicalFallback(query, spaceId, limit, undefined, undefined)
     }
 
     if (!data || data.length === 0) {
-      console.log('[Search V2 FTS] No rows returned, falling back to lexical search')
-      return searchLexicalFallback(query, spaceId, limit, budget, undefined)
+      console.log('[Search V2 FTS] No rows returned, falling back to lexical search (independent budget)')
+      return searchLexicalFallback(query, spaceId, limit, undefined, undefined)
     }
 
     const results = data.map((row: any) => ({
@@ -616,18 +618,18 @@ async function searchFTS(
     return results
   } catch (err: unknown) {
     if (err instanceof DeadlineError) {
-      console.warn('[Search V2 FTS] Deadline reached, running lexical fallback with fresh controller')
-      // FTS timed out, so run lexical with a NEW controller (not the aborted one)
-      return searchLexicalFallback(query, spaceId, limit, budget, undefined)
+      console.warn('[Search V2 FTS] Deadline reached, running lexical fallback with fresh controller and independent budget')
+      // FTS timed out, so run lexical with a NEW controller (not the aborted one) and its own small budget
+      return searchLexicalFallback(query, spaceId, limit, undefined, undefined)
     }
 
     if (isAbortError(err)) {
       console.warn('[Search V2 FTS] Aborted by parent signal, running lexical fallback')
-      return searchLexicalFallback(query, spaceId, limit, budget, abortSignal)
+      return searchLexicalFallback(query, spaceId, limit, undefined, abortSignal)
     }
 
     console.error('[Search V2 FTS] RPC exception:', err)
-    return searchLexicalFallback(query, spaceId, limit, budget, undefined)
+    return searchLexicalFallback(query, spaceId, limit, undefined, undefined)
   }
 }
 
